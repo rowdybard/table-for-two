@@ -43,7 +43,7 @@ export class RestaurantActor {
       + (performance.attentive ? .02 : 0);
     this.body.update(time, dt, this.seated ? 0 : walkingSpeed, {
       guarded, comfortable: performance.stance === 'comfortable', speaking,
-      amplitude, shared: !!performance.shared, phoneActive: !!performance.phoneActive, leanBias,
+      amplitude, shared: !!performance.shared, phoneActive: !!performance.phoneActive, leanBias, beat: pose.beat, beatHand: pose.beatHand,
     });
     this.head.position.copy(this.body.headAnchor);
     this.root.updateMatrixWorld(true);

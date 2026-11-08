@@ -42,6 +42,10 @@ export interface FacePose {
   headPitch: number;
   headYaw: number;
   headRoll: number;
+  /** Hand beat gesture envelope while speaking; 0..1. */
+  beat: number;
+  /** Which hand carries the beat: -1 left, 1 right, 0 both. */
+  beatHand: -1 | 0 | 1;
 }
 
 interface ExpressionTarget {
@@ -73,8 +77,11 @@ const approach = (current: number, target: number, dt: number, rate: number) =>
 export class FacialPerformance {
   readonly pose: FacePose = {
     smile: .12, asymmetry: 0, squint: .04, jaw: 0, press: 0, browAngle: 0, browLift: 0, browInner: 0,
-    eyeOpen: 1, gazeX: 0, gazeY: 0, headPitch: 0, headYaw: 0, headRoll: 0,
+    eyeOpen: 1, gazeX: 0, gazeY: 0, headPitch: 0, headYaw: 0, headRoll: 0, beat: 0, beatHand: 1,
   };
+  private beatStart = -1;
+  private beatDuration = .55;
+  private lastBeat = -10;
   private readonly rand: () => number;
   private emotion: Emotion = 'neutral';
   private emotionAge = 0;
@@ -213,6 +220,20 @@ export class FacialPerformance {
         this.nextIdleShift = time + 2.5 + this.rand() * 4;
       }
     }
+    // Hands: a beat gesture rides the stronger speech peaks, one hand at a time, sometimes both.
+    if (motion && input.speaking && this.beatStart < 0 && peak > .16 && time - this.lastBeat > .7 && this.rand() < .7) {
+      this.beatStart = time;
+      this.beatDuration = .45 + this.rand() * .3;
+      const r = this.rand();
+      pose.beatHand = r < .2 ? 0 : r < .6 ? 1 : -1;
+    }
+    let beat = 0;
+    if (this.beatStart >= 0) {
+      const t = (time - this.beatStart) / this.beatDuration;
+      if (t >= 1 || !input.speaking && t > .5) { this.beatStart = -1; this.lastBeat = time; }
+      else beat = Math.sin(Math.min(1, t) * Math.PI) ** .8;
+    }
+    pose.beat = approach(pose.beat, beat * motion, dt, 18);
     const glanceYaw = this.glanceUntil >= 0 ? this.saccadeX * .09 : 0;
     const glancePitch = this.glanceUntil >= 0 ? -this.saccadeY * .05 : 0;
     const accent = input.speaking ? peak * .035 * motion : 0;

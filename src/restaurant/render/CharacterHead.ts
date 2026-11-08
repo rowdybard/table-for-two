@@ -661,7 +661,7 @@ export function createCharacterHead(kind: CharacterKind, skinColor: string): Cha
     lastShape = shape;
     lastVoice = voice;
   }
-  update(0, 1 / 60, { smile: 0.12, asymmetry: 0, squint: 0.04, jaw: 0, press: 0, browAngle: 0, browLift: 0, browInner: 0, eyeOpen: 1, gazeX: 0, gazeY: 0, headPitch: 0, headYaw: 0, headRoll: 0 }, false, 0, 0, 0);
+  update(0, 1 / 60, { smile: 0.12, asymmetry: 0, squint: 0.04, jaw: 0, press: 0, browAngle: 0, browLift: 0, browInner: 0, eyeOpen: 1, gazeX: 0, gazeY: 0, headPitch: 0, headYaw: 0, headRoll: 0, beat: 0, beatHand: 1 }, false, 0, 0, 0);
   return {
     root,
     update,

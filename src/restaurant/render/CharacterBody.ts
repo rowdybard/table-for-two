@@ -8,6 +8,9 @@ export interface BodyPerformance {
   guarded: boolean; comfortable: boolean; speaking: boolean; amplitude: number; shared: boolean; phoneActive: boolean;
   /** Seated forward lean from the current feeling, in radians; positive leans in. */
   leanBias?: number;
+  /** Speech beat gesture envelope 0..1 and which hand carries it (-1 left, 1 right, 0 both). */
+  beat?: number;
+  beatHand?: -1 | 0 | 1;
 }
 export interface CharacterBodyRig {
   root: THREE.Group;
@@ -477,8 +480,11 @@ class TailoredBody implements CharacterBodyRig {
       const gesture = performance.speaking ? Math.max(0, Math.sin(time * 2.3 + i * .9)) * (.035 + Math.min(1, performance.amplitude) * .025) : 0;
       let target: THREE.Vector3, handOrientation: THREE.Quaternion;
       if (this.seated) {
-        target = new THREE.Vector3(side * (performance.guarded ? .14 : .18), performance.guarded ? .80 : .808 + (i === 0 || performance.shared ? gesture : 0), performance.guarded ? .29 : .385);
-        handOrientation = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2 - gesture * 2, side * (performance.guarded ? .25 : .06), side * .035));
+        const carries = (performance.beatHand ?? 1) === 0 || (performance.beatHand ?? 1) === side;
+        const beat = carries && !performance.guarded ? (performance.beat ?? 0) : 0;
+        // A beat lifts the hand off the cloth, turns the palm up and opens toward the other person.
+        target = new THREE.Vector3(side * ((performance.guarded ? .14 : .18) + beat * .03), (performance.guarded ? .80 : .808 + (i === 0 || performance.shared ? gesture : 0)) + beat * .085, (performance.guarded ? .29 : .385) + beat * .04);
+        handOrientation = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2 - gesture * 2 + beat * 1.1, side * ((performance.guarded ? .25 : .06) + beat * .3), side * (.035 - beat * .5)));
       } else {
         const swing = Math.sin(this.gait + i * Math.PI) * .075 * this.walkBlend;
         const posed = this.kind === 'mira' && i === 1 || this.kind === 'dev' && i === 0;

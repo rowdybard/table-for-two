@@ -75,3 +75,19 @@ test('every emotion settles to bounded, finite values', () => {
   assert.ok(early.jaw > late.jaw + .1, 'a dropped jaw recovers while brows stay raised');
   assert.ok(late.browLift > .002);
 });
+
+test('hand beats ride speech peaks and never happen in silence or reduced motion', () => {
+  const talking = new FacialPerformance(4);
+  let beats = 0, previous = 0;
+  for (let t = 0; t < 20; t += 1 / 60) {
+    const amplitude = .35 + .45 * Math.max(0, Math.sin(t * 5.1)) * (Math.sin(t * .9) > 0 ? 1 : .2);
+    const pose = talking.update(t, 1 / 60, input({ emotion: 'warm', speaking: true, amplitude }));
+    if (previous < .5 && pose.beat >= .5) beats++;
+    previous = pose.beat;
+  }
+  assert.ok(beats >= 4 && beats <= 20, `beats on peaks over twenty seconds of talking, saw ${beats}`);
+  const quiet = run(new FacialPerformance(4), 10, 0, input({ emotion: 'warm' }));
+  assert.ok(quiet.every(f => f.beat === 0), 'no beats while listening');
+  const still = run(new FacialPerformance(4), 10, 0, input({ speaking: true, amplitude: .9, reducedMotion: true }));
+  assert.ok(still.every(f => f.beat < .01), 'reduced motion keeps hands at rest');
+});
