@@ -1,0 +1,118 @@
+[
+  {
+    "id": "potted_plant_02",
+    "boundsMeters": [
+      0.7011570334434509,
+      0.8411787391305552,
+      0.6573865756508894
+    ],
+    "sourceMin": [
+      -0.3966600392013788,
+      0.00005296462768455967,
+      -0.42031260282965377
+    ],
+    "sourceCenter": [
+      -0.04608152247965336,
+      0.42064233419296215,
+      -0.09161931500420906
+    ],
+    "meshes": 3,
+    "triangles": 69806,
+    "textureDims": [
+      [
+        "potted_plant_02_pot",
+        "map",
+        1024,
+        1024
+      ],
+      [
+        "potted_plant_02_pot",
+        "roughnessMap",
+        1024,
+        1024
+      ],
+      [
+        "potted_plant_02_pot",
+        "normalMap",
+        1024,
+        1024
+      ],
+      [
+        "potted_plant_02_leaves",
+        "map",
+        1024,
+        1024
+      ],
+      [
+        "potted_plant_02_leaves",
+        "roughnessMap",
+        1024,
+        1024
+      ],
+      [
+        "potted_plant_02_leaves",
+        "normalMap",
+        1024,
+        1024
+      ],
+      [
+        "potted_plant_02_pot",
+        "map",
+        1024,
+        1024
+      ],
+      [
+        "potted_plant_02_pot",
+        "roughnessMap",
+        1024,
+        1024
+      ],
+      [
+        "potted_plant_02_pot",
+        "normalMap",
+        1024,
+        1024
+      ]
+    ]
+  },
+  {
+    "id": "ceramic_vase_04",
+    "boundsMeters": [
+      0.18112153559923172,
+      0.3419442092999816,
+      0.1811198815703392
+    ],
+    "sourceMin": [
+      -0.09056074172258377,
+      0.0005259597674012184,
+      -0.09055996686220169
+    ],
+    "sourceCenter": [
+      2.60770320892334e-8,
+      0.17149806441739202,
+      -2.60770320892334e-8
+    ],
+    "meshes": 1,
+    "triangles": 9000,
+    "textureDims": [
+      [
+        "ceramic_vase_04",
+        "map",
+        1024,
+        1024
+      ],
+      [
+        "ceramic_vase_04",
+        "roughnessMap",
+        1024,
+        1024
+      ],
+      [
+        "ceramic_vase_04",
+        "normalMap",
+        1024,
+        1024
+      ]
+    ]
+  }
+]

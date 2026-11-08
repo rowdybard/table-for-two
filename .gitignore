@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.codex-attachments/
+.qa/
+test-results/
+playwright-report/
+*.log
+.env
+.env.*
+!.env.example
+server/restaurant/runtime/
+.cloudflare/
+docs/artifacts/.encounter-atlas-render/
+docs/artifacts/.encounter-atlas-release-render/
+docs/artifacts/.encounter-atlas-*/

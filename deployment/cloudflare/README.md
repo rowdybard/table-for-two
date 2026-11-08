@@ -1,0 +1,77 @@
+# Cloudflare deployment
+
+Live restaurant: [Table for Two](https://table-for-two.maxpug17.workers.dev). The public hostname is enabled; preview URLs are disabled. The deployment created only this Worker, its SQLite/container namespace and `table-for-two-runtime` application. No subscription or billing plan was upgraded.
+
+**Current release (2026-11-08 19:24 UTC).** Worker version `c57c0e31-1f89-4837-91fe-17d1e1ad3bd2` (deployment `282eebd5-d210-45eb-8209-4287078d5ae5`) serves `main-DZbDAanY.js` and `main-DLQK8TKr.css` through `index-B_La63BI.js`; backend SHA-256 `f151d9b3cc73c5cc05a199367f09470c6db9caeccfa62185820f9e209e060bab` preserves the preceding live Horde fix. The candidate passed TypeScript, 334 unit tests, 35 browser checks plus four final-bundle rechecks, and the four-view shared-spill renderer fixture. Deployment typecheck, portable dry-run and provider-disabled Solo/Blind/Double runtime smoke passed. Live root, index, launcher, game JavaScript, CSS and manifest matched the frozen bytes with isolation headers; health and provider status returned 200, and tested private backend/internal aliases returned 404. The existing secret binding, live plain-text settings, namespace, ledger and basic container were retained. Release verification made no inference or paid-provider requests; details are in `.cloudflare/release-verification.json`. Earlier release notes follow.
+
+The active tabletop-interaction release is Worker version `b55202ed-cf81-4ae4-b701-67ba5b3a5c0a` (deployment `04fd0875-a655-493e-99fd-549a85b4b70e`). It serves `main-O4SBgGYi.js` and `main-DLQK8TKr.css` through `index-BTPjv0wz.js`; the backend bundle SHA-256 is `5c161c2ac67b4f0069a617b8b901c035fa3b1d057d4c39bbfa319e9c00adae4c`. The frozen release passed TypeScript, 265 unit tests, 13 restaurant/evening browser checks, 3 tabletop main-browser checks, 8 UI checks and the scoped renderer fixture. The deployment package passed its portable dry-run and provider-disabled Solo/Blind/Double bundled smoke. Live `index.html`, launcher, game JavaScript, CSS and manifest bytes matched the reviewed build, with isolation headers intact; health and provider status returned 200, and private backend/internal paths and tested aliases returned 404. Anthropic remained configured, Dolphin unconfigured, Edge speech available, and the existing namespace, secret binding, private-model-selection flag and basic container were preserved. These deployment checks made no provider calls; the read-only results and SHA-256 values are in `.cloudflare/release-verification.json`.
+
+The previous feedback/earned-route release served `main-gHDxBLE0.js` through `index-6r6LubdQ.js`, with `main-CkuoNIH_.css` and backend `4b3e4539f97fa3638175aacf84e54b67564a26c1af1263305811f8f92a3fd220`. It includes the dialogue-format repair: a bounded second date clause is accepted and silent optional lines are omitted consistently in streamed and final output, while primary-line, role, action and aggregate text limits remain enforced. Live asset bytes matched the frozen local build on November 8, 2026. Deployment typecheck, the portable-copy dry-run and provider-disabled bundled Solo/Blind/Double smoke passed. The local smoke explicitly clears Anthropic, OpenRouter and ElevenLabs credentials. Root, launcher, game code, CSS, manifest, health and provider status passed read-only live HTTP checks; isolation headers and private-backend blocking, including encoded/slash aliases, also passed. The Anthropic secret, namespace, basic container size and preexisting bindings were preserved. Those deployment checks made no provider calls. Full asset SHA-256 values and the separately reported audition evidence are recorded in the generated `.cloudflare/release-verification.json`.
+
+A separate capped live Haiku audition after the repair completed all six turns without spurious format errors. Two date clauses and a date-plus-waiter response both committed memory/scoring; requests to stop a prop topic were respected, and both dates remained playable before the test sessions were closed. This run's estimated text cost was $0.00360548. Including the earlier failed audition and diagnostic, this feedback/normalization phase used 13 calls across five closed test dates for an estimated $0.00690285, below the announced $0.02 cap. These are limited functional samples, not a general dialogue-quality or latency benchmark. No Dolphin or voice inference was used in those auditions.
+
+The frontend is served by Workers Static Assets. A single named Durable Object starts a managed Node 24 container and routes the existing restaurant APIs to it. The game keeps its current Node/Rapier timers, private rooms, streaming speech and peer signaling. No local Docker installation or custom container image is needed.
+
+The runtime uses the `basic` instance: 1/4 vCPU, 1 GiB memory, one singleton and a ten-minute idle timeout. A measured bundled-runtime profile used roughly 1.2–1.4 CPU-seconds for scene/voice warmup and exceeded the smaller `lite` instance's 1/16 vCPU allocation in an active-mode sample. Lite stalled during the live greeting check; basic passed it. Peak sampled local RSS was 206 MiB, so this is a CPU-capacity decision, not a demonstrated out-of-memory failure. The instance size participates in the private configuration fingerprint so a size change replaces the old container.
+
+This uses the public-beta `durable_object` scheduling policy and the managed `cloudflare/debian-trixie` image. Containers require the Workers Paid plan and incur usage charges. The deployment scripts do not upgrade the account or change subscriptions.
+
+## Build and review
+
+From the workspace root, build the current client first. Then build this isolated deployment package:
+
+```powershell
+pnpm build
+pnpm --dir deployment/cloudflare install
+pnpm --dir deployment/cloudflare run check
+pnpm --dir deployment/cloudflare run build
+pnpm --dir deployment/cloudflare run dry-run
+pnpm --dir deployment/cloudflare run smoke
+```
+
+`build` emits valid Cloudflare Build Output v0 under this directory’s `.cloudflare/output/v0`. It only replaces that generated output after checking its resolved path. The current client is copied from `dist`; rebuild this package after any client or server change. No source files, `.env`, API keys or runtime budget file are included in static assets.
+
+`dry-run` copies the generated portable output to an owned temporary directory and invokes the pinned official `cf` CLI there. On Windows, OneDrive directory entries can misreport cloud reparse files as symlinks even when `lstat` identifies ordinary files. The copy checks every entry with `lstat`, rejects actual symlinks and non-file entries, retains the CLI's full portability validation, and removes its temporary directory afterwards. It does not rebuild the client or change Cloudflare resources.
+
+The generated `.cloudflare/deploy-artifact.json` supplies the Worker module path, API upload metadata, asset manifest, each asset’s local path/MIME/hash, and a container application template. Asset hashes use the official direct-upload example’s SHA-256 of base64 content plus file extension, truncated to 32 hex characters. The `__server` asset contains trusted backend code but no credentials and is denied by the public request handler.
+
+With CLI credentials, `pnpm --dir deployment/cloudflare run deploy` publishes the prebuilt artifact. With an authorized Cloudflare connector, use the same artifact for the static-assets upload session, multipart Worker upload and container application creation. Replace the completion JWT and namespace placeholder at runtime; do not commit credentials. Worker upload metadata declares exports, so the SQLite namespace is provisioned on the first upload and matched on subsequent uploads. Never combine that exports map with legacy migrations. The container metadata in the Worker upload is a name/class pair; the application API then associates that name with the provisioned namespace.
+
+`upload-assets.mjs` exports `uploadAssetBuckets` for connector-driven deployments. Pass its upload session JWT in memory, never through command-line arguments or files. The helper uploads the requested buckets using Node HTTPS and verifies each local file against the reviewed artifact. Afterwards, request another upload session with the same manifest: once its buckets are empty, redeem that session's JWT directly in the remote Worker-upload call. The helper returns only asset counts and discards response tokens. Keep the Worker's `workers.dev` and preview URLs disabled while staging; enable the new hostname after the application and release checks pass.
+
+After enabling this initial release, `pnpm --dir deployment/cloudflare run smoke:live` checks the public hostname, cold/warm container health, static isolation headers, authentication, all three modes' movement/seating, and a free Edge greeting. It expects the Anthropic key to be unconfigured at this stage, makes no Claude requests, and pauses/leaves its test sessions. An alternate HTTPS origin can be supplied as its first argument.
+
+## Runtime configuration
+
+The existing `DATE_ALLOW_MODEL_SELECTION=1` binding also enables the free `/model horde` command. Its next submitted dialogue uses Horde immediately, independently of the optional automatic chemistry-based route. The native transport is the server default for Horde, uses cached worker discovery, and cancels one queued inference on interruption or timeout; no paid provider is used as fallback. The Worker forwards `DATE_CONVERSATION_PROVIDER`, `DATE_EARNED_PROVIDER`, `AI_HORDE_API_KEY`, `AI_HORDE_MODEL`, `AI_HORDE_TRANSPORT` and `AI_HORDE_TIMEOUT_MS`. The optional Horde key belongs in a secret binding; an absent key uses anonymous access. `DATE_CONVERSATION_PROVIDER=aihorde` makes all dialogue free and removes paid model choices. `DATE_EARNED_PROVIDER=aihorde` instead changes only the automatic earned route. A Horde-enabled bridge permits the configured 60-second default wait plus a five-second margin; model-selection-enabled servers use that same allowance for `/model horde`.
+
+`ANTHROPIC_API_KEY` is configured as a secret binding on the deployed `table-for-two` Worker. Optional ElevenLabs and voice, budget or TURN settings use the same names as `.env.example`. Only explicitly allowlisted settings are forwarded to Node. Secrets are not embedded in the build or written to logs. The upload template preserves existing secret bindings.
+
+The runtime also allowlists the optional `OPENROUTER_API_KEY` secret. The live Worker had no OpenRouter secret at verification time and reported `dolphin: false`; no key was acquired or inference purchased during deployment. The owner can add that name as a Worker secret through **Settings → Variables and Secrets → Add → Secret**. Haiku remains the default for new dates and rooms. With the optional key configured, the server can route the next turn to Dolphin only after that couple earns confidence and two actually delivered reciprocal flirts; each Double pair qualifies independently. This deployment defines no `DATE_DEFAULT_MODEL` override, and no extra Cloudflare resource or plaintext key binding is required. Dolphin quality and availability have not been tested against a live provider.
+
+To replace the key in the Cloudflare dashboard, open **Workers & Pages → table-for-two → Settings → Variables and Secrets**, edit the `ANTHROPIC_API_KEY` secret and deploy the change. Enter the key only in Cloudflare's secret field. The initial deployment had no Anthropic key; a subsequent minimal live Haiku turn succeeded with one request, estimated cost $0.0005774 and 3.52 seconds to complete its text response. That is a prior smoke measurement, not a latency benchmark for the agendas release. Free Edge speech and authored gameplay were also tested on the deployed server; this release used read-only live checks and no new provider calls.
+
+The next API request after a backend or allowed configuration change restarts Node automatically, using a private configuration fingerprint. Existing in-memory evenings are lost on that restart, as with restarting the local server; clients must start a new evening if their session expires. Credentials are not returned to the browser. An unconfigured Anthropic key produces an explicit unavailable status while physical gameplay remains usable.
+
+The container sleeps after ten minutes without requests. Open clients poll their authenticated sessions, keeping their active evening warm. Startup uses one shared promise and permits ledger RPCs during preparation; wrapping the whole bootstrap in `blockConcurrencyWhile` would deadlock Node’s initial budget read. A healthy existing process is reused when its backend/configuration fingerprint matches. A cold container is booted by the first new request.
+
+## Durable spending limits
+
+The budget ledger lives in the Durable Object’s SQLite storage, not container disk. Node’s budget-store adapter loads and saves through a private outbound HTTP intercept into the `BudgetBridge` entrypoint. No public URL exposes that bridge. Persistence must succeed before a paid provider can start. An unavailable or malformed ledger fails closed.
+
+Each process has a ledger epoch. Transactions reject a stopped process’s late writes after a replacement starts. Existing unresolved reservations are recovered conservatively as spent by the restaurant’s existing ledger logic. The singleton routing keeps all current solo/double sessions on that one shared account ledger. Session memory and audio caches remain ephemeral.
+
+The live private bridge also passed a same-value GET/PUT/GET check from inside the managed container using its current process epoch. The check preserved any existing ledger record, initialized zero only for an empty ledger, made no paid requests and logged only its success flag. Its temporary verification code was removed after the check.
+
+The local smoke test runs the actual bundled Node server with an isolated ledger fixture and disabled providers. It verifies startup, proxy origin checks, provider status and all three mode APIs. It does not emulate the Cloudflare container platform. Deployment still needs a live health/API check and account permission to create a container application; internet/NAT voice reliability and real provider quality need separate evaluation.
+
+The initial live release passed cold/warm Node health (1,548/106 ms), a 55,584-byte free Edge greeting (377 ms, zero speech cost and Claude requests), Solo/Blind/Double movement and seating, Double readiness/start, bearer/Origin rejection, private-bundle blocking, and manifest/isolation-header checks. `smoke:live` reports these measurements for the actual deployed runtime. Cloudflare's container port transport requires an internal HTTP URL; the public site remains HTTPS and the Worker replaces the forwarded host before Node checks browser origins.
+
+## Primary references
+
+- [Cloudflare CLI configuration](https://developers.cloudflare.com/cf/projects/cloudflare-config/)
+- [Direct asset uploads](https://developers.cloudflare.com/workers/static-assets/direct-upload/)
+- [Durable Object Container API](https://developers.cloudflare.com/containers/api/durable-object-container/)
+- [Managed images](https://developers.cloudflare.com/containers/guides/image-management/)
+- [Container command execution](https://developers.cloudflare.com/containers/guides/execute-commands/)
+- [Container pricing](https://developers.cloudflare.com/containers/platform/pricing/)

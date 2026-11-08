@@ -1,0 +1,17 @@
+{
+  "id": "/",
+  "name": "Table for Two",
+  "short_name": "Table for Two",
+  "description": "A first-person restaurant date with someone new and a little chaos.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#151c29",
+  "theme_color": "#151c29",
+  "icons": [
+    { "src": "/table-for-two-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/table-for-two-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/table-for-two-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

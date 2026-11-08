@@ -1,0 +1,46 @@
+[
+  {
+    "id": "potted_plant_02",
+    "file": "potted_plant_02.glb",
+    "bytes": 2632276,
+    "triangles": 69806,
+    "meshes": 3,
+    "materials": 2,
+    "textures": 6,
+    "nodes": [
+      {
+        "name": "potted_plant_02_pot"
+      },
+      {
+        "name": "potted_plant_02_leaves",
+        "translation": [
+          -0.0029038283973932266,
+          0.30528968572616577,
+          0.0006859108689241111
+        ]
+      },
+      {
+        "name": "potted_plant_02_dirt",
+        "translation": [
+          -0.12862031161785126,
+          0.31752803921699524,
+          -0.13355804979801178
+        ]
+      }
+    ]
+  },
+  {
+    "id": "ceramic_vase_04",
+    "file": "ceramic_vase_04.glb",
+    "bytes": 595128,
+    "triangles": 9000,
+    "meshes": 1,
+    "materials": 1,
+    "textures": 3,
+    "nodes": [
+      {
+        "name": "ceramic_vase_04"
+      }
+    ]
+  }
+]

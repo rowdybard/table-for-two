@@ -1,0 +1,50 @@
+{
+  "type": 2,
+  "name": "Ceramic Vase 04",
+  "authors": {
+    "James Ray Cock": "All"
+  },
+  "categories": [
+    "containers",
+    "decorative",
+    "vases"
+  ],
+  "date_published": 1623767607,
+  "staging": null,
+  "tags": [
+    "fancy",
+    "modern",
+    "vase",
+    "decor",
+    "painted",
+    "jug",
+    "clay",
+    "pot"
+  ],
+  "max_resolution": [
+    8192,
+    8192
+  ],
+  "polycount": 2224,
+  "texel_density": 11806.112169560967,
+  "dimensions": [
+    183.31684917211533,
+    181.98027461767197,
+    342.3411250114441
+  ],
+  "files_hash": "2f4fd4e62ce5609ec0b712f7f97a8f1cd7796c7f",
+  "description": "Free 8K model: painted clay vase with modern, elegant jug silhouette, single-handle and subtle rough texture - fancy decorative pot for interiors and props.",
+  "category_id": "bda68bac-fe45-5d4f-aab6-ea0162d45774",
+  "category": "Decor & Art/Vases & Vessels/Ceramic Vases",
+  "attributes": {
+    "condition": [
+      "clean"
+    ],
+    "material": [
+      "ceramic"
+    ]
+  },
+  "img_version": "9243a193",
+  "download_count": 11129,
+  "thumbnail_url": "https://cdn.polyhaven.com/asset_img/thumbs/ceramic_vase_04.png?width=256&height=256&format=webp&v=9243a193"
+}

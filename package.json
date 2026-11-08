@@ -1,0 +1,32 @@
+{
+  "name": "love-at-first-strike",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx scripts/dev.ts",
+    "start": "tsx scripts/serve.ts",
+    "generate:clips": "tsx scripts/generate-date-clips.ts",
+    "compare:models": "tsx scripts/compare-date-models.ts",
+    "check": "tsc --noEmit",
+    "build": "vite build",
+    "test": "tsx --test tests/*.test.ts",
+    "test:browser": "playwright test"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "0.21.0",
+    "@moonshine-ai/moonshine-wasm": "0.1.5",
+    "node-edge-tts": "1.2.12",
+    "three": "0.187.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0",
+    "@types/node": "^24.0.0",
+    "@types/three": "0.187.0",
+    "@types/ws": "^8.18.0",
+    "tsx": "^4.20.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.5"
+  }
+}

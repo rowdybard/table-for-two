@@ -1,0 +1,21 @@
+{
+  "name": "table-for-two-cloudflare",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "tsc --noEmit",
+    "smoke": "node smoke-runtime.mjs",
+    "smoke:live": "node smoke-live.mjs",
+    "dry-run": "node dry-run.mjs",
+    "deploy": "cf deploy --prebuilt --mode production"
+  },
+  "devDependencies": {
+    "@cloudflare/build-output-utils": "0.9.10",
+    "@cloudflare/config": "0.30.2",
+    "@cloudflare/workers-types": "5.20261104.1",
+    "cf": "1.0.0-beta.28",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  }
+}
