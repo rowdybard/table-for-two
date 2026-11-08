@@ -60,6 +60,9 @@ export class RestaurantRenderer {
   private presentation: RestaurantPresentation = 'gameplay';
   private readonly roomLights = new THREE.Group();
   private readonly farewellLight = new THREE.PointLight('#ffdcbb', 0, 4, 2);
+  /** A soft fill that travels with the viewer, so faces across the table keep their eyes and lips readable. */
+  private readonly faceFill = new THREE.PointLight('#ffeedd', .55, 2.4, 2);
+  private readonly faceFillOffset = new THREE.Vector3(.18, .12, 0);
   private readonly selectionGaze = new THREE.Vector3();
   private tableFocus: TableFocus = null;
   private inspectionTarget: InspectionTarget | null = null;
@@ -129,6 +132,7 @@ export class RestaurantRenderer {
   }
 
   private renderScene() {
+    this.faceFill.position.copy(this.faceFillOffset).applyQuaternion(this.camera.quaternion).add(this.camera.position);
     this.renderer.render(this.scene, this.camera);
     if (!this.ready && this.compiled && !this.disposed) { this.ready = true; this.canvas.setAttribute('aria-busy', 'false'); }
   }
@@ -224,6 +228,12 @@ export class RestaurantRenderer {
     this.roomLights.add(boothLight);
     this.scene.add(this.roomLights);
     this.roomLights.add(this.farewellLight);
+    this.roomLights.add(this.faceFill);
+    // A cool rim from the window side lifts a seated date off the dark booth.
+    const rim = new THREE.DirectionalLight('#b7c7f0', .5);
+    rim.position.set(-1.6, 2.6, -4.8);
+    rim.target.position.set(0, 1.1, -1.4);
+    this.roomLights.add(rim, rim.target);
     this.set = createRestaurantScene();
     this.scene.add(this.set.root);
     this.scene.add(this.table.root, this.placeSettingShadows.mesh);

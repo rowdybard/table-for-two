@@ -29,7 +29,7 @@ const profiles = {
     brow: '#51392f',
     eyeTilt: 0.0016,
     browHeight: 0.037,
-    lipWidth: 0.024,
+    lipWidth: 0.0335,
   },
   jules: {
     width: 1.015,
@@ -40,7 +40,7 @@ const profiles = {
     brow: '#493c38',
     eyeTilt: 0.0004,
     browHeight: 0.0355,
-    lipWidth: 0.0245,
+    lipWidth: 0.034,
   },
   dev: {
     width: 1.075,
@@ -51,7 +51,7 @@ const profiles = {
     brow: '#41322e',
     eyeTilt: 0.0009,
     browHeight: 0.035,
-    lipWidth: 0.0265,
+    lipWidth: 0.036,
   },
   waiter: {
     width: 1.02,
@@ -62,7 +62,7 @@ const profiles = {
     brow: '#4c413a',
     eyeTilt: 0.0007,
     browHeight: 0.037,
-    lipWidth: 0.024,
+    lipWidth: 0.033,
   },
   diner: {
     width: 1.055,
@@ -73,7 +73,7 @@ const profiles = {
     brow: '#644839',
     eyeTilt: 0.0007,
     browHeight: 0.036,
-    lipWidth: 0.025,
+    lipWidth: 0.0345,
   },
   friend: {
     width: 1.02,
@@ -84,7 +84,7 @@ const profiles = {
     brow: '#4c3b3d',
     eyeTilt: 0.001,
     browHeight: 0.037,
-    lipWidth: 0.0245,
+    lipWidth: 0.034,
   },
 } as const;
 // Horizontal sections in metres: height, half-width, front, back.
@@ -173,10 +173,10 @@ export function createCharacterHead(kind: CharacterKind, skinColor: string): Cha
     nostrilColor = new THREE.Color('#5b3a33');
   const lipColor = new THREE.Color(look.lips);
   const widthAt = (y: number) => section(y, 1) * look.width * mix(look.jaw, 1, smooth(y, -0.09, -0.014));
-  const eyeX = 0.0317 * look.width,
+  const eyeX = 0.0352 * look.width,
     eyeY = 0.013,
-    half = kind === 'dev' ? 0.0168 : 0.0161,
-    irisRadius = 0.0071;
+    half = kind === 'dev' ? 0.0228 : 0.022,
+    irisRadius = 0.0104;
   const mouthY = -0.0645;
   function detail(x: number, y: number) {
     const a = Math.abs(x);
@@ -363,8 +363,9 @@ export function createCharacterHead(kind: CharacterKind, skinColor: string): Cha
   const irisMap = inkTexture(128, 128, (ctx) => {
     const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 63);
     g.addColorStop(0, '#30251f');
-    g.addColorStop(0.32, look.eyes);
-    g.addColorStop(0.76, look.eyes);
+    g.addColorStop(0.3, look.eyes);
+    g.addColorStop(0.62, look.eyes);
+    g.addColorStop(0.8, '#2b2320');
     g.addColorStop(1, '#332f2a');
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, 128, 128);
@@ -385,11 +386,11 @@ export function createCharacterHead(kind: CharacterKind, skinColor: string): Cha
     ctx.fill();
     ctx.fillStyle = '#fffbec';
     ctx.beginPath();
-    ctx.ellipse(46, 42, 6.8, 5.6, -0.55, 0, 2 * Math.PI);
+    ctx.ellipse(45, 41, 8.4, 7, -0.55, 0, 2 * Math.PI);
     ctx.fill();
     ctx.fillStyle = '#e6ddce86';
     ctx.beginPath();
-    ctx.arc(83, 77, 2.1, 0, 2 * Math.PI);
+    ctx.arc(84, 78, 3, 0, 2 * Math.PI);
     ctx.fill();
   });
   const browMap = inkTexture(192, 48, (ctx) => {
@@ -431,13 +432,13 @@ export function createCharacterHead(kind: CharacterKind, skinColor: string): Cha
     eyeGroup.add(eyeball);
     const extent = (x: number) => Math.max(0, 1 - (x / half) ** 2);
     const edge = (x: number, upper: boolean) =>
-      (upper ? 0.00535 : -0.0041) * extent(x) ** 0.9 + ((side * x) / half) * look.eyeTilt;
+      (upper ? 0.0076 : -0.0052) * extent(x) ** 0.9 + ((side * x) / half) * look.eyeTilt;
     const eyeZ = (x: number, y: number) =>
-      surface(side * eyeX + x, eyeY + y) + 0.00065 + 0.00165 * Math.max(0, extent(x) - (y / 0.014) ** 2);
+      surface(side * eyeX + x, eyeY + y) + 0.00065 + 0.0019 * Math.max(0, extent(x) - (y / 0.018) ** 2);
     const sclera = grid(lidCounts, 4),
       sp = sclera.getAttribute('position'),
       scleraColors: number[] = [];
-    const scleraTone = new THREE.Color('#dfd4c6'),
+    const scleraTone = new THREE.Color('#ebe3d9'),
       cornerTone = new THREE.Color('#ac8277');
     for (let j = 0; j <= 4; j++)
       for (let i = 0; i <= lidCounts; i++) {
@@ -483,7 +484,7 @@ export function createCharacterHead(kind: CharacterKind, skinColor: string): Cha
           const x = mix(-half, half, i / lidCounts),
             e = extent(x),
             base = edge(x, upper),
-            h = (upper ? 0.0058 : -0.0044) * e ** 0.72;
+            h = (upper ? 0.0074 : -0.0056) * e ** 0.72;
           const margin = base * open;
           for (let j = 0; j <= lidRows; j++) {
             const offset = [0, 0.13, 0.33, 0.61, 0.81, 1][j],
@@ -500,8 +501,8 @@ export function createCharacterHead(kind: CharacterKind, skinColor: string): Cha
             normal.normalize();
             normals.setXYZ(idx, normal.x, normal.y, normal.z);
             skinTone(worldX, worldY, Math.sqrt(1 - (worldX / widthAt(worldY)) ** 2), tint).multiplyScalar(0.95);
-            if (j === 0) tint.lerp(upper ? browInk : depthColor, (upper ? 0.91 : 0.33) * e ** 0.35);
-            if (j === 1 && upper) tint.lerp(browInk, 0.56 * e ** 0.45);
+            if (j === 0) tint.lerp(upper ? browInk : depthColor, (upper ? 0.97 : 0.5) * e ** 0.35);
+            if (j === 1 && upper) tint.lerp(browInk, 0.72 * e ** 0.45);
             if (j === 3 && upper) tint.lerp(depthColor, 0.25 * e);
             color.setXYZ(idx, tint.r, tint.g, tint.b);
           }
@@ -532,7 +533,7 @@ export function createCharacterHead(kind: CharacterKind, skinColor: string): Cha
     for (let j = 0; j <= 2; j++)
       for (let i = 0; i <= 16; i++) {
         const t = i / 16,
-          x = side * mix(-0.0175, 0.0225, t),
+          x = side * mix(-0.019, 0.0245, t),
           y = 0.0031 * Math.sin(Math.PI * t) - 0.001 * t + (j / 2 - 0.5) * (kind === 'dev' ? 0.0102 : 0.0085);
         bp.setXYZ(j * 17 + i, x, y, surface(side * eyeX + x, look.browHeight + y) + 0.00075);
         bu.push(t, j / 2);
@@ -553,8 +554,8 @@ export function createCharacterHead(kind: CharacterKind, skinColor: string): Cha
         oldOpen = open;
         oldSquint = squint;
       }
-      const cx = clamp(xLook * 0.0037 - side * converge, -0.0029, 0.0029),
-        cy = clamp(yLook * 0.0029, -0.0015, 0.0015) + 0.0002;
+      const cx = clamp(xLook * 0.0048 - side * converge, -0.0042, 0.0042),
+        cy = clamp(yLook * 0.0036, -0.0021, 0.0021) + 0.0002;
       if (!Number.isFinite(oldX) || Math.abs(oldX - cx) + Math.abs(oldY - cy) > 0.000045) {
         for (let j = 0; j <= 2; j++)
           for (let i = 0; i <= 32; i++) {
@@ -645,7 +646,7 @@ export function createCharacterHead(kind: CharacterKind, skinColor: string): Cha
         const upper = k === 1,
           margin = upper ? high : low;
         const thin = 1 - 0.38 * press;
-        const thick = (upper ? 0.0047 * (1 - 0.3 * bump(t, 0, 0.18) + 0.13 * bump(Math.abs(t), 0.28, 0.17)) : -0.005) * thin;
+        const thick = (upper ? 0.0068 * (1 - 0.3 * bump(t, 0, 0.18) + 0.17 * bump(Math.abs(t), 0.28, 0.17)) : -0.0076) * thin;
         for (let j = 0; j <= 4; j++) {
           const f = j / 4,
             y = mouthY + margin + e * thick * f;
