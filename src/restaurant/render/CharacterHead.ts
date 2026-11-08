@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { Emotion } from '../types';
+import type { FacePose } from './FacialPerformance';
 import type { CharacterKind } from './CharacterBody';
 import { createCharacterHair, paintPulledBackRoots } from './CharacterHair';
 
@@ -8,11 +8,13 @@ export interface CharacterHead {
   update(
     time: number,
     dt: number,
-    emotion: Emotion,
+    pose: FacePose,
     speaking: boolean,
     amplitude: number,
     lookX: number,
     lookY: number,
+    /** Inward iris shift in metres so both eyes converge on a near target. */
+    converge?: number,
   ): void;
   dispose(): void;
 }
@@ -290,6 +292,39 @@ export function createCharacterHead(kind: CharacterKind, skinColor: string): Cha
   face.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   face.computeVertexNormals();
   add(face, skin);
+  // Skin that moves with the expression: cheeks lift into a smile, corners sink in a frown,
+  // the brow ridge follows the brows, the glabella furrows and the chin drops with the jaw.
+  const facePositions = pos.array as Float32Array,
+    faceBase = facePositions.slice();
+  const cheekLift: number[] = [], cheekOut: number[] = [], frownW: number[] = [], browW: number[] = [], glabellaW: number[] = [], chinW: number[] = [], sideOf: number[] = [];
+  for (let v = 0; v < pos.count; v++) {
+    const x = faceBase[v * 3], y = faceBase[v * 3 + 1], z = faceBase[v * 3 + 2], a = Math.abs(x);
+    const front = z > 0.02 ? 1 : 0;
+    cheekLift.push(front * bump(a, 0.047, 0.021) * bump(y, -0.03, 0.024));
+    cheekOut.push(front * bump(a, 0.05, 0.02) * bump(y, -0.024, 0.02));
+    frownW.push(front * bump(a, 0.031, 0.015) * bump(y, -0.072, 0.013));
+    browW.push(front * bump(y, 0.04, 0.015) * bump(a, 0.03, 0.028));
+    glabellaW.push(front * bump(x, 0, 0.011) * bump(y, 0.033, 0.013));
+    chinW.push(front * smooth(-y, 0.07, 0.115));
+    sideOf.push(Math.sign(x));
+  }
+  const faceNormalAttr = face.getAttribute('normal') as THREE.BufferAttribute;
+  let faceMorphKey = NaN;
+  function morphFace(smile: number, asymmetry: number, browLift: number, browAngle: number, jaw: number) {
+    const key = smile * 5 + asymmetry * 2 + browLift * 900 + browAngle * 4 + jaw * 7;
+    if (Number.isFinite(faceMorphKey) && Math.abs(faceMorphKey - key) < 0.01) return;
+    faceMorphKey = key;
+    const up = Math.max(0, smile), down = Math.max(0, -smile);
+    for (let v = 0; v < pos.count; v++) {
+      const bias = 1 + asymmetry * 0.35 * sideOf[v];
+      facePositions[v * 3 + 1] =
+        faceBase[v * 3 + 1] + 0.0042 * up * bias * cheekLift[v] - 0.0024 * down * frownW[v] + 0.55 * browLift * browW[v] - 0.0045 * jaw * chinW[v];
+      facePositions[v * 3 + 2] = faceBase[v * 3 + 2] + 0.0026 * up * bias * cheekOut[v] - 0.012 * Math.max(0, browAngle) * glabellaW[v];
+    }
+    pos.needsUpdate = true;
+    face.computeVertexNormals();
+    faceNormalAttr.needsUpdate = true;
+  }
 
   // Sculpt the helix, concha and lobe as a single shallow relief.
   for (const side of [-1, 1]) {
@@ -508,13 +543,17 @@ export function createCharacterHead(kind: CharacterKind, skinColor: string): Cha
     let oldX = NaN,
       oldY = NaN,
       oldOpen = NaN;
-    return (open: number, xLook: number, yLook: number, browAngle: number, lift: number, dt: number) => {
-      if (!Number.isFinite(oldOpen) || Math.abs(oldOpen - open) > 0.0005) {
+    let oldSquint = NaN;
+    return (open: number, squint: number, xLook: number, yLook: number, browAngle: number, lift: number, innerRaise: number, converge: number, dt: number) => {
+      if (!Number.isFinite(oldOpen) || Math.abs(oldOpen - open) > 0.0005 || Math.abs(oldSquint - squint) > 0.004) {
         eyeball.scale.y = open;
-        lids.forEach((update) => update(open));
+        // The cheek pushes the lower lid up in a real smile; the upper lid keeps the blink.
+        lids[0](open * (1 - 0.55 * squint));
+        lids[1](open);
         oldOpen = open;
+        oldSquint = squint;
       }
-      const cx = clamp(xLook * 0.0037, -0.0027, 0.0027),
+      const cx = clamp(xLook * 0.0037 - side * converge, -0.0029, 0.0029),
         cy = clamp(yLook * 0.0029, -0.0015, 0.0015) + 0.0002;
       if (!Number.isFinite(oldX) || Math.abs(oldX - cx) + Math.abs(oldY - cy) > 0.000045) {
         for (let j = 0; j <= 2; j++)
@@ -536,8 +575,8 @@ export function createCharacterHead(kind: CharacterKind, skinColor: string): Cha
         oldY = cy;
       }
       const blend = 1 - Math.exp(-dt * 9);
-      brow.rotation.z = mix(brow.rotation.z, side * browAngle, blend);
-      brow.position.y = mix(brow.position.y, look.browHeight + lift, blend);
+      brow.rotation.z = mix(brow.rotation.z, side * (browAngle - innerRaise * 0.16), blend);
+      brow.position.y = mix(brow.position.y, look.browHeight + lift + innerRaise * 0.0016, blend);
     };
   }
   const eyes = [eye(-1), eye(1)];
@@ -566,63 +605,51 @@ export function createCharacterHead(kind: CharacterKind, skinColor: string): Cha
   });
   root.add(hair.group);
   let lastVoice = NaN,
-    lastSmile = NaN,
+    lastShape = NaN,
     disposed = false;
   function update(
     time: number,
     dt: number,
-    emotion: Emotion,
+    pose: FacePose,
     speaking: boolean,
     amplitude: number,
     lookX: number,
     lookY: number,
+    converge = 0,
   ) {
     if (disposed) return;
     hair.update(dt, root.rotation.y, time);
-    const smile =
-      emotion === 'flirtatious'
-        ? 0.95
-        : emotion === 'warm'
-          ? 0.73
-          : emotion === 'amused'
-            ? 1
-            : emotion === 'annoyed' || emotion === 'angry'
-              ? -0.44
-              : 0.12;
-    const tense = ['angry', 'annoyed', 'defensive'].includes(emotion);
-    const phase = (time + (kind === 'mira' ? 0.5 : kind === 'jules' ? 1.9 : 3.3)) % 4.6;
-    const blink = phase < 0.15 ? Math.max(0.018, Math.abs(phase / 0.075 - 1)) : 1;
-    const open = blink * (emotion === 'surprised' ? 1.15 : 1 - 0.065 * Math.max(0, smile));
+    const smile = pose.smile;
     eyes.forEach((render) =>
-      render(
-        open,
-        lookX,
-        lookY,
-        tense ? 0.13 : emotion === 'surprised' ? -0.08 : -0.018 * smile,
-        emotion === 'surprised' ? 0.0032 : tense ? -0.001 : 0,
-        dt,
-      ),
+      render(pose.eyeOpen, pose.squint, lookX + pose.gazeX, lookY + pose.gazeY, pose.browAngle, pose.browLift, pose.browInner, converge, dt),
     );
+    morphFace(smile, pose.asymmetry, pose.browLift, pose.browAngle, pose.jaw);
     const voice = speaking ? clamp(amplitude * 0.86 + Math.max(0, Math.sin(time * 16)) * 0.06, 0, 1) : 0;
-    if (Number.isFinite(lastVoice) && Math.abs(lastVoice - voice) < 0.004 && lastSmile === smile) return;
+    // One scalar summarises the mouth shape so a still face costs nothing per frame.
+    const shape = smile * 7 + pose.asymmetry * 3 + pose.press * 5 + pose.jaw * 11;
+    if (Number.isFinite(lastVoice) && Math.abs(lastVoice - voice) < 0.004 && Math.abs(lastShape - shape) < 0.012) return;
+    const press = pose.press,
+      jaw = pose.jaw;
     for (let i = 0; i <= mouthCols; i++) {
       const t = (i / mouthCols) * 2 - 1,
         e = Math.max(0, 1 - t * t),
-        x = t * (look.lipWidth + 0.0011 * Math.max(0, smile));
-      const centre = 0.00085 * Math.abs(t) + smile * 0.0035 * t * t - 0.00045 * bump(t, 0, 0.3);
-      const high = centre + (0.00027 + voice * 0.0045) * e,
-        low = centre - (0.00027 + voice * 0.008) * e;
+        corner = smile + pose.asymmetry * 0.3 * t,
+        x = t * (look.lipWidth + 0.0032 * Math.max(0, smile) - 0.0008 * Math.max(0, -smile) + 0.0009 * press);
+      const centre = 0.00085 * Math.abs(t) + corner * 0.0058 * t * t - 0.00045 * bump(t, 0, 0.3);
+      const high = centre + (0.00027 * (1 - 0.6 * press) + voice * 0.0045 + jaw * 0.003) * e,
+        low = centre - (0.00027 * (1 - 0.6 * press) + voice * 0.008 + jaw * 0.011) * e;
       const p = gap.getAttribute('position');
       p.setXYZ(i, x, mouthY + low, surface(x, mouthY + low) + 0.0016 * e + 0.0004);
       p.setXYZ(mouthCols + 1 + i, x, mouthY + high, surface(x, mouthY + high) + 0.0016 * e + 0.0004);
       lips.forEach((g, k) => {
         const upper = k === 1,
           margin = upper ? high : low;
-        const thick = upper ? 0.0047 * (1 - 0.3 * bump(t, 0, 0.18) + 0.13 * bump(Math.abs(t), 0.28, 0.17)) : -0.005;
+        const thin = 1 - 0.38 * press;
+        const thick = (upper ? 0.0047 * (1 - 0.3 * bump(t, 0, 0.18) + 0.13 * bump(Math.abs(t), 0.28, 0.17)) : -0.005) * thin;
         for (let j = 0; j <= 4; j++) {
           const f = j / 4,
             y = mouthY + margin + e * thick * f;
-          const depth = e * ((1 - f) * 0.0024 + Math.sin(Math.PI * f) * (upper ? 0.0017 : 0.0024));
+          const depth = e * ((1 - f) * 0.0024 + Math.sin(Math.PI * f) * (upper ? 0.0017 : 0.0024)) * (1 - 0.25 * press);
           g.getAttribute('position').setXYZ(j * (mouthCols + 1) + i, x, y, surface(x, y) + depth + 0.00032);
         }
       });
@@ -631,10 +658,10 @@ export function createCharacterHead(kind: CharacterKind, skinColor: string): Cha
       g.getAttribute('position').needsUpdate = true;
       g.computeVertexNormals();
     }
-    lastSmile = smile;
+    lastShape = shape;
     lastVoice = voice;
   }
-  update(0, 1 / 60, 'neutral', false, 0, 0, 0);
+  update(0, 1 / 60, { smile: 0.12, asymmetry: 0, squint: 0.04, jaw: 0, press: 0, browAngle: 0, browLift: 0, browInner: 0, eyeOpen: 1, gazeX: 0, gazeY: 0, headPitch: 0, headYaw: 0, headRoll: 0 }, false, 0, 0, 0);
   return {
     root,
     update,

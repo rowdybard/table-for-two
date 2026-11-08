@@ -6,6 +6,8 @@ import { batchGarmentPieces, builds, dressTorso } from './CharacterWardrobe';
 export type CharacterKind = 'mira' | 'jules' | 'dev' | 'waiter' | 'diner' | 'friend';
 export interface BodyPerformance {
   guarded: boolean; comfortable: boolean; speaking: boolean; amplitude: number; shared: boolean; phoneActive: boolean;
+  /** Seated forward lean from the current feeling, in radians; positive leans in. */
+  leanBias?: number;
 }
 export interface CharacterBodyRig {
   root: THREE.Group;
@@ -464,7 +466,7 @@ class TailoredBody implements CharacterBodyRig {
     this.pelvis.position.x = restPose * weightSide * .004;
     this.pelvis.position.y = this.seated ? -.295 : -lowering;
     this.upperBody.position.set(this.pelvis.position.x, (this.seated ? .745 : 1.04 - lowering) + breath, 0);
-    const leanTarget = this.seated ? performance.guarded ? -.055 : performance.comfortable ? .025 : .005 : 0;
+    const leanTarget = this.seated ? (performance.guarded ? -.055 : performance.comfortable ? .025 : .005) + (performance.leanBias ?? 0) : 0;
     this.lean = THREE.MathUtils.lerp(this.lean, leanTarget, dt > 0 ? 1 - Math.exp(-dt * 5) : 1);
     this.upperBody.rotation.set(this.lean, restPose * weightSide * .018, restPose * weightSide * .011 + this.walkBlend * Math.sin(this.gait) * .008);
     this.upperBody.updateMatrix();
