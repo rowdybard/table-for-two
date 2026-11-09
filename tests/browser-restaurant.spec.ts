@@ -47,16 +47,38 @@ async function openSettingsFromPause(page: Page) {
     await new Promise(resolve => setTimeout(resolve, 250));
     await route.fulfill({ response });
   }, { times: 1 });
-  await page.keyboard.press('Escape');
-  await expect(page.locator('#pause-dialog')).toBeVisible();
-  await expect(page.locator('#pause-settings')).toBeDisabled();
-  await expect(page.locator('#pause-talk')).toBeDisabled();
-  await expect(page.locator('#resume-date')).toBeEnabled();
-  await expect(page.locator('#resume-date')).toBeFocused();
-  for (const id of ['pause-talk', 'pause-journal', 'pause-settings']) {
-    await page.keyboard.press('ArrowDown');
-    await expect(page.locator(`#${id}`)).toBeFocused();
+  // Navigate before the next game frame, then verify that its delayed menu
+  // refresh does not steal focus from the control the guest selected.
+  await page.evaluate(() => {
+    const win = window as typeof window & { __testMenuRaf?: { original: typeof requestAnimationFrame; pending: FrameRequestCallback[] } };
+    const original = window.requestAnimationFrame.bind(window), pending: FrameRequestCallback[] = [];
+    win.__testMenuRaf = { original, pending };
+    window.requestAnimationFrame = callback => { pending.push(callback); return -pending.length; };
+  });
+  try {
+    await page.evaluate(() => new Promise<void>(resolve => {
+      const gate = (window as typeof window & { __testMenuRaf: { original: typeof requestAnimationFrame } }).__testMenuRaf;
+      gate.original(() => gate.original(() => resolve()));
+    }));
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#pause-dialog')).toBeVisible();
+    await expect(page.locator('#pause-settings')).toBeDisabled();
+    await expect(page.locator('#pause-talk')).toBeDisabled();
+    await expect(page.locator('#resume-date')).toBeEnabled();
+    await expect(page.locator('#resume-date')).toBeFocused();
+    for (const id of ['pause-talk', 'pause-journal', 'pause-settings']) {
+      await page.keyboard.press('ArrowDown');
+      await expect(page.locator(`#${id}`)).toBeFocused();
+    }
+  } finally {
+    await page.evaluate(() => {
+      const win = window as typeof window & { __testMenuRaf?: { original: typeof requestAnimationFrame; pending: FrameRequestCallback[] } };
+      const gate = win.__testMenuRaf;
+      if (gate) { window.requestAnimationFrame = gate.original; gate.pending.forEach(callback => gate.original(callback)); delete win.__testMenuRaf; }
+    });
   }
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect(page.locator('#pause-settings')).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(page.locator('#settings-dialog')).toBeVisible();
 }
