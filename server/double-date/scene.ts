@@ -218,7 +218,9 @@ export class DoubleTableScene {
   agendaContext(human: DoubleHumanId) { return this.directors.get(human)!.agenda.promptContext(); }
   boundaryContext(human: DoubleHumanId) { return this.directors.get(human)!.boundaries.promptContext(); }
   /** Someone at the table spoke, so no date fills a silence or drops an aside over them. */
-  noteHumanTurn(text = '') { for (const director of this.directors.values()) director.noteHumanTurn(text); }
+  noteHumanTurn(text = '', speaker?: DoubleHumanId) { for (const director of this.directors.values()) director.noteHumanTurn(text, speaker); }
+  /** A question this pair's date asked their own friend that is still waiting for an answer. */
+  pendingQuestion(human: DoubleHumanId) { return this.directors.get(human)!.pendingQuestion; }
   replyEnded() { for (const director of this.directors.values()) director.replyEnded(); }
   clearPendingBoundaries() { for (const director of this.directors.values()) { director.boundaries.clearPending(); director.chemistry.clearPending(); } }
   redirectConversation(human: DoubleHumanId) { this.directors.get(human)!.redirectConversation(false); }

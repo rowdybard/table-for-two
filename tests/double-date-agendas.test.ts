@@ -9,6 +9,7 @@ import type { RestaurantPaidAccount, RestaurantServices } from '../server/restau
 import type { ClaudeChunk, ClaudeRequest } from '../server/restaurant/providers';
 import type { AgendaAssessment } from '../src/restaurant/agenda-types';
 import type { DoubleDateRoomState, DoubleHumanId, DoubleTurnRequest } from '../src/restaurant/double-date-types';
+import { doubleNote, humanTurnOf } from './helpers/double-note';
 
 const neutral = { signal: 'none', reason: 'No boundary change.', wantsToLeave: false };
 const clue = { d1: 'I would like to take the evening slowly.', d2: 'I want to feel heard tonight.' };
@@ -46,7 +47,7 @@ async function fixture(stream?: (request: ClaudeRequest, signal: AbortSignal) =>
     async *streamClaude(_account, request, abort) {
       requests.push(request); usage.claudeRequests++;
       if (stream) { yield* stream(request, abort); return; }
-      const turn = JSON.parse(request.messages.at(-1)!.content).humanTurn;
+      const turn = humanTurnOf(request);
       const boundarySocial = boundaryKind === 'none' ? social : { signal: boundaryKind === 'set' ? 'none' : 'pressure', reason: 'The date wants to choose their own food.', wantsToLeave: false, boundary: { kind: boundaryKind, topic: 'food-drink', refusal, evidence: turn.text } };
       const result = complete(signal, turn.text, { social: boundarySocial }, specifics);
       if (boundaryKind === 'set') for (const line of result.utterances) line.text = refusal;
@@ -98,8 +99,9 @@ test('double dates assess the speaking player only, disclose on owning playback,
   f.receipt('h1', 'd1'); f.receipt('h2', 'd2');
   assert.deepEqual(f.state.views.h1.evening.agenda?.clues, [clue.d1, secondClue.d1]);
   assert.deepEqual(f.state.views.h2.evening.agenda?.clues, [clue.d2, secondClue.d2]);
-  const payload = JSON.parse(f.requests[0].messages.at(-1)!.content);
-  assert.ok(payload.characters.every((actor: { agenda: unknown }) => actor.agenda));
+  const note = doubleNote(f.requests[0]);
+  assert.match(note, /Mira’s private goal, never said aloud: /); assert.match(note, /Jules’s private goal, never said aloud: /);
+  assert.ok(!f.requests[0].system.includes(f.scene.agendaContext('h1').goal), 'the goal is per-turn private context, not part of the cached system prompt');
   assert.ok(f.requests[0].system.includes('private goal'));
   assert.ok(f.requests[0].system.includes('Every date begins highly skeptical'), 'both dates receive the shared skepticism policy');
   assert.ok(JSON.stringify(f.requests[0].outputSchema).includes('agenda'));

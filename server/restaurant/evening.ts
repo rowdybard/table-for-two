@@ -177,8 +177,8 @@ export class EveningDirector {
    */
   noteHumanTurn(text = '', speakerId?: string) {
     this.lastHumanAt = this.state.elapsed; this.lastSpokeAt = this.state.elapsed; this.awaitingReply = true;
-    this.dateAsked = false; this.openQuestion = null;
-    if (!speakerId || speakerId === this.ownHumanId) this.noteDessertWords(text);
+    // A question this date put to their own human is answered (or not) by that human; the friend's words do not settle it.
+    if (!speakerId || speakerId === this.ownHumanId) { this.dateAsked = false; this.openQuestion = null; this.noteDessertWords(text); }
   }
   /** The date's reply to the latest human turn has finished (or was cut off). */
   replyEnded() { this.awaitingReply = false; this.lastSpokeAt = this.repliedAt = this.state.elapsed; }

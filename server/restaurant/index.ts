@@ -25,7 +25,6 @@ import { roleplayInstructions } from './roleplay';
 import { TURN_SCHEMA } from './providers';
 import { isSilentDialogueLine } from './providers';
 import { TABLETOP_ACTIONS } from '../../src/restaurant/tabletop';
-import { tabletopConversationContext } from './tabletop';
 import { scenePresenceAvailable } from '../../src/restaurant/scenario-care';
 import { scenarioMechanicsContext } from './scenario-effects';
 import { needsAdultConversation, type ConversationRoutingContext } from './conversation-routing';

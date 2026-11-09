@@ -16,7 +16,9 @@ export const DATE_DIALOGUE_INSTRUCTIONS = [
   'Kindness, curiosity and humor are not automatic rewards; money never buys affection; acknowledge a sincere repair. Respect a stated lack of romantic interest even after a kind gesture. Never out anyone, mock involuntary tics, turn a medical response into flirtation, invent medical treatment, pressure staff, or ask anyone to suppress a tic or explain private identity details. A story can add a real detail to the evening; do not contradict it with a preset assumption. Agree when you agree; push back only when you actually disagree.',
 ].join('\n');
 
-const CONTRACT_MEMORY_CHARS = 700;
+export const CONTRACT_MEMORY_CHARS = 700;
+/** The three parts of the notebook, shared by the Solo and Double contracts. */
+export const MEMORY_PARTS = '"HUMAN:" what they told you in their own terms (names, numbers, places, work, family, likes, dislikes); keep every earlier item unless they corrected it, and write "says" before a claim you doubt. "TOLD THEM:" stories and facts about your own life you have already shared, a few words each, so you never tell one twice. "OPEN:" a question either of you asked that is still unanswered, or something promised, removed once settled. Leave out scenery, food, staff and your own jokes or wording; the table events are tracked for you.';
 /** How the turn is returned. Field order matches TURN_SCHEMA: the spoken line streams first, bookkeeping follows. */
 export function outputContract(vocabulary: { emotions: readonly string[]; actions: readonly string[]; signals: readonly string[] }): string {
   return [
@@ -26,27 +28,36 @@ export function outputContract(vocabulary: { emotions: readonly string[]; action
     'Date text is about 25 words, under 260 characters in total (up to about 60 words for a story or explanation they asked for); the server discards a reply over 420.',
     `Emotions: ${vocabulary.emotions.join(', ')}. Actions: ${vocabulary.actions.join(', ')}; actions are proposals, and the server owns courses and outcomes.`,
     `social.signal is one of ${vocabulary.signals.join(', ')} with a factual reason of at most 180 characters; pressure means explicit disregard for a boundary, not ordinary disagreement. Set wantsToLeave only after repeated pressure; the server handles departure.`,
-    `"memory" is your private notebook: rewrite "Your notes" from the latest message with this exchange, at most ${CONTRACT_MEMORY_CHARS} characters, in exactly three labelled parts. "HUMAN:" what they told you in their own terms (names, numbers, places, work, family, likes, dislikes); keep every earlier item unless they corrected it, and write "says" before a claim you doubt. "TOLD THEM:" stories and facts about your own life you have already shared, a few words each, so you never tell one twice. "OPEN:" a question either of you asked that is still unanswered, or something promised, removed once settled. Leave out scenery, food, staff and your own jokes or wording; the table events are tracked for you.`,
+    `"memory" is your private notebook: rewrite "Your notes" from the latest message with this exchange, at most ${CONTRACT_MEMORY_CHARS} characters, in exactly three labelled parts. ${MEMORY_PARTS}`,
     'No invented human statements, numeric scores, markdown or speech-direction tags in text.',
   ].join('\n');
 }
 
 const wordCount = (text: string) => text.trim().split(/\s+/).filter(Boolean).length;
 const sentenceCount = (text: string) => text.split(/(?<=[.!?])\s+/).filter(Boolean).length;
+/** How much the human said sets how much to say back. */
+export function humanLengthHint(humanText: string): string {
+  const said = wordCount(humanText);
+  if (said <= 6) return 'They said very little: answer in a few words or one short sentence.';
+  if (said >= 30) return 'They told you something real: acknowledge it first; two or three sentences is fine.';
+  return '';
+}
+/** A nudge when the date's last few lines were all the same size or all ended in questions. `owner` names the date in a shared room. */
+export function dateShapeHint(recentDelivered: readonly SceneUtterance[], owner?: string): string {
+  const mine = recentDelivered.filter(line => line.speaker === 'date').slice(-3), hint: string[] = [], your = owner ? `${owner}’s` : 'Your';
+  if (mine.length === 3 && mine.every(line => sentenceCount(line.text) === sentenceCount(mine[0].text))) {
+    const n = sentenceCount(mine[0].text);
+    hint.push(`${your} last three replies were all ${n} sentence${n === 1 ? '' : 's'} long: change the shape.`);
+  }
+  if (mine.filter(line => /\?["”’']*\s*$/.test(line.text.trim())).length >= 2) hint.push(`${your} last replies ended in questions: end this one on a statement.`);
+  return hint.join(' ');
+}
 /**
  * Local, model-free hint about the shape of the next reply: short for a short remark, warm for a long
  * disclosure, and a nudge when the last few date lines were all the same size or all ended in questions.
  */
 export function replyShapeHint(recentDelivered: readonly SceneUtterance[], humanText: string): string {
-  const mine = recentDelivered.filter(line => line.speaker === 'date').slice(-3), hint: string[] = [], said = wordCount(humanText);
-  if (said <= 6) hint.push('They said very little: answer in a few words or one short sentence.');
-  else if (said >= 30) hint.push('They told you something real: acknowledge it first; two or three sentences is fine.');
-  if (mine.length === 3 && mine.every(line => sentenceCount(line.text) === sentenceCount(mine[0].text))) {
-    const n = sentenceCount(mine[0].text);
-    hint.push(`Your last three replies were all ${n} sentence${n === 1 ? '' : 's'} long: change the shape.`);
-  }
-  if (mine.filter(line => /\?["”’']*\s*$/.test(line.text.trim())).length >= 2) hint.push('Your last replies ended in questions: end this one on a statement.');
-  return hint.join(' ');
+  return [humanLengthHint(humanText), dateShapeHint(recentDelivered)].filter(Boolean).join(' ');
 }
 
 const propFamilies = [
@@ -122,23 +133,24 @@ const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
  * "You" is the date and the human together; the human's own acts are always named, so the model is
  * never told that it did something the human did. `human` names the person in a Double room.
  */
-export function tableNow(scene: DinnerState, dateName: string, human = 'the human'): string {
+export function tableNow(scene: DinnerState, dateName: string, human = 'the human', opts: { pair?: string; age?: boolean } = {}): string {
   const e = scene.evening, parts: string[] = [], Human = human[0].toUpperCase() + human.slice(1), minutes = Math.floor(scene.elapsed / 60);
-  parts.push(minutes < 1 ? 'The date is under a minute old.' : `The date is about ${minutes} minute${minutes === 1 ? '' : 's'} old.`);
-  if (e.dialogueTurns > 0) parts.push(`You have traded ${e.dialogueTurns} repl${e.dialogueTurns === 1 ? 'y' : 'ies'} so far.`);
-  if (!scene.seated) parts.push(scene.stage === 'arrival' ? `You have just met at the entrance and have not sat down yet.` : 'You are not at the table right now.');
-  else if (!scene.order) parts.push('You are seated at your table with menus; nothing has been ordered yet.');
+  const we = opts.pair ?? 'you', We = we[0].toUpperCase() + we.slice(1), ours = opts.pair ? 'their' : 'your';
+  if (opts.age !== false) parts.push(minutes < 1 ? 'The date is under a minute old.' : `The date is about ${minutes} minute${minutes === 1 ? '' : 's'} old.`);
+  if (e.dialogueTurns > 0) parts.push(`${We} have traded ${e.dialogueTurns} repl${e.dialogueTurns === 1 ? 'y' : 'ies'} so far.`);
+  if (!scene.seated) parts.push(scene.stage === 'arrival' ? `${We} have just met at the entrance and have not sat down yet.` : `${We} are not at the table right now.`);
+  else if (!scene.order) parts.push(`${We} are seated at ${ours} table with menus; nothing has been ordered yet.`);
   if (scene.order) {
     const theirs = e.main.dateDish ? `, ${dateName} ordered the ${e.main.dateDish.toLowerCase()}` : '';
     const main = { none: 'ordered', waiting: 'ordered and are waiting for the food', served: 'have the mains on the table', finished: 'have finished the mains and Eli has cleared the plates' }[e.main.status];
-    parts.push(`${Human} ordered the ${scene.order.toLowerCase()}${theirs}; you ${main}.`);
+    parts.push(`${Human} ordered the ${scene.order.toLowerCase()}${theirs}; ${we} ${main}.`);
     if (e.main.status === 'served' && e.main.servedDish && e.main.servedDish !== scene.order) parts.push(`The plate in front of ${human} is the ${e.main.servedDish.toLowerCase()}, not what they ordered.`);
     if (e.main.status === 'served' && !e.incident) parts.push(e.main.bites === 0 ? `${Human} has not started eating yet.` : `${Human} has started eating.`);
   }
   if (e.dessert.status === 'waiting') parts.push(`Dessert (${dishName(e.dessert.choice).toLowerCase()}) is on its way.`);
-  else if (e.dessert.status === 'served') parts.push(`You are sharing the ${dishName(e.dessert.choice).toLowerCase()} for dessert.`);
+  else if (e.dessert.status === 'served') parts.push(`${We} are sharing the ${dishName(e.dessert.choice).toLowerCase()} for dessert.`);
   else if (e.dessert.status === 'finished') parts.push('Dessert is finished.');
-  else if (e.dessert.status === 'skipped') parts.push('You both skipped dessert.');
+  else if (e.dessert.status === 'skipped') parts.push(`${We} both skipped dessert.`);
   else if (e.main.status === 'finished' && !e.bill.requested && !e.farewell.ending) {
     const warm = !['guarded', 'hurt', 'leaving'].includes(e.stance);
     parts.push(`Eli has offered ${DESSERT_NAMES.slice(0, -1).join(', ')} or ${DESSERT_NAMES.at(-1)}, and nobody has chosen yet. If ${human} says which they want, treat it as their choice${warm ? `; if they say nothing, ${dateName} will pick one shortly` : ''}.`);
@@ -147,7 +159,7 @@ export function tableNow(scene: DinnerState, dateName: string, human = 'the huma
   else if (e.bill.requested) parts.push(`Eli has brought the check${e.bill.totalCents ? ` (${money(e.bill.totalCents)})` : ''}.`);
   if (e.incident) parts.push(`Happening right now: ${humanVoice(EVENT_COPY[e.incident.event].description, dateName, human)}`);
   if ((e.scenarioCare?.presence ?? 'at-table') !== 'at-table') parts.push(`${dateName} has stepped away from the table.`);
-  if (e.farewell.ending) parts.push('The evening is ending; you are saying goodbye.');
+  if (e.farewell.ending) parts.push(`The evening is ending; ${we} are saying goodbye.`);
   const reason = e.stanceReason && !/^You have only just met\.?$/.test(e.stanceReason) ? ` (${humanVoice(e.stanceReason, dateName, human).replace(/\.$/, '').replace(/^The human/, 'the human')})` : '';
   parts.push({
     curious: `${dateName} is still curious about ${human} so far${reason}.`,

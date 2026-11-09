@@ -129,8 +129,8 @@ export interface TurnNoteInput {
   human?: string;
 }
 
-const quote = (text: string) => `“${text}”`;
-const clean = (text: string) => text.replace(/\s+/g, ' ').trim();
+export const quote = (text: string) => `“${text}”`;
+export const clean = (text: string) => text.replace(/\s+/g, ' ').trim();
 
 /** The natural hint is offered on the third human turn and every third after, or when asked directly. */
 const asksWhatTheyWant = /\b(?:what (?:do|are) you (?:want|looking|hoping)|looking for|what brings you|what are you after|what do you want)\b/i;
@@ -158,17 +158,21 @@ export function serviceFacts(mechanics: Record<string, unknown> | undefined, dat
   return out;
 }
 
-/** Only refusals that were actually heard are in force; a pending one is shown so it is not repeated as settled. */
-function boundaryLines(context: BoundaryPrompt): string[] {
+/**
+ * Only refusals that were actually heard are in force; a pending one is shown so it is not repeated as settled.
+ * `who` names the person in a shared room; in Solo it is "they".
+ */
+export function boundaryLines(context: BoundaryPrompt, who = 'they'): string[] {
+  const has = who === 'they' ? 'have' : 'has';
   return context.boundaries.map(item => {
-    if (!item.delivered) return `- ${item.topic}: you started to say ${quote(item.pendingRefusal ?? item.refusal)}, but they have not heard it, so it is not in force yet.`;
+    if (!item.delivered) return `- ${item.topic}: you started to say ${quote(item.pendingRefusal ?? item.refusal)}, but ${who} ${has} not heard it, so it is not in force yet.`;
     const times = item.disregardCount === 1 ? 'once' : `${item.disregardCount} times`;
-    return `- ${item.topic}: they heard you say ${quote(item.refusal)}${item.disregardCount ? ` and have disregarded it ${times}` : ''}.`;
+    return `- ${item.topic}: ${who} heard you say ${quote(item.refusal)}${item.disregardCount ? ` and ${has} disregarded it ${times}` : ''}.`;
   });
 }
 
-function agendaLine(agenda: AgendaPrompt, showHint: boolean): string {
-  const parts = [`Private, never say it aloud: ${agenda.goal}${showHint ? ` ${agenda.naturalHint}` : ''}`];
+export function agendaLine(agenda: AgendaPrompt, showHint: boolean, lead = 'Private, never say it aloud'): string {
+  const parts = [`${lead}: ${agenda.goal}${showHint ? ` ${agenda.naturalHint}` : ''}`];
   if (agenda.heardClues.length) parts.push(`What they have already heard from you on this: ${agenda.heardClues.map(quote).join(' ')}`);
   if (agenda.confidence === 'earned') parts.push('They have earned your trust.');
   // The server discards a signal it cannot accept, so the rubric is shown only when one could count.
@@ -177,7 +181,7 @@ function agendaLine(agenda: AgendaPrompt, showHint: boolean): string {
 }
 
 /** The last question in a scripted line, which is what the human is answering. */
-const lastQuestion = (text: string) => (text.match(/[^.!?]*\?/g) ?? []).map(item => item.trim()).filter(Boolean).at(-1) ?? clean(text).slice(0, 240);
+export const lastQuestion = (text: string) => (text.match(/[^.!?]*\?/g) ?? []).map(item => item.trim()).filter(Boolean).at(-1) ?? clean(text).slice(0, 240);
 
 /**
  * The whole per-turn message. Labelled sections appear only when they have content, in a fixed order, and

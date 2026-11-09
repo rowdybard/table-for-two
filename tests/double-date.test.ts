@@ -12,6 +12,7 @@ import { MENU } from '../src/restaurant/content';
 import { initializeScenario, resolveScenario, tickScenario } from '../server/double-date/scenarios';
 import type { SocialResponse } from '../src/restaurant/types';
 import { stepScenarioEffects } from '../server/restaurant/scenario-effects';
+import { doubleNote, humanTurnOf } from './helpers/double-note';
 
 const encode = JSON.stringify;
 const neutral: SocialResponse = { signal: 'none', reason: 'No change in boundaries.', wantsToLeave: false };
@@ -71,7 +72,7 @@ test('one completed turn creates one Claude request shared by both clients; dupl
   const turn = { turnId: 'music', text: 'I grew up listening to Girls Generation.', target: 'table' };
   assert.equal((await api.request(api.path(h1) + '/turn', h1.token, turn)).status, 202); assert.equal((await api.request(api.path(h1) + '/turn', h1.token, turn)).status, 200);
   let state = await api.settle(h1); assert.equal(state.usage.claudeRequests, 1); assert.equal(requests.length, 1); assert.equal(state.usage.inputTokens, 120); assert.equal(state.usage.outputTokens, 50); assert.ok(state.usage.totalCost > 0);
-  assert.ok(state.lines.some(line => line.speaker === 'd2' && line.text.includes('bold song'))); assert.deepEqual((await api.poll(h2)).lines, state.lines); assert.ok(requests[0].system.includes('two independent')); assert.ok(requests[0].messages.at(-1)!.content.includes('biography')); assert.ok(requests[0].outputSchema);
+  assert.ok(state.lines.some(line => line.speaker === 'd2' && line.text.includes('bold song'))); assert.deepEqual((await api.poll(h2)).lines, state.lines); assert.ok(requests[0].system.includes('two fictional adult AI dates')); assert.ok(requests[0].system.includes('Life (draw on it only where the talk goes there'), 'the character sheets sit in the cached system prompt, not in every turn'); assert.ok(!doubleNote(requests[0]).includes('biography')); assert.ok(requests[0].outputSchema);
   assert.equal((await api.request(api.path(h1) + '/turn', h1.token, { ...turn, text: 'Changed.' })).status, 409);
   assert.equal((await api.request(api.path(h2) + '/turn', h2.token, turn)).status, 202); state = await api.settle(h2); assert.equal(state.usage.claudeRequests, 2);
 });
@@ -81,7 +82,7 @@ test('quiet friend turns and sustained exclusion are observable; silence never c
   const api = await boot({ claude: claude(request => contexts.push(request.messages.at(-1)!.content), () => ({ ...response([]), dateUpdates: response([]).dateUpdates.map(update => ({ ...update, social: repair ? { signal: 'repair', reason: 'Both friends included us again.', wantsToLeave: false } : neutral })) })) }); t.after(() => api.close()); const { h1, h2 } = await api.pair();
   api.advance(30); assert.ok((await api.poll(h1)).dates.every(date => date.stance === 'curious'));
   for (let i = 0; i < 3; i++) { await api.request(api.path(h1) + '/turn', h1.token, { turnId: `friend-${i}`, text: 'Remember our old playlist, Jamie?', target: 'h2' }); await api.settle(h1); }
-  let state = await api.poll(h2); assert.ok(state.dates.every(date => date.stance === 'guarded')); assert.ok(contexts.at(-1)!.includes('publicFriendOnlyTurns":3')); assert.equal(state.lines.filter(line => line.text.includes('old playlist')).length, 3);
+  let state = await api.poll(h2); assert.ok(state.dates.every(date => date.stance === 'guarded')); assert.match(contexts.at(-1)!, /talked only to each other for the last 3 public turns/); assert.equal(state.lines.filter(line => line.text.includes('old playlist')).length, 3);
   repair = true; await api.request(api.path(h2) + '/turn', h2.token, { turnId: 'include', text: 'Sorry, we got carried away. What music do you both like?', target: 'table' }); state = await api.settle(h2); assert.ok(state.dates.every(date => date.stance === 'curious'), 'including the table repairs exclusion without manufacturing earned confidence'); assert.equal(state.usage.claudeRequests, 4);
 });
 
@@ -93,7 +94,7 @@ test('two listeners share one billed speech producer and separate playback recei
   assert.deepEqual(await Promise.all([a.text(), b.text()]), ['ID3sharedcomplete', 'ID3sharedcomplete']); assert.equal(calls, 1);
   await api.request(api.path(h1) + '/playback', h1.token, { ...value, completed: true, playedSeconds: 2 }); await api.request(api.path(h2) + '/playback', h2.token, { ...value, completed: false, playedSeconds: .4 });
   state = await api.poll(h1); assert.ok(state.usage.speechCharacters >= line.text.length); assert.ok(state.usage.speechCharacters < line.text.length * 2);
-  await api.request(api.path(h2) + '/turn', h2.token, { turnId: 'followup', text: 'That sounds fun.', target: 'table' }); await api.settle(h2); const context = JSON.parse(contexts.at(-1)!); const history = context.find((entry: any) => entry.role === 'assistant' && entry.content.includes(line.text)); const spoken = history.content.split('\n').map((part: string) => JSON.parse(part)).flatMap((part: any) => part.utterances).find((utterance: any) => utterance.text === line.text); const delivery = spoken.delivery; assert.equal(delivery.h1.completed, true); assert.equal(delivery.h2.completed, false); assert.equal(delivery.h2.playedSeconds, .4);
+  await api.request(api.path(h2) + '/turn', h2.token, { turnId: 'followup', text: 'That sounds fun.', target: 'table' }); await api.settle(h2); const context = JSON.parse(contexts.at(-1)!) as { role: string; content: string }[]; const history = context.find(entry => entry.role === 'assistant' && entry.content.includes(line.text))!; const said = history.content.split('\n').find(part => part.includes(line.text))!; assert.ok(said.startsWith('Mira: '), 'the transcript names the speaker'); assert.match(said, /\(Jamie heard only /, 'only the listener who missed the end is mentioned'); assert.ok(!said.includes('Alex heard'), 'a line the first friend heard in full carries no note'); assert.ok(!said.includes('{') && !said.includes('delivery'), 'no JSON in the transcript');
 });
 
 test('validated utterances stream before turn completion and either human can barge in across both listeners', async t => {
@@ -243,7 +244,7 @@ test('a finished human can stay as a wingman, help by name, converse, view their
   assert.equal(state.views.h1.memory,frozenMemory);
   await api.request(api.path(h1)+'/turn',h1.token,{turnId:'wingman-chat',text:'What would make the rest of your evening good?',target:'d2'}); state=await api.settle(h1);
   assert.equal(calls.length,1); assert.equal(state.views.h1.memory,frozenMemory); assert.ok(state.lines.some(line=>line.speaker==='d2' && line.text.includes('staying')));
-  const context=JSON.parse(calls[0].messages.at(-1)!.content); assert.equal(context.members.find((member:any)=>member.id==='h1').role,'wingman'); assert.equal(context.characters[0].availableForDialogue,false);
+  const note=doubleNote(calls[0]); assert.match(note,/Mira has left the table and Alex’s evening with Mira is over; Alex stays on as a wingman\. Write nothing for Mira\./); assert.match(note,/Alex said to Jules: “What would make the rest of your evening good\?”/);
   state=await api.okay(h1,{type:'view-ending'}); assert.equal(localDoubleDateView(state,'h1').phase,'ended'); assert.equal(state.phase,'playing');
   state=await api.okay(h1,{type:'return-to-table'}); assert.equal(localDoubleDateView(state,'h1').phase,'playing'); assert.equal(state.views.h1.phase,'ended');
   state=await api.okay(h2,{type:'scene',command:{type:'finish'}}); assert.equal(state.phase,'ended'); assert.equal(localDoubleDateView(state,'h1').phase,'ended');
@@ -287,7 +288,7 @@ test('alternate scenario activates once after shared conversation, blocks compet
   await serveBothMains(api, [h1, h2]); await resolveArrivalOrder(api, h1); api.advance(26 / 20);
   assert.equal((await api.poll(h1)).scenario?.phase, 'dormant'); assert.ok((await api.poll(h1)).views.h1.elapsed < 240, 'conversation, rather than the time threshold, opens this story');
   for (let i = 0; i < 2; i++) { await api.request(api.path(h1) + '/turn', h1.token, { turnId: `scenario-${i}`, text: 'What would your ideal evening look like?', target: 'table' }); await api.settle(h1); }
-  api.advance(.05); let state = await api.poll(h2); assert.equal(state.scenario?.phase, 'active'); assert.ok(contexts[0].includes('scenario'));
+  api.advance(.05); let state = await api.poll(h2); assert.equal(state.scenario?.phase, 'active'); await api.request(api.path(h1) + '/turn', h1.token, { turnId: 'scenario-active', text: 'Tell me more.', target: 'table' }); await api.settle(h1); assert.match(contexts.at(-1)!, /Happening now \(/, 'an active story is part of what the dates know');
   assert.equal((await api.command(h2, { type: 'scenario', choice: 'invented-action' })).status, 400);
   assert.equal((await api.command(h1, { type: 'scene', command: { type: 'evening', action: 'skip-dessert' } })).status, 409);
   const choice = state.scenario!.choices[0].id; await api.okay(h2, { type: 'scenario', choice }); state = await api.poll(h1); assert.equal(state.scenario?.phase, 'active'); assert.equal(state.scenario?.beat, 'follow-through'); assert.equal(state.scenario?.decisions[0].by, 'Jamie'); await api.okay(h1, { type: 'scenario', choice: state.scenario!.choices[0].id }); state = await api.poll(h1); assert.equal(state.scenario?.phase, 'resolved'); assert.ok(state.scenario?.resolution); assert.ok(state.views.h1.evening.moments.some(moment => moment.id.startsWith('scenario-'))); assert.ok(state.views.h2.evening.moments.some(moment => moment.id.startsWith('scenario-')));
@@ -368,7 +369,7 @@ test('late wingman scenarios use the active clock and require a seated player ou
   state=await api.okay(h2,{type:'scenario',choice:state.scenario!.choices[0].id});
   assert.equal(state.scenario?.phase,'resolved'); assert.ok(state.scenario.resolvedAt!>=state.scenario.startedAt!); assert.ok(state.scenario.resolvedAt!>frozenClock);
   await api.request(api.path(h2)+'/turn',h2.token,{turnId:'after-story',text:'Back to our evening.',target:'d2'}); state=await api.settle(h2);
-  assert.equal(JSON.parse(requests.at(-1)!.messages.at(-1)!.content).room.sharedClock,state.views.h2.elapsed);
+  { const minutes=Math.floor(state.views.h2.elapsed/60); assert.match(doubleNote(requests.at(-1)!),minutes<1?/The evening is under a minute old/:new RegExp(`The evening is about ${minutes} minutes? old`)); }
 });
 
 test('a queued old human turn waits for authored interruption delivery, with caption fallback and fresh speech able to proceed', async t => {
@@ -393,7 +394,7 @@ test('a queued old human turn waits for authored interruption delivery, with cap
     } else if(resume==='timeout') api.advanceWallClock(31);
     else await api.request(api.path(h1)+'/turn',h1.token,{turnId:'fresh-interruption',text:'Actually, let me ask you something.',target:'table'});
     state=await api.settle(h2); assert.equal(calls,resume==='new-turn'?3:2, resume); assert.equal(state.usage.claudeRequests,calls);
-    assert.match(requests[1].messages.at(-1)!.content,/fresh water/); assert.equal(JSON.parse(requests[1].messages.at(-1)!.content).humanTurn.speaker,'h2');
+    assert.match(requests[1].messages.at(-1)!.content,/fresh water/); assert.equal(humanTurnOf(requests[1]).speaker,'Jamie');
     assert.equal((await api.request(api.path(h2)+'/turn',h2.token,queued)).status,200); assert.equal(state.error,undefined);
   }
 });
@@ -410,7 +411,7 @@ test('a finished date walks to the exit while their seated human remains a wingm
 test('independent date boundaries can end one pairing without forcing the other date to leave', async t => {
   const refusal = 'Please let me choose my own food. Do not order for me.';
   let calls = 0, humanText = '';
-  const api = await boot({ claude: claude(request => { humanText = JSON.parse(request.messages.at(-1)!.content).humanTurn.text; }, () => {
+  const api = await boot({ claude: claude(request => { humanText = humanTurnOf(request).text; }, () => {
     const setting = calls++ === 0;
     return { utterances: [{ speaker: 'd1', text: refusal, emotion: 'annoyed' }], dateUpdates: [{ actorId: 'd1', emotion: 'annoyed', memory: 'The date stated a food choice boundary.', social: { signal: setting ? 'none' : 'pressure', reason: 'The same explicit food boundary was disregarded again.', wantsToLeave: calls >= 3, boundary: { kind: setting ? 'set' : 'repeat', topic: 'food-drink', refusal, evidence: humanText } } }, { actorId: 'd2', emotion: 'warm', memory: 'My date has been considerate.', social: { signal: 'kindness', reason: 'My date made room for my answer.', wantsToLeave: false } }] };
   }) }); t.after(() => api.close()); const { h1, h2 } = await api.pair();
@@ -434,7 +435,7 @@ test('offstage dates cannot speak or change memory after an ending or departure 
         ? [{ speaker: 'd1', text: 'I have returned and want another date.', emotion: 'warm' }, { speaker: 'd2', text: 'We can still enjoy the rest of our evening.', emotion: 'warm' }]
         : [{ speaker: 'd1', text: 'A line from when I was still at the table.', emotion: 'neutral' }]);
       if (stage === 'pressure') {
-        const setting = boundaryTurns++ === 0, humanText = JSON.parse(request.messages.at(-1)!.content).humanTurn.text;
+        const setting = boundaryTurns++ === 0, humanText = humanTurnOf(request).text;
         result.utterances = [{ speaker: 'd1', text: refusal, emotion: 'annoyed' }];
         result.dateUpdates[0] = { actorId: 'd1', emotion: 'annoyed', memory: 'I stated the same food choice boundary.', social: { signal: setting ? 'none' : 'pressure', reason: 'The explicit boundary was ignored.', wantsToLeave: !setting, boundary: { kind: setting ? 'set' : 'repeat', topic: 'food-drink', refusal, evidence: humanText } } };
       }
@@ -459,7 +460,7 @@ test('offstage dates cannot speak or change memory after an ending or departure 
     await api.request(api.path(h2) + '/turn', h2.token, { turnId: 'remaining-pair', text: 'We can carry on talking.', target: 'd2' }); state = await api.settle(h2);
     assert.equal(requests.length - before, 1); assert.equal(state.lines.some(line => line.text === 'I have returned and want another date.'), false); assert.ok(state.lines.some(line => line.speaker === 'd2' && line.text === 'We can still enjoy the rest of our evening.')); assert.equal(state.views.h1.memory, previousMemory); assert.equal(state.phase, 'playing'); assert.equal(state.error, undefined);
     if (departure === 'ended') assert.equal(state.views.h1.phase, 'ended'); else assert.equal(state.views.h1.evening.stance, 'leaving');
-    const context = JSON.parse(requests.at(-1)!.messages.at(-1)!.content); assert.deepEqual(context.characters.map((actor: { id: string; availableForDialogue: boolean }) => [actor.id, actor.availableForDialogue]), [['d1', false], ['d2', true]]);
+    const lastNote = doubleNote(requests.at(-1)!); assert.match(lastNote, /rite nothing for Mira/); assert.doesNotMatch(lastNote, /rite nothing for Jules/);
     const allowed = (requests.at(-1)!.outputSchema as any).properties.utterances.items.properties.speaker.enum; assert.equal(allowed.includes('d1'), false); assert.ok(allowed.includes('d2')); assert.ok(requests.at(-1)!.system.includes('offstage'));
   }
 });
