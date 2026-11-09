@@ -8,6 +8,7 @@ import type { CostUsage, DateId, DinnerCommand, DinnerState, SceneTurn, SceneUtt
 import { EveningDirector } from './evening';
 import { setActorSeated } from './actor-controller';
 import { diningOffsetZ } from '../../src/restaurant/dining-space';
+import { clampMemory } from './memory';
 
 export const emptyUsage = (): CostUsage => ({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, speechCharacters: 0, cacheHits: 0, claudeRequests: 0, claudeCost: 0, speechCost: 0, totalCost: 0, responseMs: null, firstAudioMs: null });
 
@@ -85,7 +86,7 @@ export class DinnerScene {
     this.syncPositions();
   }
   applyTurn(turn: SceneTurn, humanText = '') {
-    this.state.emotion = turn.emotion; this.state.memory = turn.memory;
+    this.state.emotion = turn.emotion; this.state.memory = clampMemory(turn.memory, this.state.memory);
     this.director.social(turn, humanText);
     if (turn.action === 'follow' && !this.state.seated) this.actorMode = 'follow';
     if (turn.action === 'sit' && this.state.seated) this.actorMode = 'sit';

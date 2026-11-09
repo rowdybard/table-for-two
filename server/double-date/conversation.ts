@@ -17,6 +17,7 @@ import { roleplayInstructions } from '../restaurant/roleplay';
 import type { DoubleTableScene } from './scene';
 import { tabletopConversationContext } from '../restaurant/tabletop';
 import type { ConversationRoutingContext } from '../restaurant/conversation-routing';
+import { MEMORY_REJECT } from '../restaurant/memory';
 
 const humans: DoubleHumanId[] = ['h1', 'h2'];
 const actors: DoubleDateActorId[] = ['d1', 'd2'];
@@ -316,7 +317,7 @@ function validate(text: string): { utterances: ReturnType<typeof validateLine>[]
   const seen = new Set<string>();
   for (const line of utterances) validateLine(line);
   for (const update of value.dateUpdates) {
-    if (!record(update) || !exact(update, ['actorId', 'emotion', 'memory', 'social', 'agenda']) || !actors.includes(update.actorId) || seen.has(update.actorId) || !EMOTIONS.includes(update.emotion) || typeof update.memory !== 'string' || update.memory.length > 1000 || !record(update.social) || !exact(update.social, ['signal', 'reason', 'wantsToLeave', 'boundary']) || !SOCIAL_SIGNALS.includes(update.social.signal) || typeof update.social.reason !== 'string' || update.social.reason.length > 180 || typeof update.social.wantsToLeave !== 'boolean' || (update.social.boundary !== undefined && !validBoundaryAssessment(update.social.boundary)) || (update.agenda !== undefined && !validAgendaAssessment(update.agenda))) throw error('A character returned an invalid emotional update.');
+    if (!record(update) || !exact(update, ['actorId', 'emotion', 'memory', 'social', 'agenda']) || !actors.includes(update.actorId) || seen.has(update.actorId) || !EMOTIONS.includes(update.emotion) || typeof update.memory !== 'string' || update.memory.length > MEMORY_REJECT || !record(update.social) || !exact(update.social, ['signal', 'reason', 'wantsToLeave', 'boundary']) || !SOCIAL_SIGNALS.includes(update.social.signal) || typeof update.social.reason !== 'string' || update.social.reason.length > 180 || typeof update.social.wantsToLeave !== 'boolean' || (update.social.boundary !== undefined && !validBoundaryAssessment(update.social.boundary)) || (update.agenda !== undefined && !validAgendaAssessment(update.agenda))) throw error('A character returned an invalid emotional update.');
     seen.add(update.actorId);
   }
   return { ...value, utterances } as ReturnType<typeof validate>;
