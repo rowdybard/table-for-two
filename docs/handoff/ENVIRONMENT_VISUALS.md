@@ -13,7 +13,7 @@ Daniel asked for an AAA pass on the restaurant environment (lighting, shaders, t
 | Seed | `VenueContract.ts`; bill folio moved out of the bread basket to (.31, -1.04) | Done |
 | A, lighting | Spotlit table pendant with its own shadow, static fitted key shadow, venue reflection map, glass fresnel, glow halos (pendants, candles, bar strips, table lamp), booth fill on both tiers, phone tier, adaptive pixel ratio that undoes steps that do not help, WebGL context-restore handling | Shipped |
 | C, layout | Napkin beside the fork and off the silverware in every seat, far settings mirrored so each date's fork is on their left, plate winding fixed, finished cutlery resting on the rim, Double date glasses off the forks, tipped glass lying on the cloth, cloth and stain off the menu, contact shadows that follow props and the quiet table, `tests/tabletop-layout.test.ts` over 206 states | Shipped |
-| B, surfaces | Stone floor shader, velvet sheen and tufted booths, brass and silver, polished table top, glass and bottles, plaster AO, neon exterior, shared procedural texture sources, pendant fixtures that travel with the quiet table, removing `barWash` | Not started (only the spill puddle was raised to .7843) |
+| B, surfaces | Stone floor shader, velvet sheen and tufted booths, brass and silver, polished table top, glass and bottles, plaster AO, neon exterior, shared procedural texture sources, removing `barWash` | Not started (only the spill puddle was raised to .7843) |
 
 ### Known follow-ups from review
 
@@ -22,7 +22,7 @@ Daniel asked for an AAA pass on the restaurant environment (lighting, shaders, t
 - The table spotlight's shadow frustum (focus .55) is narrower than its lit cone; raising focus to about .7 softens tabletop shadows slightly but removes the hard arc at the edge of the shadowed area.
 - The `!parallelCompile` early return in `RestaurantRenderer.requestWarmup` was kept. Removing it needs a bounded asset wait and an iPhone check.
 - Until workstream B lands, `ensureVenueShadowLayers` in `RestaurantLighting.ts` assigns the baked `restaurant-*` batches to the static layer and the dining furniture to the spotlight layer. B should put those layers on its batches directly.
-- The P0 pendant fixture mesh is still baked into the room, so on the quiet-table move the light, spot and halo travel but the lamp shade does not. Workstream B moves it into `diningRoot`.
+- The table pendant fixture now lives in `diningRoot` (its own builder, casting nothing), so it travels with the quiet table. P1 to P4 are still baked into the room batches.
 
 ## Picking up workstream B
 
