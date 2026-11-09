@@ -339,7 +339,9 @@ test('authored care and scenario choices cancel held stale table updates without
     state=kind==='care' ? await api.okay(h1,{type:'scene',command:{type:'evening',action:'request-water'}}) : await api.okay(h2,{type:'scenario',choice:state.scenario!.choices[0].id});
     assert.equal(aborted,true); assert.equal(state.generation,generation+1); assert.equal(calls,beforeCalls+1);
     const memories=Object.values(state.views).map(view=>view.memory), emotions=Object.values(state.views).map(view=>view.emotion);
-    assert.ok(memories.some(memory=>memory.includes(kind==='care'?'fresh water':'Jamie')));
+    // A care action is a notebook moment the date reads back; it is no longer copied into the memory a model reply rewrites.
+    const moments=Object.values(state.views).flatMap(view=>view.evening.moments.map(moment=>moment.description));
+    assert.ok(kind==='care' ? moments.some(text=>text.includes('fresh water')) : memories.some(memory=>memory.includes('Jamie')));
     const authored=state.lines.filter(line=>line.generation===state.generation && !['h1','h2'].includes(line.speaker)).at(-1)!;
     assert.ok(authored); const speech=await api.request(api.path(h2)+'/speech',h2.token,{lineId:authored.id,generation:authored.generation}); assert.equal(speech.status,200); await speech.text();
     release(); state=await api.settle(h1);

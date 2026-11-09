@@ -456,7 +456,7 @@ export class EveningDirector {
     // The date breaks a long silence with an authored line; no model request is made for it.
     // It waits for the human to answer the date's own question, and says so plainly when the human has not spoken at all.
     const phase = this.beatPhase(), silence = phase === 'waiting' ? P.beatSilenceWaiting : P.beatSilence + (e.variation % 3) * 17;
-    if (phase && seatedAndCalm && !GUARDED.includes(e.stance) && !this.dateAsked && e.beats < P.beatsPerEvening && t >= e.care.quietUntil && t - e.lastInterruptionAt > 25 && t - this.lastSpokeAt >= silence && t - this.lastBeatAt >= P.beatSpacing) {
+    if (phase && seatedAndCalm && !this.conversing && !GUARDED.includes(e.stance) && !this.dateAsked && e.beats < P.beatsPerEvening && t >= e.care.quietUntil && t - e.lastInterruptionAt > 25 && t - this.lastSpokeAt >= silence && t - this.lastBeatAt >= P.beatSpacing) {
       const key = e.dialogueTurns === 0 ? BEAT_COLD : BEAT_CUES[phase].find(candidate => !this.usedBeats.has(candidate));
       if (key && !this.usedBeats.has(key)) {
         this.usedBeats.add(key);
