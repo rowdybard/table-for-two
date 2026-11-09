@@ -86,7 +86,11 @@ export class TabletopProps {
   private readonly basket = new THREE.Group();
   private readonly carafe = new THREE.Group();
   private readonly shakers: THREE.Group[] = [];
-  private readonly dateGlasses: { group: THREE.Group; x: number; z: number; double: boolean }[] = [];
+  private readonly dateGlasses: { group: THREE.Group; x: number; z: number; double: boolean; held: number }[] = [];
+  /** Where each date's own fork is (place-setting group → home, rim of the plate, or in their hand). */
+  private readonly dateForks = new Map<THREE.Group, 'table' | 'plate' | 'hand'>();
+  private readonly heldPoint = new THREE.Vector3();
+  private readonly heldAxis = new THREE.Vector3();
   private readonly vase = new THREE.Group();
   private readonly lampLight: THREE.PointLight;
   private readonly lampShade: THREE.MeshStandardMaterial;
@@ -157,8 +161,8 @@ export class TabletopProps {
       tagContactShadow(group,{rx:.06,rz:.06,opacity:.45,cy:.075});
       return w;};
     this.water=makeGlass(this.playerGlass);this.playerGlass.position.set(.49,.782,-.77);this.root.add(this.playerGlass);
-    const dateGlass=new THREE.Group();makeGlass(dateGlass); dateGlass.position.set(-.42,.782,-1.7);this.solo.add(dateGlass);this.dateGlasses.push({group:dateGlass,x:0,z:-1.7,double:false});
-    for(const x of [-.57,.57]) {const g=new THREE.Group();makeGlass(g);g.position.set(x-.25,.782,DOUBLE_DATE_GLASS_Z);this.doubles.add(g);this.dateGlasses.push({group:g,x,z:DOUBLE_DATE_GLASS_Z,double:true});}
+    const dateGlass=new THREE.Group();makeGlass(dateGlass); dateGlass.position.set(-.42,.782,-1.7);this.solo.add(dateGlass);this.dateGlasses.push({group:dateGlass,x:0,z:-1.7,double:false,held:0});
+    for(const x of [-.57,.57]) {const g=new THREE.Group();makeGlass(g);g.position.set(x-.25,.782,DOUBLE_DATE_GLASS_Z);this.doubles.add(g);this.dateGlasses.push({group:g,x,z:DOUBLE_DATE_GLASS_Z,double:true,held:0});}
     // The carafe uses a hollow profile and a separate finite water volume.
     const carafe=this.carafe;carafe.position.set(-.56,.782,-1.50);this.shared.add(carafe);
     add(carafe,lathe('carafe',[[.045,0],[.062,.012],[.064,.14],[.055,.205],[.031,.265],[.028,.30],[.034,.31],[.031,.315],[.024,.3],[.026,.265],[.05,.20],[.058,.14],[.056,.018],[.043,.008]],40),glass);
@@ -207,6 +211,29 @@ export class TabletopProps {
     const target=(name:string,x:number,y:number,z:number,sx:number,sy:number,sz:number,r:number)=>{const m=add(this.root,new THREE.BoxGeometry(sx,sy,sz),new THREE.MeshBasicMaterial({visible:false,transparent:true,opacity:0,colorWrite:false,depthWrite:false}),x,y,z);this.materials.push(m.material as THREE.Material);m.userData.target=name;m.userData.inspectRadius=r;this.targets.push(m);return m;};
     target('glass',.49,.88,-.77,.16,.21,.16,.12);target('carafe',-.56,.96,-1.50,.17,.36,.17,.19);target('bread',.34,.85,-1.28,.25,.14,.2,.18);target('salt',.66,.84,-.91,.075,.12,.075,.09);target('pepper',.745,.84,-.91,.075,.12,.075,.09);target('cutlery',-.235,.82,-.64,.09,.09,.25,.16);target('lamp',-.20,.92,-1.12,.19,.28,.19,.18);target('vase',-.48,.95,-1.08,.16,.34,.16,.18);target('plate',0,.82,-.64,.32,.08,.32,.22);
   }
+  /** The date's own glass for a seat (pair x; Solo is 0), or undefined when that table is not in use. */
+  private dateGlassAt(pairX:number,double:boolean){return this.dateGlasses.find(glass=>glass.double===double&&(!double||glass.x===pairX));}
+  /** World position of a date's glass where it stands on the cloth. */
+  dateGlassRest(pairX:number,double:boolean,out:THREE.Vector3){const glass=this.dateGlassAt(pairX,double);if(!glass)return null;
+    out.set(glass.group.position.x,.782,glass.group.position.z);glass.group.parent!.updateWorldMatrix(true,false);return glass.group.parent!.localToWorld(out);}
+  /**
+   * The date lifts their glass: `weight` 0 leaves it standing, 1 puts it at `world` tipped by `tilt` toward `toward`.
+   * Presentation only; the glass is never emptied or moved for gameplay.
+   */
+  holdDateGlass(pairX:number,double:boolean,held:{weight:number;position:THREE.Vector3;tilt:number;toward:THREE.Vector3}|null){
+    const glass=this.dateGlassAt(pairX,double);if(!glass)return;
+    glass.held=held?.weight??0;if(!held||held.weight<=0){glass.group.position.y=.782;glass.group.quaternion.identity();return;}
+    const parent=glass.group.parent!;parent.updateWorldMatrix(true,false);
+    const rest=this.heldPoint.set(glass.group.position.x,.782,glass.group.position.z);
+    const lifted=parent.worldToLocal(this.heldAxis.copy(held.position));
+    glass.group.position.lerpVectors(rest,lifted,held.weight);
+    // Tip the rim toward the drinker's mouth: rotate about the horizontal axis perpendicular to the way they face.
+    const toward=parent.worldToLocal(this.heldPoint.copy(held.toward)).sub(glass.group.position);toward.y=0;
+    if(toward.lengthSq()>1e-6){toward.normalize();glass.group.quaternion.setFromAxisAngle(this.heldAxis.set(0,1,0).cross(toward).normalize(),held.tilt*held.weight);}
+  }
+  setDateFork(pairX:number,double:boolean,where:'table'|'plate'|'hand'){
+    for(const p of this.placeGroups)if(p.z<-1.15&&p.group.parent===(double?this.doubles:this.solo)&&(!double||p.x===pairX))this.dateForks.set(p.group,where);
+  }
   setDoubleDate(enabled:boolean){this.solo.visible=!enabled;this.doubles.visible=enabled;}
   update(state:DinnerState,dt:number,reducedMotion=false){
     const tt=(state.evening as typeof state.evening & {tabletop?: {glassFill:number;salt:number|boolean;pepper:number|boolean;cutleryCrossed:boolean;napkinFolded:boolean;plateTurn:number;shared:{carafeFill:number;breadRemaining:number;lampLevel:number;vaseTurn:number};lastAction:{sequence:number;action:string;at:number}|null}}).tabletop;
@@ -229,6 +256,8 @@ export class TabletopProps {
     for(const glass of this.dateGlasses){const care=glass.x===x?state.evening.scenarioCare:otherCare;const cleared=glass.double===double&&!!care?.cleanup.glassesCleared;
       glass.group.position.x=cleared?(double?Math.sign(glass.x)*.90:-.62):(glass.double?glass.x-.25:-.42);
       glass.group.position.z=cleared?(double?-1.7:-1.65):glass.z;
+      // A glass the date is drinking from follows their hand (holdDateGlass); otherwise it stands on the cloth.
+      if(!glass.held){glass.group.position.y=.782;glass.group.quaternion.identity();}
     }
     const otherTabletop=(state.doubleDate?.otherView?.evening as (typeof state.evening & {tabletop?: typeof tt}) | undefined)?.tabletop;
     const s=PLACE_SETTING,rest=s.rest;
@@ -241,7 +270,10 @@ export class TabletopProps {
       p.napkin.visible=!active;
       // Crossed means finished: fork and knife lie side by side across the rim; the spoon keeps its place.
       const crossed=!!placeState?.cutleryCrossed; const fork=p.cutlery.children[0]!,knife=p.cutlery.children[1]!;
-      layCutlery(fork,s.fork,rest.fork,crossed);layCutlery(knife,s.knife,rest.knife,crossed);
+      // A date's fork moves to the rim once they start eating, and is in their hand during a bite.
+      const dateFork=this.dateForks.get(p.group)??'table';
+      layCutlery(fork,s.fork,rest.fork,crossed||dateFork==='plate');layCutlery(knife,s.knife,rest.knife,crossed);
+      fork.visible=dateFork!=='hand';
       p.napkin.scale.z=placeState?.napkinFolded?s.napkin.foldedScaleZ:1;
       p.salt.visible=!!placeState?.salt&&placeEvening?.main.status==='served';p.pepper.visible=!!placeState?.pepper&&placeEvening?.main.status==='served';
     }

@@ -3,6 +3,13 @@ import type { DateStance, Emotion } from '../types';
 import { createCharacterBody, type CharacterBodyRig, type CharacterKind } from './CharacterBody';
 import { createCharacterHead, type CharacterHead } from './CharacterHead';
 import { FacialPerformance } from './FacialPerformance';
+import { DateBehaviour, type DateBehaviourOutput, type DateGesture } from './DateBehaviour';
+
+/** What a seated date knows about the table this frame; world positions are converted to the actor's space here. */
+export interface DateTableContext {
+  interest?: number; thinking: boolean; mainServed: boolean; dateBites: number; quietFor: number;
+  glass: THREE.Vector3 | null; plate: THREE.Vector3 | null;
+}
 
 /** Authored adult anatomy, tailored clothing, facial performance, and deterministic seating. */
 export class RestaurantActor {
@@ -14,6 +21,13 @@ export class RestaurantActor {
   private readonly performance: FacialPerformance;
   private seated = false;
   private disposed = false;
+  /** Only the three dates have table business; staff and neighbours keep the plain rig. */
+  readonly behaviour?: DateBehaviour;
+  private readonly localGlass = new THREE.Vector3();
+  private readonly localPlate = new THREE.Vector3();
+  /** The date's glass while it is in their hand, in world space. */
+  readonly heldGlass = { weight: 0, position: new THREE.Vector3(), tilt: 0, toward: new THREE.Vector3() };
+  private behaviourTime = 0;
 
   constructor(readonly kind: CharacterKind) {
     this.root.name = 'character-' + kind;
@@ -25,26 +39,54 @@ export class RestaurantActor {
     this.head.scale.setScalar(.97);
     this.head.position.copy(this.body.headAnchor);
     this.root.add(this.body.root, this.head);
+    if (kind === 'mira' || kind === 'jules' || kind === 'dev') this.behaviour = new DateBehaviour(kind.length * 977 + kind.charCodeAt(0));
   }
+
+  /** QA and tests: play one gesture now. */
+  playGesture(kind: DateGesture) { this.behaviour?.force(kind, this.behaviourTime); }
+  get gesture() { return this.behaviour?.output.gesture ?? null; }
+  get fork(): DateBehaviourOutput['fork'] { return this.behaviour?.output.fork ?? 'table'; }
 
   setSeated(value: boolean) {
     this.seated = value;
     this.body.setSeated(value);
   }
 
-  update(time: number, dt: number, emotion: Emotion, speaking: boolean, amplitude: number, gaze: THREE.Vector3, walkingSpeed = 0, performance: { stance?: DateStance; shared?: boolean; phoneActive?: boolean; attentive?: boolean; reducedMotion?: boolean } = {}) {
+  update(time: number, dt: number, emotion: Emotion, speaking: boolean, amplitude: number, gaze: THREE.Vector3, walkingSpeed = 0, performance: { stance?: DateStance; shared?: boolean; phoneActive?: boolean; attentive?: boolean; reducedMotion?: boolean; table?: DateTableContext } = {}) {
     if (this.disposed) return;
+    this.behaviourTime = time;
     const guarded = performance.stance === 'guarded' || performance.stance === 'hurt' || performance.stance === 'leaving';
+    let business: DateBehaviourOutput | undefined;
+    if (this.behaviour && performance.table) {
+      const table = performance.table;
+      this.root.updateMatrixWorld(true);
+      const glass = table.glass ? this.root.worldToLocal(this.localGlass.copy(table.glass)) : null;
+      const plate = table.plate ? this.root.worldToLocal(this.localPlate.copy(table.plate)) : null;
+      business = this.behaviour.update(time, dt, {
+        interest: table.interest, stance: performance.stance ?? 'curious', emotion, seated: this.seated, speaking, listening: !!performance.attentive,
+        thinking: table.thinking, mainServed: table.mainServed, dateBites: table.dateBites, quietFor: table.quietFor, reducedMotion: !!performance.reducedMotion,
+        glass, plate, head: this.body.headAnchor,
+      });
+    }
     const pose = this.performance.update(time, dt, {
       emotion, speaking, amplitude, attentive: !!performance.attentive, reducedMotion: !!performance.reducedMotion,
+      smileBias: business?.smile, wander: business?.wander, lookUp: business?.lookUp, lookDown: business?.lookDown,
     });
     // Warmth leans in a little; being on guard sits back. Attention leans in while the other person talks.
     const leanBias = (emotion === 'flirtatious' || emotion === 'warm' || emotion === 'amused' ? .028 : emotion === 'defensive' || emotion === 'angry' ? -.03 : 0)
-      + (performance.attentive ? .02 : 0);
+      + (performance.attentive ? .02 : 0) + (business?.lean ?? 0);
     this.body.update(time, dt, this.seated ? 0 : walkingSpeed, {
       guarded, comfortable: performance.stance === 'comfortable', speaking,
       amplitude, shared: !!performance.shared, phoneActive: !!performance.phoneActive, leanBias, beat: pose.beat, beatHand: pose.beatHand,
+      arms: business?.arms, bounce: business?.bounce, fork: business?.fork === 'hand', phone: business?.phone, gripGlass: (business?.glass.weight ?? 0) > .05,
     });
+    this.heldGlass.weight = business?.glass.weight ?? 0;
+    if (business && this.heldGlass.weight > 0) {
+      this.root.updateMatrixWorld(true);
+      this.heldGlass.position.copy(business.glass.position); this.root.localToWorld(this.heldGlass.position);
+      this.heldGlass.tilt = business.glass.tilt;
+      this.heldGlass.toward.copy(this.body.headAnchor); this.root.localToWorld(this.heldGlass.toward);
+    }
     this.head.position.copy(this.body.headAnchor);
     this.root.updateMatrixWorld(true);
     this.localGaze.copy(gaze); this.root.worldToLocal(this.localGaze); this.localGaze.sub(this.head.position);
