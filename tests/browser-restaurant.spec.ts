@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type Route } from '@playwright/test';
 import { attachRestaurantServer, type ClaudeAdapter } from '../server/restaurant';
 import type { ClaudeModel, DinnerState, SceneTurn } from '../src/restaurant/types';
 import { captureRestaurantScene, waitForRestaurantScene } from './restaurant-browser-helpers';
@@ -212,12 +212,67 @@ test('solo restaurant: roster, real movement, seat, order, streamed cast, privat
   await expect.poll(async () => (await state(page)).phase).toBe('playing');
   await page.keyboard.up('Escape');
   await expect(page.locator('.restaurant-canvas')).toHaveAttribute('aria-label', 'First-person view of Table for Two restaurant');
-  await menuChip.click();
-  await expect(page.locator('#menu-dialog')).toBeVisible();
-  await page.locator('[data-order="Wild mushroom risotto"]').focus();
-  await page.keyboard.press('Enter');
-  await expect.poll(async () => (await state(page)).order).toBe('Wild mushroom risotto');
+  // Deliberately hold the second menu's pause: ordering immediately must wait for
+  // the pause before resuming and submitting the order, even on a slow connection.
+  let releaseMenuPause!: () => void, pauseHeld = false;
+  const menuPauseReleased = new Promise<void>(resolve => { releaseMenuPause = resolve; });
+  const menuCommands: string[] = [];
+  const holdMenuPause = async (route: Route) => {
+    const command = route.request().postDataJSON();
+    if (command.type === 'pause') {
+      menuCommands.push(command.paused ? 'pause' : 'resume');
+      if (command.paused) { pauseHeld = true; await menuPauseReleased; }
+    } else if (command.type === 'interact' && command.target === 'menu') menuCommands.push('order');
+    await route.continue();
+  };
+  const commandRoute = '**/api/date/sessions/*/command';
+  await page.route(commandRoute, holdMenuPause);
+  try {
+    await menuChip.click();
+    await expect(page.locator('#menu-dialog')).toBeVisible();
+    await expect.poll(() => pauseHeld).toBe(true);
+    await page.locator('[data-order="Wild mushroom risotto"]').focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('[data-order="Wild mushroom risotto"]')).toBeDisabled();
+    expect(menuCommands).toEqual(['pause']);
+    releaseMenuPause();
+    await expect.poll(async () => (await state(page)).order).toBe('Wild mushroom risotto');
+    expect(menuCommands).toEqual(['pause', 'resume', 'order']);
+  } finally {
+    releaseMenuPause();
+    await page.unroute(commandRoute, holdMenuPause);
+  }
   await expect(page.locator('.restaurant-canvas')).toHaveAttribute('aria-label', 'First-person view of Table for Two restaurant');
+
+  // Exercise the settings handler while playing. The visible settings entry is
+  // normally under Pause, so invoke the same button handler directly here.
+  let releaseSettingsPause!: () => void, settingsPauseHeld = false;
+  const settingsPauseReleased = new Promise<void>(resolve => { releaseSettingsPause = resolve; });
+  const settingsCommands: string[] = [];
+  const holdSettingsPause = async (route: Route) => {
+    const command = route.request().postDataJSON();
+    if (command.type === 'pause') {
+      settingsCommands.push(command.paused ? 'pause' : 'resume');
+      if (command.paused) { settingsPauseHeld = true; await settingsPauseReleased; }
+    }
+    await route.continue();
+  };
+  await page.route(commandRoute, holdSettingsPause);
+  try {
+    await page.locator('#settings-open').evaluate((button: HTMLButtonElement) => button.click());
+    await expect(page.locator('#settings-dialog')).toBeVisible();
+    await expect.poll(() => settingsPauseHeld).toBe(true);
+    await page.locator('#settings-close').click();
+    await expect(page.locator('#settings-close')).toBeDisabled();
+    expect(settingsCommands).toEqual(['pause']);
+    releaseSettingsPause();
+    await expect(page.locator('#settings-dialog')).toBeHidden();
+    await expect.poll(async () => (await state(page)).phase).toBe('playing');
+    expect(settingsCommands).toEqual(['pause', 'resume']);
+  } finally {
+    releaseSettingsPause();
+    await page.unroute(commandRoute, holdSettingsPause);
+  }
 
   await openSettingsFromPause(page);
   await expect(page.locator('#model-select')).toHaveCount(0);
@@ -252,7 +307,7 @@ test('solo restaurant: roster, real movement, seat, order, streamed cast, privat
   await page.locator('#resume-date').click();
   await expect.poll(async () => (await state(page)).phase).toBe('playing');
   await page.reload();
-  await expect(page.locator('#pause-dialog')).toBeVisible();
+  await expect(page.locator('#pause-dialog')).toBeVisible({ timeout: 15000 });
   await expect(page.locator('#dinner-hud')).toBeHidden();
   await expect(page.locator('#conversation-form')).toBeHidden();
   await page.locator('#resume-date').click();
@@ -328,7 +383,7 @@ test('menus and rapid date changes stay usable during warmup, including disposal
     await expect(page.locator('.selection-stage-label strong')).toHaveText('Dev');
     const previousCanvas = await page.locator('.restaurant-canvas').elementHandle();
     await page.locator('#select-back').click(); await page.locator('#mode-blind').click();
-    await expect(page.locator('#dinner-hud')).toBeVisible();
+    await expect(page.locator('#dinner-hud')).toBeVisible({ timeout: 15000 });
     await expect.poll(async () => (await state(page)).mode).toBe('blind-date');
     expect((await state(page)).dateId).toBe(expected.dateId); expect(expected.dateId).not.toBe('dev');
     expect(await previousCanvas!.evaluate(canvas => canvas.isConnected)).toBe(false);
@@ -418,7 +473,7 @@ test('Haiku is the default, private model commands survive reload and reset rest
   await speak('Where would you travel next?', 'claude-sonnet-5-5', 2);
 
   await page.reload();
-  await expect(page.locator('#pause-dialog')).toBeVisible();
+  await expect(page.locator('#pause-dialog')).toBeVisible({ timeout: 15000 });
   await page.locator('#resume-date').click();
   await expect.poll(async () => (await state(page)).phase).toBe('playing');
   await waitForRestaurantScene(page);
@@ -442,7 +497,7 @@ test('Haiku is the default, private model commands survive reload and reset rest
   await speak('Tell me what makes a first date feel exciting.', 'ai-horde', 5);
   expect((await state(page)).usage.claudeCost).toBe(beforeHordeCost);
   await page.reload();
-  await expect(page.locator('#pause-dialog')).toBeVisible();
+  await expect(page.locator('#pause-dialog')).toBeVisible({ timeout: 15000 });
   await page.locator('#resume-date').click();
   await expect.poll(async () => (await state(page)).phase).toBe('playing');
   await waitForRestaurantScene(page);
@@ -469,7 +524,7 @@ test('Haiku is the default, private model commands survive reload and reset rest
   await speak('Let us enjoy the rest of our evening.', 'claude-haiku-5-5', 7);
 
   await page.reload();
-  await expect(page.locator('#pause-dialog')).toBeVisible();
+  await expect(page.locator('#pause-dialog')).toBeVisible({ timeout: 15000 });
   await page.locator('#resume-date').click();
   await expect.poll(async () => (await state(page)).phase).toBe('playing');
   await waitForRestaurantScene(page);

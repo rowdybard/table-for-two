@@ -77,6 +77,8 @@ let pollTimer: ReturnType<typeof setTimeout> | undefined, commandEpoch = 0;
 let micEnabled = false, disposed = false, settingsPaused = false, menuPaused = false;
 let microphoneAttempt = 0;
 let pausePending = false;
+let menuOpening: Promise<void> = Promise.resolve(), menuClosing = false;
+let settingsOpening: Promise<void> = Promise.resolve(), settingsClosing = false;
 let startingDinner = false, typedSubmissionPending = false, pageSuspended = false;
 let typedSubmissionEpoch = 0, modelResetEpoch = 0, modelResetPending = false;
 let modelControlQueue: Promise<void> = Promise.resolve();
@@ -249,10 +251,13 @@ async function request<T>(path: string, body?: unknown, options: { signal?: Abor
 const sessionPath = () => '/api/date/sessions/' + encodeURIComponent(state.id);
 async function command(body: DinnerCommand, quiet = false) {
   if (!joined) return false;
+  const sessionId = state.id, sessionToken = token;
   commandEpoch++;
   try {
     if (doubleClient.active) { await doubleClient.command({ type: 'scene', command: body }); return true; }
-    const result = await request<{ state: DinnerState }>(sessionPath() + '/command', body); applyState(result.state);
+    const result = await request<{ state: DinnerState }>(sessionPath() + '/command', body);
+    if (!joined || doubleClient.active || state.id !== sessionId || token !== sessionToken) return false;
+    applyState(result.state);
     return true;
   }
   catch (error) { if (!quiet) toast((error as Error).message); return false; }
@@ -658,12 +663,41 @@ function inspectTableAt(x?: number, y?: number) {
   tabletopInspector!.open(hit.target); return true;
 }
 async function openMenu() {
-  if (!joined || state.phase !== 'playing') return;
+  if (!joined || state.phase !== 'playing' || menuClosing || !el('menu-dialog').hidden) return;
   tabletopInspector?.close();
   closeTypedInput();
   document.querySelectorAll<HTMLButtonElement>('[data-order]').forEach(button => { button.disabled = !!state.order; });
-  releasePointer(); menuPaused = !doubleClient.active; el('menu-dialog').hidden = false; recognition.setPaused(true);
-  if (!doubleClient.active) { await interrupt(); await command({ type: 'pause', paused: true }); }
+  releasePointer(); menuPaused = false; el('menu-dialog').hidden = false; recognition.setPaused(true);
+  const sessionId = state.id;
+  menuOpening = (async () => {
+    if (!doubleClient.active) {
+      await interrupt();
+      if (joined && state.id === sessionId && state.phase !== 'ended') menuPaused = await command({ type: 'pause', paused: true });
+    }
+  })();
+  await menuOpening;
+}
+async function closeMenu(choice?: string) {
+  if (el('menu-dialog').hidden || menuClosing) return;
+  menuClosing = true;
+  const sessionId = state.id;
+  const controls = el('menu-dialog').querySelectorAll<HTMLButtonElement>('button');
+  controls.forEach(control => { control.disabled = true; });
+  try {
+    // Opening is visible immediately, but its pause must land before resume/order.
+    await menuOpening;
+    if (!joined || state.id !== sessionId) return;
+    if (menuPaused && state.phase !== 'ended' && !await command({ type: 'pause', paused: false })) return;
+    menuPaused = false; el('menu-dialog').hidden = true;
+    if (choice && state.phase === 'playing') {
+      const accepted = await command({ type: 'interact', target: 'menu', choice });
+      if (accepted && state.order === choice) log('Dinner', `You ordered ${choice}.`, true);
+    }
+  } finally {
+    menuClosing = false;
+    controls.forEach(control => { control.disabled = !!control.dataset.order && !!state.order; });
+    recognition.setPaused(state.phase !== 'playing' || visibleModal() || !doubleClient.active && !scenePresenceAvailable(state));
+  }
 }
 function rebuildRenderer() {
   tabletopInspector?.close();
@@ -748,6 +782,7 @@ const doubleClient = new DoubleDateClient({
     else doubleLobby.hide();
     btn('back-to-table').hidden = room.phase === 'ended' || room.views[localId].phase !== 'ended';
     busy = !!room.processing;
+    updateTypedSubmit();
     if (busy) el('turn-status').textContent = 'Listening…';
     else if (el('turn-status').textContent === 'Listening…') el('turn-status').textContent = '';
     const target = el<HTMLSelectElement>('conversation-target');
@@ -935,13 +970,9 @@ btn('back-to-table').addEventListener('click', async () => { if (!doubleClient.a
 btn('new-date').addEventListener('click', async () => { if (doubleClient.active) await doubleClient.leave(true); location.href = '/'; });
 btn('journal-toggle').addEventListener('click', () => { const open = el('journal').hidden; el('journal').hidden = !open; btn('journal-toggle').setAttribute('aria-expanded', String(open)); if (open) { releasePointer(); closeTypedInput(); } });
 btn('journal-close').addEventListener('click', () => { el('journal').hidden = true; btn('journal-toggle').setAttribute('aria-expanded', 'false'); });
-btn('menu-close').addEventListener('click', async () => { el('menu-dialog').hidden = true; if (menuPaused) await command({ type: 'pause', paused: false }); menuPaused = false; recognition.setPaused(false); });
+btn('menu-close').addEventListener('click', () => void closeMenu());
 document.querySelectorAll<HTMLButtonElement>('[data-order]').forEach(button => button.addEventListener('click', async () => {
-  el('menu-dialog').hidden = true;
-  if (menuPaused) await command({ type: 'pause', paused: false });
-  menuPaused = false; recognition.setPaused(false);
-  const accepted = await command({ type: 'interact', target: 'menu', choice: button.dataset.order });
-  if (accepted && state.order === button.dataset.order) log('Dinner', `You ordered ${button.dataset.order}.`, true);
+  await closeMenu(button.dataset.order);
 }));
 input('speech-enabled').checked = preferences.speech; input('captions-enabled').checked = preferences.captions;
 const ambientSetting = document.createElement('label'); ambientSetting.className = 'setting-row';
@@ -959,9 +990,17 @@ interestSetting.append(interestCopy, interestToggle); ambientSetting.insertAdjac
 interestToggle.addEventListener('change', () => { preferences.interestCue = interestToggle.checked; interestCue.update(state, preferences.interestCue); savePreferences(); });
 input('voice-volume').value = String(preferences.volume); input('session-limit').value = String(preferences.sessionLimit);
 btn('settings-open').addEventListener('click', async () => {
-  releasePointer(); closeTypedInput(); settingsPaused = joined && state.phase === 'playing' && !doubleClient.active; el('settings-dialog').hidden = false;
+  if (settingsClosing || !el('settings-dialog').hidden) return;
+  const sessionId = state.id, shouldPause = joined && state.phase === 'playing' && !doubleClient.active;
+  releasePointer(); closeTypedInput(); settingsPaused = false; el('settings-dialog').hidden = false;
   recognition.setPaused(true); renderUsage(); renderProviders();
-  if (settingsPaused) { await interrupt(); await command({ type: 'pause', paused: true }); }
+  settingsOpening = (async () => {
+    if (shouldPause) {
+      await interrupt();
+      if (joined && state.id === sessionId && state.phase !== 'ended') settingsPaused = await command({ type: 'pause', paused: true });
+    }
+  })();
+  await settingsOpening;
 });
 btn('pause-settings').addEventListener('click', () => btn('settings-open').click());
 for (const [id, action] of [
@@ -971,9 +1010,17 @@ for (const [id, action] of [
   await resumeDinner(action);
 });
 btn('settings-close').addEventListener('click', async () => {
-  el('settings-dialog').hidden = true;
-  if (settingsPaused && state.phase !== 'ended') await command({ type: 'pause', paused: false });
-  settingsPaused = false; recognition.setPaused(state.phase !== 'playing' || visibleModal() || !doubleClient.active && !scenePresenceAvailable(state));
+  if (settingsClosing || el('settings-dialog').hidden) return;
+  settingsClosing = true; btn('settings-close').disabled = true;
+  const sessionId = state.id;
+  try {
+    await settingsOpening;
+    if (joined && state.id === sessionId && settingsPaused && state.phase !== 'ended' && !await command({ type: 'pause', paused: false })) return;
+    settingsPaused = false; el('settings-dialog').hidden = true;
+  } finally {
+    settingsClosing = false; btn('settings-close').disabled = false;
+    recognition.setPaused(state.phase !== 'playing' || visibleModal() || !doubleClient.active && !scenePresenceAvailable(state));
+  }
 });
 btn('settings-save').addEventListener('click', async () => {
   const value = Number(input('session-limit').value);

@@ -185,7 +185,9 @@ test('complete authored evening: a wrong plate, a spill, dinner, a shared desser
   await awaitCheck(page);
   await chip(page, 'button:has-text("See the check")');
   await expect(page.locator('#bill-dialog')).toBeVisible();
-  await expect(page.locator('#bill-items')).toContainText('Lemon posset');
+  // The date may have picked her favorite when the accelerated offer expired.
+  // The check must name the dessert that was actually served in either branch.
+  await expect(page.locator('#bill-items')).toContainText(dessert.chosenBy === 'you' ? 'Lemon posset' : 'Chocolate fondant');
   await page.locator('[data-settlement="split"]').click();
   await expect.poll(async () => (await state(page)).evening.chapter).toBe('farewell');
   await expect(page.locator('#bill-dialog')).toBeHidden();

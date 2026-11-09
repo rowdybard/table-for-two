@@ -13,6 +13,7 @@ import { RESTAURANT_BROWSER_STORY_RATE, captureRestaurantScene, restaurantEvenin
 let http: Server, restaurant: Awaited<ReturnType<typeof attachRestaurantServer>>;
 let doubles: Awaited<ReturnType<typeof attachDoubleDateServer>>, browser: Browser, friendBrowser: Browser, base = '';
 const requests: ClaudeRequest[] = [], speechRequests: SpeechRequest[] = [];
+let releaseHeldTurn: (() => void) | undefined;
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 // Repeated full-resolution PNG readbacks measured 7–15 seconds each on software CI.
 // Extend only the total two-browser case budget; action and network deadlines remain unchanged.
@@ -46,6 +47,14 @@ const claude: ClaudeAdapter = { async *stream(request, signal) {
   };
   yield { type: 'usage', usage: { inputTokens: 1400, outputTokens: 0, cacheReadTokens: 300, cacheWriteTokens: 0 } };
   const json = JSON.stringify(result);
+  if (text === 'hold until released') {
+    await new Promise<void>(resolve => {
+      const finish = () => { signal.removeEventListener('abort', finish); releaseHeldTurn = undefined; resolve(); };
+      releaseHeldTurn = finish;
+      if (signal.aborted) finish(); else signal.addEventListener('abort', finish, { once: true });
+    });
+    if (signal.aborted) return;
+  }
   if (text === 'hold this response') {
     await new Promise<void>(resolve => { if (signal.aborted) resolve(); else signal.addEventListener('abort', () => resolve(), { once: true }); });
     // Deliberately emulate one late provider callback after cancellation.
@@ -232,7 +241,9 @@ async function start(pair: Pair) {
   await expect(b.locator('[data-double-date="mira"]')).toBeDisabled();
   await b.locator('[data-double-date="jules"]').click();
   for (const page of [a,b]) {
-    await expect.poll(() => page.evaluate(() => (window as unknown as { __doubleDateState?: DoubleDateRoomState }).__doubleDateState?.dates.length)).toBe(2);
+    // SwiftShader traces show a single page.evaluate can take 5.5s while cast
+    // shaders compile, even though it returns the correct two-date state.
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __doubleDateState?: DoubleDateRoomState }).__doubleDateState?.dates.length), { timeout: 15000 }).toBe(2);
     await expect(page.locator('.double-people')).toContainText('Sam + Jules');
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   }
@@ -372,8 +383,10 @@ async function walkToTheDoor(page: Page) {
   await page.keyboard.press('e');
   await expect.poll(async () => (await state(page)).seated).toBe(false);
   await waitForRestaurantScene(page);
-  for (let i = 0; i < 25 && (await state(page)).participants[0].position[2] < 4.2; i++) { await page.keyboard.down('s'); await page.waitForTimeout(160); await page.keyboard.up('s'); }
-  await expect.poll(async () => (await state(page)).participants[0].position[2]).toBeGreaterThanOrEqual(4.2);
+  const human = (await credentials(page)).memberId;
+  await page.keyboard.down('s');
+  try { await expect.poll(async () => (await room(page)).members.find(member => member.id === human)!.position[2], { timeout: 15000 }).toBeGreaterThanOrEqual(4.2); }
+  finally { await page.keyboard.up('s'); }
 }
 
 test('private double date: distinct choices, readiness, independent first-person seats, pause and reconnect', async () => {
@@ -413,7 +426,8 @@ test('private double date: distinct choices, readiness, independent first-person
     expect((await room(p.b)).members.map(member => member.position)).toEqual(before);
     await p.a.locator('#resume-date').click(); await expect.poll(async () => (await room(p.b)).phase).toBe('playing');
     await p.b.reload();
-    await expect(p.b.locator('#dinner-hud')).toBeVisible();
+    // After reload, CI took 8.2s between status and the successful restore GET.
+    await expect(p.b.locator('#dinner-hud')).toBeVisible({ timeout: 15000 });
     await waitForRestaurantScene(p.b);
     await expect.poll(async () => (await credentials(p.b)).token).toBe(bCreds.token);
     await expect.poll(async () => (await state(p.b)).doubleDate?.localHumanId).toBe('h2');
@@ -486,6 +500,20 @@ test('shared table turns: one request, both identities, exclusion and repair, pr
     expect(requests.length).toBe(beforeModelCommands + 1);
     expect(await p.b.evaluate(() => localStorage.getItem('table-for-two-settings'))).toBe(guestPreferences);
     await expect(p.b.locator('#conversation-log')).not.toContainText('/model');
+    // Keep the room processing while opening the composer. When the same
+    // generation finishes, Send must recover without another input event.
+    const held = await api(p.a, 'turn', { turnId: 'held-for-send-control', text: 'hold until released', target: 'table' });
+    expect(held.status).toBe(202);
+    await expect.poll(() => !!releaseHeldTurn).toBe(true);
+    await expect.poll(() => p.a.evaluate(() => !!(window as unknown as { __doubleDateState?: DoubleDateRoomState }).__doubleDateState?.processing), { timeout: 15000 }).toBe(true);
+    await p.a.bringToFront();
+    if (!await p.a.locator('#conversation-form').isVisible()) await p.a.keyboard.press('t');
+    await p.a.locator('#conversation-input').fill('Ready for the next turn');
+    await expect(p.a.locator('#send-turn')).toBeDisabled();
+    releaseHeldTurn!();
+    await expect.poll(async () => !!(await room(p.a)).processing).toBe(false);
+    await expect(p.a.locator('#send-turn')).toBeEnabled({ timeout: 15000 });
+    await p.a.locator('#conversation-input').fill(''); await closeComposer(p.a);
     // An unfinished provider response is canceled room-wide; late text must never become a caption or speech line.
     const response = await api(p.a, 'turn', { turnId: 'slow-interrupted-turn', text: 'hold this response', target: 'table' });
     expect(response.status).toBe(202);
@@ -504,7 +532,7 @@ test('shared table turns: one request, both identities, exclusion and repair, pr
     const terminalPolls = expiredPolls; await p.a.waitForTimeout(350); expect(expiredPolls).toBe(terminalPolls);
     expect(p.errors).toEqual([]);
   } catch (error) { await diagnose(p, 'shared-turn-failure'); throw error;
-  } finally { await p.close(); }
+  } finally { releaseHeldTurn?.(); await p.close(); }
 });
 
 test('friend voice uses one opted-in microphone per browser and exchanges native RTP in both directions', async () => {
@@ -665,7 +693,8 @@ test('complete double evening: both dinners, a shared dessert, one check for the
     for (const page of [p.a,p.b]) await course(page, snapshot => snapshot.evening.main.status === 'finished', 20000);
     expect((await room(p.a)).views.h1.evening.cues.some(cue => cue.key === 'main-finished' && cue.utterances[0]!.speaker === 'waiter')).toBe(true);
     await captureRestaurantScene(p.a, '.qa/double-date/plates-cleared-1280.png');
-    // One pair shares a dessert while the other declines; the table's check waits for both.
+    // Each pair can choose while the offer is open; otherwise the date makes the choice.
+    // The table's check waits for both pairs' dessert decisions.
     await chooseDessert(p.a, 'lemon');
     await chooseDessert(p.b, 'skip');
     await course(p.a, snapshot => snapshot.evening.dessert.status === 'served', 20000);
@@ -691,8 +720,19 @@ test('complete double evening: both dinners, a shared dessert, one check for the
       expect(receipt).toContain(`Pair total · ${money(bill.totalCents!)}`);
     }
     const desserts = (['h1', 'h2'] as const).filter(human => billed.views[human].evening.dessert.choice);
-    expect(billed.views.h1.evening.bill.items!.find(item => item.id === 'dessert-shared')).toMatchObject({ chargedCents: 900, status: 'served' });
-    expect(billed.views.h2.evening.bill.items!.some(item => item.id === 'dessert-shared')).toBe(desserts.includes('h2'));
+    const dessertMenu: Record<string, { label: string; price: number }> = {
+      lemon: { label: 'Lemon posset', price: 900 },
+      chocolate: { label: 'Chocolate fondant', price: 1100 },
+      berries: { label: 'Strawberries & cream', price: 800 },
+    };
+    expect(desserts).toContain('h1'); // This pair shared and ate dessert above.
+    for (const human of ['h1', 'h2'] as const) {
+      const choice = billed.views[human].evening.dessert.choice;
+      const item = billed.views[human].evening.bill.items!.find(entry => entry.id === 'dessert-shared');
+      if (!choice) { expect(item).toBeUndefined(); continue; }
+      const expected = dessertMenu[choice]; expect(expected).toBeDefined();
+      expect(item).toEqual({ id: 'dessert-shared', label: expected.label, quantity: 1, unitPriceCents: expected.price, status: 'served', chargedCents: expected.price, owner: 'you' });
+    }
     expect(receipt.split('\n').filter(line => /^(You|Mira|Sam|Jules) · /.test(line))).toHaveLength(4 + desserts.length);
     expect(receipt).not.toContain('Not charged'); expect(receipt).not.toContain('Already settled');
     await expect(p.a.locator('#bill-total')).toHaveText(`Amount due · ${money(billed.views.h1.evening.bill.totalCents! + billed.views.h2.evening.bill.totalCents!)}`);
