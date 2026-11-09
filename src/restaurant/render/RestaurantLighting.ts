@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { DinnerState } from '../types';
 import type { RenderQuality, RenderTier } from './RenderQuality';
 import type { RestaurantSet } from './RestaurantScene';
-import { DYNAMIC_SHADOW_LAYER, PENDANTS, PENDANT_Y, STATIC_SHADOW_LAYER, VENUE_ENV } from './VenueContract';
+import { PENDANTS, PENDANT_Y, STATIC_SHADOW_LAYER } from './VenueContract';
 import { applyVenueMaterialTags, createVenueEnvironment, VENUE_ROOM } from './VenueEnvironment';
 import { createVenueGlow } from './VenueGlow';
 import { waitForEnvironmentAssets } from './EnvironmentAssets';
@@ -11,7 +11,6 @@ import { waitForRestaurantProps } from './RestaurantPropKit';
 /** Booth face light, diningRoot-local, so it travels with the quiet-table move. */
 export const BOOTH_LIGHT = { solo: [-1.2, 2.1, -1.3], double: [0, 2.15, -1.45] } as const;
 export const KEY_SHADOW = { position: [2.2, 10.74, 4.88], target: [0, 0, 0], near: .5, far: 24, margin: .3, mapSize: 1024 } as const;
-export const TABLE_SPOT_SHADOW = { high: { mapSize: 1024, normalBias: .004 }, low: { mapSize: 512, normalBias: .008 } } as const;
 /**
  * Adaptive pixel ratio: wait after play starts, then judge 3 s windows of rendered frames. A step
  * down is kept only if the next window's mean frame time drops below `gain` of the slow one; a
@@ -24,9 +23,9 @@ const TAG_RESCAN_RENDERS = 120;
 export interface LightRig {
   readonly tier: RenderTier;
   readonly hemisphere: THREE.HemisphereLight;
-  /** Static shadow: renders only STATIC_SHADOW_LAYER, and only when asked to. */
+  /** The only shadow map, on the high tier: renders only STATIC_SHADOW_LAYER, and only when asked to. The low tier casts nothing. */
   readonly key: THREE.DirectionalLight;
-  /** P0 over the dining table, parented to diningRoot. Its shadow renders only DYNAMIC_SHADOW_LAYER. */
+  /** P0 over the dining table, parented to diningRoot. Casts no shadow; contact blobs ground the tabletop. */
   readonly table: THREE.SpotLight;
   /** P1..P4 room pendants. P3 and P4 exist on the high tier only. */
   readonly pendants: readonly THREE.SpotLight[];
@@ -89,7 +88,8 @@ export function buildLightRig(quality: Pick<RenderQuality, 'tier'>, roomLights: 
   const high = quality.tier === 'high';
   const lights: THREE.Light[] = [];
 
-  const hemisphere = new THREE.HemisphereLight('#e6d6cf', '#5a4840', .5);
+  // 1.0 replaces the ambient the scene-wide reflection map used to add (walls and floor matched within a few %).
+  const hemisphere = new THREE.HemisphereLight('#e6d6cf', '#5a4840', 1);
   hemisphere.name = 'venue-hemisphere';
   roomLights.add(hemisphere); lights.push(hemisphere);
 
@@ -98,7 +98,8 @@ export function buildLightRig(quality: Pick<RenderQuality, 'tier'>, roomLights: 
   key.position.set(...KEY_SHADOW.position);
   key.target.name = 'venue-key-target';
   key.target.position.set(...KEY_SHADOW.target);
-  key.castShadow = true;
+  // Phones skip shadow maps entirely: no depth pass and no shadow lookups in any shader.
+  key.castShadow = high;
   key.shadow.mapSize.set(KEY_SHADOW.mapSize, KEY_SHADOW.mapSize);
   key.shadow.camera.near = KEY_SHADOW.near; key.shadow.camera.far = KEY_SHADOW.far;
   key.shadow.bias = -.0002; key.shadow.normalBias = .02; key.shadow.radius = 2.5; key.shadow.intensity = .8;
@@ -109,16 +110,8 @@ export function buildLightRig(quality: Pick<RenderQuality, 'tier'>, roomLights: 
   roomLights.add(key, key.target); lights.push(key);
 
   const [tableX, tableZ] = PENDANTS[0];
+  // No shadow: a per-frame depth pass of the props and diners cost frames and added little.
   const table = spot(diningRoot, 'venue-table-spot', '#ffd39a', 8, 6, 1.15, .75, [tableX, PENDANT_Y.light, tableZ], [tableX, .78, tableZ]);
-  table.castShadow = true;
-  const tableShadow = table.shadow, tierShadow = TABLE_SPOT_SHADOW[high ? 'high' : 'low'];
-  // The shadow camera's far plane follows the light distance (SpotLightShadow.updateMatrices).
-  tableShadow.focus = .55; tableShadow.bias = -.00015; tableShadow.radius = 2; tableShadow.intensity = .85;
-  tableShadow.camera.near = .4;
-  tableShadow.camera.layers.set(DYNAMIC_SHADOW_LAYER);
-  tableShadow.mapSize.set(tierShadow.mapSize, tierShadow.mapSize);
-  tableShadow.normalBias = tierShadow.normalBias;
-  if (!high) { tableShadow.autoUpdate = false; tableShadow.needsUpdate = true; }
   lights.push(table);
 
   const pendants: THREE.SpotLight[] = [];
@@ -158,35 +151,23 @@ export function buildLightRig(quality: Pick<RenderQuality, 'tier'>, roomLights: 
   };
 }
 
-/** Enables DYNAMIC_SHADOW_LAYER on an actor's casting meshes, leaving the head (face, eyes, hair) out. */
-export function enableActorShadowLayer(root: THREE.Object3D) {
-  if (root.name.startsWith('head-')) return;
-  if ((root as THREE.Mesh).isMesh && root.castShadow && !root.userData.target) root.layers.enable(DYNAMIC_SHADOW_LAYER);
-  const children = root.children;
-  for (let i = 0; i < children.length; i++) enableActorShadowLayer(children[i]!);
-}
-
 const isActorRoot = (object: THREE.Object3D) => object.name.startsWith('character-');
 
 /**
- * Keeps the split shadows usable when the surfaces workstream has not tagged any baked batch:
- * room batches join the static layer and the table furniture joins the spot layer.
- * A no-op once any casting batch already carries the layer.
+ * Keeps the key shadow usable when the surfaces workstream has not tagged any baked batch: every
+ * casting room batch, the dining furniture included, joins the static layer. A no-op once any
+ * casting batch already carries the layer.
  */
-export function ensureVenueShadowLayers(set: Pick<RestaurantSet, 'root' | 'diningRoot'>) {
-  const batches: THREE.Mesh[] = [], furniture: THREE.Mesh[] = [];
-  let staticTagged = false, furnitureTagged = false;
+export function ensureVenueShadowLayers(set: Pick<RestaurantSet, 'root'>) {
+  const batches: THREE.Mesh[] = [];
+  let staticTagged = false;
   set.root.traverse(object => {
     const mesh = object as THREE.Mesh;
     if (!mesh.isMesh || !mesh.castShadow || !mesh.name.startsWith('restaurant-')) return;
-    let inDining = false;
-    for (let parent = mesh.parent; parent; parent = parent.parent) if (parent === set.diningRoot) { inDining = true; break; }
-    if (inDining) { furniture.push(mesh); if (mesh.layers.isEnabled(DYNAMIC_SHADOW_LAYER)) furnitureTagged = true; }
     if (mesh.layers.isEnabled(STATIC_SHADOW_LAYER)) staticTagged = true;
     batches.push(mesh);
   });
   if (!staticTagged) batches.forEach(mesh => mesh.layers.enable(STATIC_SHADOW_LAYER));
-  if (!furnitureTagged) furniture.forEach(mesh => mesh.layers.enable(DYNAMIC_SHADOW_LAYER));
 }
 
 export interface PixelRatioGovernor {
@@ -243,26 +224,24 @@ export interface RestaurantLighting {
 
 /**
  * WebGL side of the venue lighting: builds the rig, bakes the venue environment, applies material
- * tags before the shader warmup, adds the glow halos and keeps the split shadows current from
+ * tags before the shader warmup, adds the glow halos and refreshes the static key shadow from
  * scene.onBeforeRender, which runs after world matrices update and before the shadow pass.
  */
 export function createRestaurantLighting({ renderer, scene, quality, roomLights, set }: RestaurantLightingOptions): RestaurantLighting {
   const rig = buildLightRig(quality, roomLights, set.diningRoot);
-  const { key, table } = rig;
-  const low = rig.tier === 'low';
+  const { key } = rig;
   ensureVenueShadowLayers(set);
 
+  // Only tagged materials (metal, glass, glaze, water) sample the venue map. A scene-wide environment put
+  // two cube-map lookups on every room pixel, the largest share of the pass's per-frame cost.
   const environment = createVenueEnvironment(renderer);
-  scene.environment = environment.texture;
-  scene.environmentIntensity = VENUE_ENV.scene;
   const glow = createVenueGlow(scene, set.diningRoot);
 
-  // Characters keep their own explicit environment and are scanned only for shadow layers.
+  // Characters keep their own explicit environment and are skipped.
   const seenRoots = new WeakSet<THREE.Object3D>();
   const scanRoot = (root: THREE.Object3D) => {
     seenRoots.add(root);
-    if (isActorRoot(root)) enableActorShadowLayer(root);
-    else applyVenueMaterialTags(root, environment.texture, isActorRoot);
+    if (!isActorRoot(root)) applyVenueMaterialTags(root, environment.texture, isActorRoot);
   };
   const scanNewRoots = () => {
     const children = scene.children;
@@ -289,7 +268,7 @@ export function createRestaurantLighting({ renderer, scene, quality, roomLights,
   const onContextRestored = () => {
     if (disposed) return;
     try {
-      scene.environment = environment.rebuild();
+      environment.rebuild();
       applyVenueMaterialTags(scene, environment.texture, isActorRoot);
     } catch (error) {
       console.warn('Venue environment could not be rebuilt after the WebGL context returned.', error);
@@ -313,11 +292,9 @@ export function createRestaurantLighting({ renderer, scene, quality, roomLights,
     const layoutChanged = offset !== lastOffset || double !== lastDouble || assetsReady !== lastAssets;
     if (layoutChanged || restored) {
       key.shadow.needsUpdate = true;
-      table.shadow.needsUpdate = true;
       lastOffset = offset; lastDouble = double; lastAssets = assetsReady; restored = false;
     }
     renders++;
-    if (low && (renders & 1) === 0) table.shadow.needsUpdate = true;
     glow.followLamp(set.flame, lampLevel);
     renderedSinceUpdate = true;
   };
@@ -366,7 +343,6 @@ export function createRestaurantLighting({ renderer, scene, quality, roomLights,
       disposed = true;
       canvas.removeEventListener('webglcontextrestored', onContextRestored);
       if (scene.onBeforeRender === beforeRender) scene.onBeforeRender = previousBeforeRender;
-      if (scene.environment === environment.texture) scene.environment = null;
       glow.dispose();
       rig.dispose();
       environment.dispose();

@@ -3,10 +3,12 @@
  * Lighting reads the tags; surfaces and tabletop props set them when they build materials.
  */
 
-/** Baked room, furniture and plant meshes that cast into the static key-light shadow. Layer 0 always stays enabled. */
+/**
+ * Baked room, furniture and plant meshes that cast into the static key-light shadow, the only shadow
+ * map (high tier only). Tabletop props and actors cast none; contact blobs ground the props.
+ * Layer 0 always stays enabled.
+ */
 export const STATIC_SHADOW_LAYER = 1;
-/** Tabletop casters, table furniture and actor bodies that cast into the table spotlight's shadow. */
-export const DYNAMIC_SHADOW_LAYER = 2;
 
 /** Pendant centres [x, z]. Entry 0 is diningRoot-local and travels with the quiet-table move. */
 export const PENDANTS = [[0, -1.15], [-3.5, -3.5], [3.5, -3.5], [-3.38, 1.2], [3.38, 1.2]] as const;
@@ -21,11 +23,11 @@ export const GLOW_LINEAR = [1.0, .8, .52] as const;
 export const LAMP_SHADE_EMISSIVE = [.07, .27, .5] as const;
 
 /**
- * Environment-reflection strengths. scene.environment uses `scene`.
+ * Environment-reflection strengths. There is no scene-wide environment: only tagged materials reflect the venue.
  * A material with `userData.venueEnv = VENUE_ENV.x` gets the venue map as an explicit envMap at that intensity.
  * `userData.venueGlass = true` opts a transparent material into the fresnel-alpha glass hook.
  */
-export const VENUE_ENV = { scene: .4, metal: 1.0, glass: 1.2, water: .8, glaze: .6, polished: .5, floor: .35, wood: .3 } as const;
+export const VENUE_ENV = { metal: 1.0, glass: 1.2, water: .8, glaze: .6, polished: .5, floor: .35, wood: .3 } as const;
 
 /** `object.userData.contactShadow = { rx, rz, opacity }` requests a soft contact blob under that object. */
 export interface ContactShadowTag { rx: number; rz: number; opacity: number }

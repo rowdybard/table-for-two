@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { DinnerState } from '../types';
 import { createProceduralMaterial } from './ProceduralMaterials';
-import { castSpotShadow, receiveSpotShadow, tagContactShadow } from './PlaceSettingShadows';
+import { receiveShadows, tagContactShadow } from './PlaceSettingShadows';
 import { GLOW_LINEAR, LAMP_SHADE_EMISSIVE, VENUE_ENV } from './VenueContract';
 
 type ScenarioCare = NonNullable<DinnerState['evening']['scenarioCare']>;
@@ -131,18 +131,17 @@ export class TabletopProps {
     const place = (parent:THREE.Group,x:number,z:number) => {
       const group=new THREE.Group();group.position.set(x,.782,z);if(z<-1.15)group.rotation.y=Math.PI;parent.add(group);
       const plate=new THREE.Group();group.add(plate);
-      const body=add(plate,plateGeo,ceramic);castSpotShadow(body);receiveSpotShadow(body);receiveSpotShadow(add(plate,plateMarkGeo,gold));
+      const body=add(plate,plateGeo,ceramic);receiveShadows(body);receiveShadows(add(plate,plateMarkGeo,gold));
       tagContactShadow(plate,{rx:.2,rz:.2,opacity:.55});
       // Seasoning settles on the plate's sloping rim, beyond the food.
       const seasoning=(material:THREE.Material,seed:number) => {const grains=new THREE.InstancedMesh(grainGeo,material,18), transform=new THREE.Object3D();for(let i=0;i<18;i++){const a=i*2.4+seed,r=.12+(i%5)*.006;transform.position.set(Math.cos(a)*r,plateSurfaceY(r)+.0016,Math.sin(a)*r);transform.updateMatrix();grains.setMatrixAt(i,transform.matrix);}grains.visible=false;plate.add(grains);return grains;};
       const salt=seasoning(ceramic,0),pepper=seasoning(dark,1);
       const n=PLACE_SETTING.napkin,napkin=new THREE.Group(); napkin.position.set(n.x,n.y,n.z);group.add(napkin);
-      add(napkin,napkinGeo,linen);add(napkin,foldGeo,linen,0,n.size[1]/2+.002,-.02);receiveSpotShadow(napkin);
+      add(napkin,napkinGeo,linen);add(napkin,foldGeo,linen,0,n.size[1]/2+.002,-.02);receiveShadows(napkin);
       tagContactShadow(napkin,{rx:.045,rz:.095,opacity:.5,y0:n.y});
       const cutlery=new THREE.Group();group.add(cutlery);
       const s=PLACE_SETTING;
       const fork=add(cutlery,forkGeo,steel,s.fork.x,0,s.fork.z),knife=add(cutlery,knifeGeo,steel,s.knife.x,0,s.knife.z),spoon=add(cutlery,spoonGeo,steel,s.spoon.x,0,s.spoon.z);
-      castSpotShadow(fork,knife,spoon);
       tagContactShadow(fork,{rx:.024,rz:.11,opacity:.45});tagContactShadow(knife,{rx:.017,rz:.12,opacity:.45});tagContactShadow(spoon,{rx:.019,rz:.11,opacity:.45});
       this.placeGroups.push({group,plate,cutlery,napkin,salt,pepper,x,z});
     };
@@ -167,7 +166,7 @@ export class TabletopProps {
     tagContactShadow(carafe,{rx:.075,rz:.075,opacity:.5,cy:.127});
     // Brass stem, translucent woven shade and warm practical light.
     const lamp=this.lamp;lamp.position.set(-.20,.782,-1.12);this.shared.add(lamp);
-    castSpotShadow(add(lamp,lathe('lamp',[[0,0],[.047,0],[.049,.009],[.037,.019],[.018,.03],[.012,.12],[.025,.13]],32),gold));
+    add(lamp,lathe('lamp',[[0,0],[.047,0],[.049,.009],[.037,.019],[.018,.03],[.012,.12],[.025,.13]],32),gold);
     this.lampShade=surface('linen','#f4dfbd',.0004);this.lampShade.side=THREE.DoubleSide;this.lampShade.emissive.set('#c68c51');this.lampShade.emissiveIntensity=LAMP_SHADE_EMISSIVE[2];
     add(lamp,geo('shade',()=>new THREE.CylinderGeometry(.053,.085,.105,32,1,true)),this.lampShade,0,.165,0);add(lamp,merged('shade-rings',()=>[flatTorus(.085,.002,.112),flatTorus(.053,.002,.217)]),gold);
     const glow=new THREE.MeshBasicMaterial({toneMapped:false});glow.color.setRGB(...GLOW_LINEAR);this.materials.push(glow);this.flame=add(lamp,geo('bulb',()=>new THREE.SphereGeometry(.015,12,8)),glow,0,.155,0);
@@ -181,18 +180,18 @@ export class TabletopProps {
       hearts.push(placed(new THREE.SphereGeometry(1,10,7),x,.285,.007,.008,.008,.005));}
     const vaseParts=[add(this.vase,lathe('vase',[[0,0],[.045,0],[.055,.018],[.057,.075],[.045,.12],[.032,.145],[.034,.15],[.028,.15],[.027,.13]],32),ceramic),
       add(this.vase,merged('vase-stems',()=>stems),green),add(this.vase,merged('vase-petals',()=>petals),pink),add(this.vase,merged('vase-hearts',()=>hearts),yellow)];
-    castSpotShadow(...vaseParts);receiveSpotShadow(vaseParts[0]!);tagContactShadow(this.vase,{rx:.07,rz:.07,opacity:.55});
+    receiveShadows(vaseParts[0]!);tagContactShadow(this.vase,{rx:.07,rz:.07,opacity:.55});
     // Cork basket and hand-scored rolls. Only the roll bodies cast; the scoring is surface detail.
     const basket=this.basket;basket.position.set(.34,.782,-1.28);this.shared.add(basket);
     const weave=add(basket,merged('basket',()=>[new THREE.LatheGeometry(profile([[0,0],[.105,0],[.115,.015],[.13,.055],[.125,.06],[.11,.02],[0,.012]]),32),flatTorus(.126,.004,.055)]),cork);
-    castSpotShadow(weave);receiveSpotShadow(weave);tagContactShadow(basket,{rx:.14,rz:.14,opacity:.5});
+    receiveShadows(weave);tagContactShadow(basket,{rx:.14,rz:.14,opacity:.5});
     const scoreGeo=merged('scores',()=>[-1,0,1].map(j=>placed(new THREE.BoxGeometry(.004,.002,.043),j*.018,.026,0,1,1,1,0,.25,0)));
-    for(let i=0;i<4;i++){const roll=new THREE.Group();roll.position.set((i%2-.5)*.09,.045,(Math.floor(i/2)-.5)*.065);basket.add(roll);const bread=add(roll,geo('roll',()=>new THREE.SphereGeometry(1,16,10)),crust);bread.scale.set(.055,.027,.038);castSpotShadow(bread);add(roll,scoreGeo,crumb);receiveSpotShadow(roll);this.bread.push(roll);}
+    for(let i=0;i<4;i++){const roll=new THREE.Group();roll.position.set((i%2-.5)*.09,.045,(Math.floor(i/2)-.5)*.065);basket.add(roll);const bread=add(roll,geo('roll',()=>new THREE.SphereGeometry(1,16,10)),crust);bread.scale.set(.055,.027,.038);add(roll,scoreGeo,crumb);receiveShadows(roll);this.bread.push(roll);}
     for(const [i,label] of ['SALT','PEPPER'].entries()){
       const shaker=new THREE.Group();shaker.position.set(.66+i*.085,.7795,-.91);this.shared.add(shaker);
       const body=add(shaker,geo('shaker',()=>new THREE.CylinderGeometry(.023,.027,.075,16)),ceramic,0,.04,0);
       const top=add(shaker,geo('shaker-top',()=>new THREE.CylinderGeometry(.023,.023,.009,16)),steel,0,.081,0);
-      castSpotShadow(body,top);receiveSpotShadow(body);
+      receiveShadows(body);
       const holes=new THREE.InstancedMesh(geo('shaker-hole',()=>new THREE.CylinderGeometry(.0015,.0015,.0007,7)),dark,5), dot=new THREE.Object3D();
       for(let n=0;n<5;n++){const a=n*Math.PI*2/5;dot.position.set(Math.cos(a)*.009,.086,Math.sin(a)*.009);dot.updateMatrix();holes.setMatrixAt(n,dot.matrix);}shaker.add(holes);
       const mark=document.createElement('canvas');mark.width=mark.height=128;const ink=mark.getContext('2d')!;ink.fillStyle='#66594e';ink.textAlign='center';ink.textBaseline='middle';ink.font='bold 82px Georgia';ink.fillText(i?'P':'S',64,70);
@@ -205,7 +204,7 @@ export class TabletopProps {
     [['ROASTED TOMATO RIGATONI','basil · parmesan'],['LEMON & HERB CHICKEN','roasted greens · jus'],['WILD MUSHROOM RISOTTO','thyme · aged cheese'],['SOMETHING SWEET','ask about tonight’s dessert']].forEach(([title,detail],i)=>{const y=370+i*145;c.font='bold 25px Georgia';c.fillText(title!,384,y);c.font='italic 22px Georgia';c.fillText(detail!,384,y+40);});c.font='italic 20px Georgia';c.fillText('made with care, shared with pleasure',384,945);
     const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;texture.anisotropy=4;this.textures.push(texture);const paper=new THREE.MeshStandardMaterial({map:texture,roughness:.96,side:THREE.DoubleSide});this.materials.push(paper);
     this.menu=add(this.root,geo('menu',()=>new THREE.PlaneGeometry(.23,.32)),paper,-.34,.783,-.75);this.menu.rotation.set(-Math.PI/2,0,-.17);this.menu.receiveShadow=true;
-    const target=(name:string,x:number,y:number,z:number,sx:number,sy:number,sz:number,r:number)=>{const m=add(this.root,new THREE.BoxGeometry(sx,sy,sz),new THREE.MeshBasicMaterial({transparent:true,opacity:0,colorWrite:false,depthWrite:false}),x,y,z);this.materials.push(m.material as THREE.Material);m.userData.target=name;m.userData.inspectRadius=r;this.targets.push(m);return m;};
+    const target=(name:string,x:number,y:number,z:number,sx:number,sy:number,sz:number,r:number)=>{const m=add(this.root,new THREE.BoxGeometry(sx,sy,sz),new THREE.MeshBasicMaterial({visible:false,transparent:true,opacity:0,colorWrite:false,depthWrite:false}),x,y,z);this.materials.push(m.material as THREE.Material);m.userData.target=name;m.userData.inspectRadius=r;this.targets.push(m);return m;};
     target('glass',.49,.88,-.77,.16,.21,.16,.12);target('carafe',-.56,.96,-1.50,.17,.36,.17,.19);target('bread',.34,.85,-1.28,.25,.14,.2,.18);target('salt',.66,.84,-.91,.075,.12,.075,.09);target('pepper',.745,.84,-.91,.075,.12,.075,.09);target('cutlery',-.235,.82,-.64,.09,.09,.25,.16);target('lamp',-.20,.92,-1.12,.19,.28,.19,.18);target('vase',-.48,.95,-1.08,.16,.34,.16,.18);target('plate',0,.82,-.64,.32,.08,.32,.22);
   }
   setDoubleDate(enabled:boolean){this.solo.visible=!enabled;this.doubles.visible=enabled;}

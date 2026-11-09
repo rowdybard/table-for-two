@@ -291,7 +291,7 @@ export function createCharacterHead(kind: CharacterKind, skinColor: string): Cha
   face.setAttribute('color', new THREE.Float32BufferAttribute(pigment, 3));
   face.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   face.computeVertexNormals();
-  add(face, skin);
+  const faceMesh = add(face, skin);
   // Skin that moves with the expression: cheeks lift into a smile, corners sink in a frown,
   // the brow ridge follows the brows, the glabella furrows and the chin drops with the jaw.
   const facePositions = pos.array as Float32Array,
@@ -308,22 +308,53 @@ export function createCharacterHead(kind: CharacterKind, skinColor: string): Cha
     chinW.push(front * smooth(-y, 0.07, 0.115));
     sideOf.push(Math.sign(x));
   }
-  const faceNormalAttr = face.getAttribute('normal') as THREE.BufferAttribute;
-  let faceMorphKey = NaN;
-  function morphFace(smile: number, asymmetry: number, browLift: number, browAngle: number, jaw: number) {
-    const key = smile * 5 + asymmetry * 2 + browLift * 900 + browAngle * 4 + jaw * 7;
-    if (Number.isFinite(faceMorphKey) && Math.abs(faceMorphKey - key) < 0.01) return;
-    faceMorphKey = key;
-    const up = Math.max(0, smile), down = Math.max(0, -smile);
+  // The expression runs on the GPU as six relative morph targets built once here: left and right smile
+  // (the asymmetry term is linear per side), frown, brow lift per millimetre, glabella per 0.1 rad and jaw.
+  // Each frame only sets six influences; the CPU no longer rewrites and re-uploads the face while anyone talks.
+  const faceNormalAttr = face.getAttribute('normal') as THREE.BufferAttribute,
+    faceNormals = faceNormalAttr.array as Float32Array,
+    baseNormals = faceNormals.slice();
+  const morphY = [new Float32Array(pos.count), new Float32Array(pos.count), new Float32Array(pos.count), new Float32Array(pos.count), new Float32Array(pos.count), new Float32Array(pos.count)];
+  const morphZ = [new Float32Array(pos.count), new Float32Array(pos.count), new Float32Array(pos.count), new Float32Array(pos.count), new Float32Array(pos.count), new Float32Array(pos.count)];
+  for (let v = 0; v < pos.count; v++) {
+    // The centre column (sideOf 0) has bias 1: half of each side's target.
+    const left = sideOf[v] < 0 ? 1 : sideOf[v] > 0 ? 0 : 0.5, right = 1 - left;
+    morphY[0][v] = 0.0042 * cheekLift[v] * left; morphZ[0][v] = 0.0026 * cheekOut[v] * left;
+    morphY[1][v] = 0.0042 * cheekLift[v] * right; morphZ[1][v] = 0.0026 * cheekOut[v] * right;
+    morphY[2][v] = -0.0024 * frownW[v];
+    morphY[3][v] = 0.55 * 0.001 * browW[v];
+    morphZ[4][v] = -0.012 * 0.1 * glabellaW[v];
+    morphY[5][v] = -0.0045 * chinW[v];
+  }
+  const morphPositions: THREE.Float32BufferAttribute[] = [], morphNormals: THREE.Float32BufferAttribute[] = [];
+  for (let t = 0; t < morphY.length; t++) {
+    const delta = new Float32Array(pos.count * 3), normalDelta = new Float32Array(pos.count * 3);
     for (let v = 0; v < pos.count; v++) {
-      const bias = 1 + asymmetry * 0.35 * sideOf[v];
-      facePositions[v * 3 + 1] =
-        faceBase[v * 3 + 1] + 0.0042 * up * bias * cheekLift[v] - 0.0024 * down * frownW[v] + 0.55 * browLift * browW[v] - 0.0045 * jaw * chinW[v];
-      facePositions[v * 3 + 2] = faceBase[v * 3 + 2] + 0.0026 * up * bias * cheekOut[v] - 0.012 * Math.max(0, browAngle) * glabellaW[v];
+      delta[v * 3 + 1] = morphY[t]![v]!; delta[v * 3 + 2] = morphZ[t]![v]!;
+      facePositions[v * 3 + 1] = faceBase[v * 3 + 1] + delta[v * 3 + 1]!;
+      facePositions[v * 3 + 2] = faceBase[v * 3 + 2] + delta[v * 3 + 2]!;
     }
-    pos.needsUpdate = true;
+    // Normal change at unit influence; the shader adds it linearly and renormalises.
     face.computeVertexNormals();
-    faceNormalAttr.needsUpdate = true;
+    for (let i = 0; i < normalDelta.length; i++) normalDelta[i] = faceNormals[i]! - baseNormals[i]!;
+    morphPositions.push(new THREE.Float32BufferAttribute(delta, 3));
+    morphNormals.push(new THREE.Float32BufferAttribute(normalDelta, 3));
+  }
+  facePositions.set(faceBase);
+  faceNormals.set(baseNormals);
+  face.morphAttributes.position = morphPositions;
+  face.morphAttributes.normal = morphNormals;
+  face.morphTargetsRelative = true;
+  faceMesh.updateMorphTargets();
+  const faceInfluences = faceMesh.morphTargetInfluences!;
+  function morphFace(smile: number, asymmetry: number, browLift: number, browAngle: number, jaw: number) {
+    const up = Math.max(0, smile);
+    faceInfluences[0] = up * (1 - asymmetry * 0.35);
+    faceInfluences[1] = up * (1 + asymmetry * 0.35);
+    faceInfluences[2] = Math.max(0, -smile);
+    faceInfluences[3] = browLift / 0.001;
+    faceInfluences[4] = Math.max(0, browAngle) / 0.1;
+    faceInfluences[5] = jaw;
   }
 
   // Sculpt the helix, concha and lobe as a single shallow relief.
