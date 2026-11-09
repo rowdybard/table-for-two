@@ -27,7 +27,7 @@ TypeScript, plain imperative Three.js, Vite, Node, Rapier and DOM game overlays.
 | The date's table business (bites, sips, hair, laugh, chin rest, thinking, phone) and interest posture | `src/restaurant/render/DateBehaviour.ts`, `RestaurantActor.ts`, `CharacterBody.ts`, `FacialPerformance.ts` |
 | Interest read-out and the corner heart | `server/restaurant/interest.ts`, `src/restaurant/InterestCue.ts` |
 | Restaurant geometry, place settings, food and props | `src/restaurant/render/RestaurantScene.ts`, `TabletopProps.ts`, `EveningTable.ts` |
-| Venue lights, reflection map, glow halos and phone quality tier (`?quality=high\|low` forces one) | `src/restaurant/render/RestaurantLighting.ts`, `VenueEnvironment.ts`, `VenueGlow.ts`, `RenderQuality.ts`, shared constants in `VenueContract.ts` |
+| Venue lights, reflection map, glow halos, phone quality tier and pixel budget (`?quality=high\|low` forces a tier; `?stats` shows the GPU, fps and drawn resolution) | `src/restaurant/render/RestaurantLighting.ts`, `VenueEnvironment.ts`, `VenueGlow.ts`, `RenderQuality.ts`, shared constants in `VenueContract.ts` |
 | Prompt line (course choices, incidents, scenarios, gestures), receipt, notebook and endings | `src/restaurant/EveningInterface.ts` |
 | Shared pacing clocks and dessert list | `src/restaurant/evening.ts` |
 | Touch input | `MobileControls.ts`, `MobileInput.ts`, `TouchLookTap.ts`, `TouchButtonGesture.ts` |

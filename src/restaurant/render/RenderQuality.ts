@@ -1,7 +1,7 @@
 /**
  * One render tier per page load, chosen before the first shader compile.
  * Light count and shadow casters depend on it, so it never changes at runtime;
- * only the pixel ratio may step down while playing.
+ * only the resolution scale may step down while playing.
  */
 export type RenderTier = 'high' | 'low';
 
@@ -9,12 +9,18 @@ export interface RenderQuality {
   readonly tier: RenderTier;
   /** Upper bound applied to window.devicePixelRatio. */
   readonly pixelRatioCap: number;
-  /** The adaptive step-down never goes below this. */
-  readonly pixelRatioFloor: number;
-  /** Frame-time driven pixel-ratio step-down. Off for ?quality= overrides and automated browsers. */
+  /** Most drawing-buffer pixels at full scale: a big window renders at this many pixels and is scaled up. */
+  readonly pixelBudget: number;
+  /** Fewest drawing-buffer pixels the adaptive scale may reach (small canvases keep their device ratio). */
+  readonly minPixels: number;
+  /** The adaptive resolution scale never goes below this. */
+  readonly minScale: number;
+  /** Frame-time driven resolution step-down. Off for ?quality= overrides and automated browsers. */
   readonly adaptive: boolean;
   /** True when ?quality=high|low chose the tier. */
   readonly forced: boolean;
+  /** WebGL runs on the CPU (SwiftShader, llvmpipe, Basic Render Driver): the browser is not using the graphics card. */
+  readonly software: boolean;
 }
 
 /** Browser facts the tier depends on. Every field is optional so tests can pass only what matters. */
@@ -29,12 +35,33 @@ export interface RenderQualityEnvironment {
   deviceMemory?: number;
   /** navigator.webdriver */
   webdriver?: boolean;
+  /** The WebGL context reports a CPU rasterizer (see isSoftwareRenderer). */
+  softwareRenderer?: boolean;
 }
 
-export const RENDER_TIERS: Readonly<Record<RenderTier, { pixelRatioCap: number; pixelRatioFloor: number }>> = {
-  high: { pixelRatioCap: 1.5, pixelRatioFloor: 1 },
-  low: { pixelRatioCap: 1.25, pixelRatioFloor: .75 },
+/**
+ * Fill cost grows with drawn pixels, and every lit pixel shades every light, so the tiers budget pixels rather
+ * than only capping the device ratio: a maximised 1440p or 150%-scaled window would otherwise draw 4-5 million.
+ */
+export const RENDER_TIERS: Readonly<Record<RenderTier, { pixelRatioCap: number; pixelBudget: number; minPixels: number; minScale: number }>> = {
+  high: { pixelRatioCap: 1.5, pixelBudget: 2_100_000, minPixels: 560_000, minScale: .5 },
+  low: { pixelRatioCap: 1.25, pixelBudget: 1_000_000, minPixels: 200_000, minScale: .5 },
 };
+
+type ResolutionPolicy = Pick<RenderQuality, 'pixelRatioCap' | 'pixelBudget' | 'minPixels'>;
+
+/**
+ * The pixel ratio for a canvas of cssWidth x cssHeight: the device ratio up to the tier cap, lowered so the
+ * drawing buffer fits the pixel budget, times the adaptive scale, but never under minPixels (and never above
+ * the unscaled ratio, so a tiny canvas simply keeps it).
+ */
+export function renderPixelRatio(quality: ResolutionPolicy, devicePixelRatio: number, cssWidth: number, cssHeight: number, scale = 1) {
+  const area = Math.max(1, cssWidth * cssHeight);
+  const device = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
+  const full = Math.min(device, quality.pixelRatioCap, Math.sqrt(quality.pixelBudget / area));
+  const floor = Math.min(full, Math.sqrt(quality.minPixels / area));
+  return Math.max(floor, full * Math.min(1, Math.max(0, scale)));
+}
 
 /** Same small-touch-screen test as the mobile controls. */
 const TOUCH_WIDTH_LIMIT = 1100;
@@ -77,11 +104,28 @@ export function detectRenderQuality(env: RenderQualityEnvironment = readRenderQu
   const touchScreen = (env.maxTouchPoints ?? 0) > 0 && (env.innerWidth ?? Infinity) <= TOUCH_WIDTH_LIMIT;
   const memory = env.deviceMemory;
   const smallMemory = typeof memory === 'number' && Number.isFinite(memory) && memory > 0 && memory <= LOW_DEVICE_MEMORY_GB;
-  const tier: RenderTier = override ?? (env.coarsePointer || touchScreen || smallMemory ? 'low' : 'high');
+  const software = !!env.softwareRenderer;
+  const tier: RenderTier = override ?? (env.coarsePointer || touchScreen || smallMemory || software ? 'low' : 'high');
   return {
     tier,
     ...RENDER_TIERS[tier],
     adaptive: !override && !env.webdriver,
     forced: !!override,
+    software,
   };
+}
+
+/** The GPU the browser actually draws with, as WebGL reports it (unmasked where the browser allows). */
+export function readGpuName(gl: WebGLRenderingContext | WebGL2RenderingContext): string {
+  try {
+    const debug = gl.getExtension('WEBGL_debug_renderer_info');
+    return String((debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)) ?? '');
+  } catch {
+    return '';
+  }
+}
+
+/** True for CPU rasterizers: Chrome falls back to SwiftShader when hardware acceleration is off or the GPU is blocklisted. */
+export function isSoftwareRenderer(gpuName: string) {
+  return /swiftshader|llvmpipe|softpipe|lavapipe|basic render driver|software rasterizer|mesa offscreen/i.test(gpuName);
 }

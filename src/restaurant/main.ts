@@ -23,6 +23,7 @@ import { tableActionForTarget, tabletopActionAvailability } from './tabletop';
 import { scenePresenceAvailable } from './scenario-care';
 import { diningOffsetZ } from './dining-space';
 import { InterestCue } from './InterestCue';
+import { createPerfStats } from './PerfStats';
 
 document.title = 'Table for Two';
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = markup;
@@ -57,6 +58,7 @@ let eveningUI: EveningInterface;
 let presentedCues = new Set<string>();
 let revealedIncident = '';
 let renderer: RestaurantRenderer;
+let softwareNoticeShown = false;
 let providers: ProviderStatus | undefined;
 let playback: AudioPlayback = { speaker: null, amplitude: 0, emotion: 'neutral', caption: '' };
 let busy = false, activeGeneration = 0, generationEpoch = 0, turnAbort: AbortController | undefined;
@@ -614,6 +616,10 @@ function rebuildRenderer() {
   tabletopInspector?.close();
   renderer?.dispose();
   renderer = new RestaurantRenderer(el('restaurant-scene'), selectedDate);
+  if (renderer.softwareRendering && !softwareNoticeShown && !navigator.webdriver) {
+    softwareNoticeShown = true;
+    toast('Your browser is drawing the game without your graphics card, so it will run slowly. Turn on hardware acceleration in its settings (Chrome: Settings › System) and relaunch.', 14000);
+  }
   renderer.setPresentation(joined ? 'gameplay' : 'selection');
   document.querySelector<HTMLElement>('.selection-stage-label strong')!.textContent = getDate(selectedDate)!.name;
   const canvas = renderer.canvas;
@@ -1006,8 +1012,10 @@ window.addEventListener('pageshow', event => {
   if (doubleClient.active) void doubleClient.restore();
   else if (joined && state.phase !== 'ended') { clearTimeout(pollTimer); void poll(); }
 });
+const perfStats = new URLSearchParams(location.search).has('stats') ? createPerfStats(document.body, () => renderer.diagnostics()) : null;
 function frame(now: number) {
   if (disposed) return;
+  const frameStart = performance.now();
   const dt = Math.min(.06, (now - lastFrame) / 1000); lastFrame = now;
   menuNavigation.refresh(el('conversation-form').hidden ? 'gameplay' : 'typing');
   renderer.setTableFocus(!el('menu-dialog').hidden ? 'menu' : eveningUI.farewellReady ? 'farewell' : null);
@@ -1047,6 +1055,7 @@ function frame(now: number) {
       void command({ type: 'move', x: vector.x / magnitude, z: vector.z / magnitude, yaw: renderer.getYaw() }, true).finally(() => { movePending = false; });
     }
   } else { el('interaction').hidden = true; el('capture-pointer').hidden = true; }
+  perfStats?.sample(now, performance.now() - frameStart);
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

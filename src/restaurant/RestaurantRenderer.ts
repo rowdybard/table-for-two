@@ -11,7 +11,7 @@ import { createPlaceSettingShadows } from './render/PlaceSettingShadows';
 import { waitForEnvironmentAssets } from './render/EnvironmentAssets';
 import { waitForRestaurantProps } from './render/RestaurantPropKit';
 import { createRestaurantLighting, type RestaurantLighting } from './render/RestaurantLighting';
-import { detectRenderQuality } from './render/RenderQuality';
+import { detectRenderQuality, isSoftwareRenderer, readGpuName, readRenderQualityEnvironment, renderPixelRatio, type RenderQuality } from './render/RenderQuality';
 import { DOUBLE_TABLE, type ConversationTarget, type DoubleDateActorId, type DoubleHumanId } from './double-date-types';
 import { tableActionForTarget, tabletopActionAvailability } from './tabletop';
 import { isInspectionTarget, type InspectionTarget } from './TabletopInspector';
@@ -35,7 +35,11 @@ export class RestaurantRenderer {
   private readonly table = new EveningTable();
   private readonly placeSettingShadows = createPlaceSettingShadows();
   /** Chosen once, before the first shader compile: light count and shadow casters depend on it. */
-  private readonly quality = detectRenderQuality();
+  private readonly quality: RenderQuality;
+  /** The GPU WebGL reports, for the ?stats readout and the software-rendering check. */
+  readonly gpuName: string;
+  /** Adaptive resolution scale from the lighting's frame-time governor; 1 is the tier's full resolution. */
+  private resolutionScale = 1;
   private readonly lighting: RestaurantLighting;
   private readonly waiter = new RestaurantActor('waiter');
   private readonly diner = new RestaurantActor('diner');
@@ -99,6 +103,13 @@ export class RestaurantRenderer {
   private readonly warmupCancelled = new Promise<void>(resolve => { this.cancelWarmup = resolve; });
 
   get isReady() { return this.ready && !this.disposed; }
+  /** WebGL is running on the CPU, so the page should tell the player to turn hardware acceleration on. */
+  get softwareRendering() { return this.quality.software; }
+  /** Numbers for the opt-in ?stats readout. */
+  diagnostics() {
+    const { calls, triangles } = this.renderer.info.render;
+    return { gpu: this.gpuName, tier: this.quality.tier, pixelRatio: this.renderer.getPixelRatio(), width: this.canvas.width, height: this.canvas.height, calls, triangles };
+  }
 
   setInspectionTarget(target: InspectionTarget | null) {
     if (target === this.inspectionTarget) return;
@@ -226,7 +237,9 @@ export class RestaurantRenderer {
     this.dateId = dateId;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
     this.parallelCompile = this.renderer.extensions.has('KHR_parallel_shader_compile');
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.quality.pixelRatioCap));
+    // Software WebGL (hardware acceleration off) gets the phone tier: fewer lights, no shadow map, lower resolution.
+    this.gpuName = readGpuName(this.renderer.getContext());
+    this.quality = detectRenderQuality({ ...readRenderQualityEnvironment(), softwareRenderer: isSoftwareRenderer(this.gpuName) });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.10;
@@ -276,7 +289,8 @@ export class RestaurantRenderer {
     this.diner.setSeated(true);
     this.scene.add(this.diner.root);
     for (const actor of [this.date, this.waiter, this.diner]) prepareCharacterLighting(actor.root, this.characterEnvironment.texture);
-    this.lighting = createRestaurantLighting({ renderer: this.renderer, scene: this.scene, camera: this.camera, roomLights: this.roomLights, set: this.set, quality: this.quality });
+    this.lighting = createRestaurantLighting({ renderer: this.renderer, scene: this.scene, camera: this.camera, roomLights: this.roomLights, set: this.set, quality: this.quality,
+      setResolutionScale: scale => { this.resolutionScale = scale; this.resize(); } });
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
     this.setPresentation('selection');
@@ -747,6 +761,8 @@ export class RestaurantRenderer {
     const height = Math.max(1, Math.round(rect.height || window.innerHeight));
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+    const ratio = renderPixelRatio(this.quality, window.devicePixelRatio, width, height, this.resolutionScale);
+    if (ratio !== this.renderer.getPixelRatio()) this.renderer.setPixelRatio(ratio);
     this.renderer.setSize(width, height, false);
   }
 
