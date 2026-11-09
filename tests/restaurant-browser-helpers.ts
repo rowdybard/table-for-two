@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 import { writeFile } from 'node:fs/promises';
 import type { DinnerState } from '../src/restaurant/types';
 import type { RestaurantScenarioState } from '../src/restaurant/scenario-types';
@@ -15,7 +15,7 @@ export async function waitForRestaurantScene(page: Page) {
 
 /** Navigation commit starts the reload; scene readiness gates the app independently of load-event timing. */
 export async function reloadRestaurantScene(page: Page) {
-  await page.reload({ waitUntil: 'commit' });
+  await page.reload({ waitUntil: 'commit', timeout: 30000 });
   await waitForRestaurantScene(page);
 }
 
@@ -54,6 +54,14 @@ export function restaurantInterrupted(state: DinnerState) {
   return !!restaurantEvening(state).incident || restaurantScenario(state)?.phase === 'active';
 }
 
+/** Activate the visible numbered choice through its supported keyboard control. */
+export async function activateDisplayedChoice(page: Page, control: Locator, timeout = 5000) {
+  await expect(control).toBeVisible({ timeout }); await expect(control).toBeEnabled({ timeout });
+  const shortcut = (await control.locator('kbd').innerText()).trim();
+  expect(shortcut).toMatch(/^[1-4]$/);
+  await page.keyboard.press(shortcut);
+}
+
 /** Finish each visible story beat; a second choice must never be treated as already resolved. */
 export async function resolveRestaurantScenario(page: Page, read: () => Promise<DinnerState>, openActions: () => Promise<void>) {
   if (restaurantScenario(await read())?.phase !== 'active') return false;
@@ -66,7 +74,7 @@ export async function resolveRestaurantScenario(page: Page, read: () => Promise<
     await openActions();
     const button = page.locator(`[data-scenario="${choice.id}"]`);
     await expect(button).toBeVisible();
-    try { await button.click({ timeout: 5000 }); }
+    try { await activateDisplayedChoice(page, button); }
     catch (error) {
       const next = restaurantScenario(await read());
       if (next?.phase === 'active' && next.id === current.id && next.beat === current.beat && (next.decisions?.length ?? 0) === decisions) throw error;

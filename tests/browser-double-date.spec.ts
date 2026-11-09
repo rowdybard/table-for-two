@@ -9,7 +9,7 @@ import type { DoubleDateRoomState, DoubleRoomCredentials } from '../src/restaura
 import type { DinnerState } from '../src/restaurant/types';
 import { EVENING_PACE } from '../src/restaurant/evening';
 import { doubleContext } from './helpers/double-note';
-import { RESTAURANT_BROWSER_STORY_RATE, captureRestaurantScene, reloadRestaurantScene, restaurantEvening, restaurantInterrupted, restaurantScenario, resolveRestaurantScenario, waitForRestaurantScene } from './restaurant-browser-helpers';
+import { RESTAURANT_BROWSER_STORY_RATE, activateDisplayedChoice, captureRestaurantScene, reloadRestaurantScene, restaurantEvening, restaurantInterrupted, restaurantScenario, resolveRestaurantScenario, waitForRestaurantScene } from './restaurant-browser-helpers';
 
 let http: Server, restaurant: Awaited<ReturnType<typeof attachRestaurantServer>>;
 let doubles: Awaited<ReturnType<typeof attachDoubleDateServer>>, browser: Browser, friendBrowser: Browser, base = '';
@@ -295,13 +295,6 @@ async function prompt(page: Page) {
   if (await page.locator('#bill-dialog').isVisible()) await page.locator('#bill-close').click();
   if (await page.locator('#tabletop-inspector').isVisible()) await page.keyboard.press('Escape');
 }
-/** The numbered choices are a supported in-game keyboard control. */
-async function activateDisplayedChoice(page: Page, control: ReturnType<Page['locator']>, timeout = 5000) {
-  await expect(control).toBeVisible({ timeout }); await expect(control).toBeEnabled({ timeout });
-  const shortcut = (await control.locator('kbd').innerText()).trim();
-  expect(shortcut).toMatch(/^[1-4]$/);
-  await page.keyboard.press(shortcut);
-}
 async function chip(page: Page, selector: string, timeout = 5000) {
   await prompt(page);
   const control = page.locator(`#prompt-chips ${selector}`);
@@ -351,7 +344,7 @@ async function eveningAction(page: Page, name: string, predicate?: (snapshot: Di
     await prompt(page);
     const button = page.locator(`#prompt-chips [data-evening="${name}"]`);
     if (await button.isVisible() && await button.isEnabled()) {
-      try { await button.click({ timeout: 5000 }); if (!predicate) return; }
+      try { await activateDisplayedChoice(page, button); if (!predicate) return; }
       catch (error) {
         const current = await state(page);
         if (predicate?.(current)) return;
