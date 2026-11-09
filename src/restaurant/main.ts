@@ -305,6 +305,7 @@ const recognition = new LocalRecognition({
     if (shouldDropBackchannel(text, { speaking: !!playback.speaker, caption: playback.caption })) return;
     void sendTurn(text, undefined, 'voice');
   },
+  isListeningOnly(text) { return shouldDropBackchannel(text, { speaking: !!playback.speaker, caption: playback.caption }); },
   onSpeechStart() {
     if (micEnabled && doubleClient.active) tableAttention = { actor: doubleClient.credentials!.memberId, until: performance.now() + 4000 };
     if (micEnabled && (busy || playback.speaker || pendingSpeeches)) void interrupt();

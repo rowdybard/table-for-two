@@ -4,6 +4,8 @@ interface RecognitionCallbacks {
   onPartial(text: string): void;
   onTurn(text: string): void;
   onSpeechStart(): void;
+  /** True for words that are only the human listening (“mm-hm”) while a line plays: they must not cut the date off. */
+  isListeningOnly?(text: string): boolean;
   onStatus(status: string): void;
   onError(message: string): void;
 }
@@ -187,6 +189,8 @@ export class LocalRecognition {
   private notifySpeech(text: string): void {
     if (this.speechNotified || this.isEcho(text)) return;
     if ((this.speaking || performance.now() < this.echoUntil) && text.trim().split(/\s+/).filter(Boolean).length < 2) return;
+    // “uh huh” is two words, so the length rule lets it through; it is dropped at the end of the turn, and should not have stopped the date first.
+    if (this.callbacks.isListeningOnly?.(text)) return;
     this.speechNotified = true;
     this.callbacks.onSpeechStart();
   }

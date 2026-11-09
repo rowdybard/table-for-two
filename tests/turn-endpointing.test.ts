@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { deferrableCue } from '../server/restaurant/dialogue-policy';
+import { LocalRecognition } from '../src/restaurant/LocalRecognition';
 import {
   COMMIT_FINISHED_MS, COMMIT_HESITANT_MS, COMMIT_UNFINISHED_MS, HUMAN_FLOOR_MAX_MS, RECEIPT_TIMEOUT_MS, TURN_WAIT_MS,
   commitDelay, cueYieldsToHuman, isBackchannel, isFillerOnly, settled, shouldDropBackchannel, timeoutSignal, waitWhile, type WaitClock,
@@ -216,4 +217,23 @@ test('timeoutSignal falls back when AbortSignal.timeout is unavailable', async (
   } finally {
     if (original) Object.defineProperty(AbortSignal, 'timeout', original); else Reflect.deleteProperty(AbortSignal, 'timeout');
   }
+});
+
+test('“uh huh” while the date is talking does not cut her off, but the human taking the floor still does', () => {
+  const started: string[] = [], caption = { value: 'It was a tiny place in Lisbon with six tables.' };
+  const recognition = new LocalRecognition({
+    onPartial() {}, onTurn() {}, onStatus() {}, onError() {}, onSpeechStart() { started.push('start'); },
+    isListeningOnly: text => shouldDropBackchannel(text, { speaking: true, caption: caption.value }),
+  });
+  const hear = (text: string) => (recognition as unknown as { notifySpeech(text: string): void }).notifySpeech(text);
+  recognition.setSpeaking(true, caption.value);
+  hear('uh huh'); hear('mm hmm'); hear('oh wow');
+  assert.deepEqual([...started], [], 'listening noises are not speech starts, even at two words');
+  hear('uh huh and then what happened');
+  assert.deepEqual([...started], ['start'], 'a real sentence that begins with one still takes the floor');
+  hear('wait, no'); assert.deepEqual([...started], ['start'], 'and the start is announced once per turn');
+  const asking = new LocalRecognition({ onPartial() {}, onTurn() {}, onStatus() {}, onError() {}, onSpeechStart() { started.push('answer'); }, isListeningOnly: text => shouldDropBackchannel(text, { speaking: true, caption: 'Have you ever been?' }) });
+  asking.setSpeaking(true, 'Have you ever been?');
+  (asking as unknown as { notifySpeech(text: string): void }).notifySpeech('uh huh');
+  assert.deepEqual([...started], ['start', 'answer'], 'when the date asked something, “uh huh” is the answer');
 });

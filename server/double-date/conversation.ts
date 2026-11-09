@@ -32,8 +32,8 @@ const schema = { type: 'object', additionalProperties: false, required: ['uttera
   dateUpdates: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'object', additionalProperties: false, required: ['actorId', 'emotion', 'memory', 'social', 'agenda'], properties: { actorId: { type: 'string', enum: actors }, emotion: emotions, memory: { type: 'string' }, social: socialSchema, agenda: AGENDA_SCHEMA } } },
 } };
 type Delivery = { completed: boolean; playedSeconds: number };
-type History = { human?: DoubleHumanId; text?: string; target?: string; lines?: DoubleDialogueLine[] };
-type QueuedTurn = { human: DoubleHumanId; request: DoubleTurnRequest; fingerprint: string; key: string; boundaries: Record<DoubleHumanId, ReturnType<DoubleTableScene['boundaryContext']>> };
+type History = { human?: DoubleHumanId; text?: string; target?: string; lines?: DoubleDialogueLine[]; authored?: boolean };
+type QueuedTurn = { human: DoubleHumanId; request: DoubleTurnRequest; fingerprint: string; key: string; boundaries: Record<DoubleHumanId, ReturnType<DoubleTableScene['boundaryContext']>>; /** Questions each date was still waiting on, and the quiet before this turn, as they stood when it was spoken. */ pending: Record<DoubleHumanId, string | null>; quiet: number };
 type AudioJob = { chunks: Buffer[]; total: number; subscribers: Set<ServerResponse>; done: boolean; error?: DateApiError; controller: AbortController; generation: number };
 const record = (value: unknown): value is Record<string, any> => !!value && typeof value === 'object' && !Array.isArray(value);
 const exact = (value: Record<string, unknown>, allowed: string[]) => Object.keys(value).every(key => allowed.includes(key));
@@ -57,7 +57,7 @@ export class DoubleConversation {
   private turnStarted = 0;
   /** Older table entries were dropped from `history`, so the model is told the transcript does not start at the beginning. */
   private trimmed = false;
-  /** When any friend last finished hearing a line; a long gap after it is worth telling the dates about. */
+  /** When the table last had talk (a friend finished hearing a line, or spoke); a long gap after it is worth telling the dates about. */
   private lastHeardAt?: number;
 
   constructor(private readonly state: DoubleDateRoomState, private readonly scene: DoubleTableScene, private readonly services: RestaurantServices, private readonly account: RestaurantPaidAccount) { this.turnStarted = services.now(); }
@@ -107,7 +107,7 @@ export class DoubleConversation {
       }
     }
     // Spoken authored lines are part of the conversation the dates remember.
-    if (authored.length) { this.history.push({ lines: authored }); this.bound(); }
+    if (authored.length) { this.history.push({ lines: authored, authored: true }); this.bound(); }
     // A turn already waiting in the queue predates this scene interruption.
     // Give both clients a chance to play it (or report unavailable audio) before
     // that old turn takes the floor. The timeout also supports caption-only or
@@ -133,7 +133,11 @@ export class DoubleConversation {
     this.authoredFloor = undefined;
     const boundaries = { h1: this.scene.boundaryContext('h1'), h2: this.scene.boundaryContext('h2') };
     this.scene.clearPendingBoundaries();
-    this.seen.set(key, fingerprint); this.queue.push({ human, request, fingerprint, key, boundaries });
+    // Speaking answers the question a date was waiting on and ends any quiet, so read both before recording the turn.
+    const pending = { h1: this.scene.pendingQuestion('h1'), h2: this.scene.pendingQuestion('h2') };
+    const quiet = this.lastHeardAt === undefined ? 0 : Math.round((this.services.now() - this.lastHeardAt) / 1000);
+    this.seen.set(key, fingerprint); this.queue.push({ human, request, fingerprint, key, boundaries, pending, quiet });
+    this.lastHeardAt = this.services.now();
     this.scene.noteHumanTurn(request.text, human);
     this.line(human, request.text, 'neutral');
     // Only observable, public friend-directed turns count. Silence, menus,
@@ -172,23 +176,32 @@ export class DoubleConversation {
     this.state.processing = false;
     this.state.activeTurnId = undefined;
     this.state.error = undefined;
+    this.scene.replyEnded(); // nothing is on its way any more
   }
 
   /** How this turn's words arrived: over the date, before the last reply landed, or after a long quiet. */
   private flowFor(turn: QueuedTurn, dateNames: Record<DoubleDateActorId, string>): DoubleFlow {
     const heardBy = (line: DoubleDialogueLine) => this.heard.get(line.id)?.[turn.human];
     const lastIndex = (test: (entry: History) => boolean) => { for (let index = this.history.length - 1; index >= 0; index--) if (test(this.history[index])) return index; return -1; };
-    const lastLinesAt = lastIndex(entry => !!entry.lines?.length), lastHumanAt = lastIndex(entry => !!entry.human);
+    const lastHumanAt = lastIndex(entry => !!entry.human);
     const flow: DoubleFlow = {};
-    const reply = lastLinesAt > lastHumanAt && this.history[lastHumanAt]?.human === turn.human ? this.history[lastLinesAt].lines ?? [] : [];
-    const said = reply.filter(line => !humans.includes(line.speaker as DoubleHumanId));
+    // Everything the table said since the previous human turn; only the model's own reply to this same friend can be "kept talking past".
+    const since = this.history.slice(lastHumanAt + 1), replyToThem = lastHumanAt >= 0 && this.history[lastHumanAt].human === turn.human;
+    const said = since.flatMap(entry => entry.lines ?? []).filter(line => !humans.includes(line.speaker as DoubleHumanId));
+    const reply = replyToThem ? since.filter(entry => !entry.authored).flatMap(entry => entry.lines ?? []).filter(line => !humans.includes(line.speaker as DoubleHumanId)) : [];
     const name = (line: DoubleDialogueLine) => actors.includes(line.speaker as DoubleDateActorId) ? dateNames[line.speaker as DoubleDateActorId] : line.speaker === 'waiter' ? 'Eli' : 'the neighbouring diner';
     const cutOff = said.filter(line => { const p = heardBy(line); return !!p && !p.completed && p.playedSeconds > 0; }).at(-1);
     if (cutOff) flow.talkedOver = { by: name(cutOff), heard: heardPrefix(cutOff.text, heardBy(cutOff)!.playedSeconds) };
-    else if (said.length && said.every(line => !heardBy(line)?.completed && !heardBy(line)?.playedSeconds)) flow.keptTalking = true;
-    const quiet = this.lastHeardAt === undefined ? 0 : Math.round((this.services.now() - this.lastHeardAt) / 1000);
-    if (quiet >= QUIET_GAP_SECONDS) flow.quietSeconds = quiet;
-    const last = [...this.state.lines].reverse().find(line => actors.includes(line.speaker as DoubleDateActorId) && heardBy(line)?.completed);
+    else if (reply.length && reply.every(line => !heardBy(line)?.completed && !heardBy(line)?.playedSeconds)) flow.keptTalking = true;
+    // A quiet table is one where nobody was speaking: talking over a line or past a reply that never played is the opposite.
+    if (turn.quiet >= QUIET_GAP_SECONDS && !flow.talkedOver && !flow.keptTalking) flow.quietSeconds = turn.quiet;
+    // "What do you mean?" is about the line of the date they named, else the one they were talking to, else (said to the table)
+    // whoever last spoke among the dates still in the conversation. Said to the other friend, it is about nothing a date said.
+    const heardDates = [...this.state.lines].reverse().filter(line => actors.includes(line.speaker as DoubleDateActorId) && this.availableForDialogue(line.speaker as DoubleDateActorId) && heardBy(line)?.completed);
+    const lineOf = (id: string) => heardDates.find(line => line.speaker === id);
+    const target = turn.request.target as string, spoken = turn.request.text.toLowerCase();
+    const named = actors.find(id => new RegExp(`(?:^|[^\\p{L}])${dateNames[id].toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}])`, 'u').test(spoken));
+    const last = named ? lineOf(named) : humans.includes(target as DoubleHumanId) ? undefined : actors.includes(target as DoubleDateActorId) ? lineOf(target) : heardDates[0];
     if (last) flow.lastDateLine = { by: dateNames[last.speaker as DoubleDateActorId], text: last.text };
     return flow;
   }
@@ -206,7 +219,7 @@ export class DoubleConversation {
           ? [{ role: 'user' as const, content: entry.text ?? '' }]
           : (entry.lines ?? []).filter(line => actors.includes(line.speaker as DoubleDateActorId) && this.heard.get(line.id)?.[turn.human]?.completed).map(line => ({ role: 'assistant' as const, content: line.text }))) };
         try { effectiveModel = this.services.modelFor?.(this.state.model, this.state.views[turn.human], routingContext) ?? this.state.model; }
-        catch (caught) { const failure = caught instanceof DateApiError ? caught : error('That conversation route is unavailable.'); this.state.error = { code: failure.code, message: failure.message }; this.state.processing = false; this.controller = undefined; this.state.revision++; continue; }
+        catch (caught) { const failure = caught instanceof DateApiError ? caught : error('That conversation route is unavailable.'); this.state.error = { code: failure.code, message: failure.message }; this.state.processing = false; this.controller = undefined; this.state.revision++; if (!this.queue.length) this.scene.replyEnded(); continue; }
         this.state.views[turn.human].conversationModel = effectiveModel;
         const outputSchema = structuredClone(schema);
         outputSchema.properties.utterances.items.properties.speaker.enum = [...actors.filter(actor => this.availableForDialogue(actor)), 'waiter', 'diner'];
@@ -222,7 +235,7 @@ export class DoubleConversation {
           const recentOwn = this.state.lines.filter(line => line.speaker === id && this.heard.get(line.id)?.[turn.human]?.completed).slice(-8).map(line => ({ speaker: 'date' as const, text: line.text, emotion: line.emotion }));
           return { actorId: id, humanId: actor.humanId, dateName: dateNames[id], humanName: names[actor.humanId], available, view, memory: view.memory, facts: tableFacts(view),
             agenda: available ? this.scene.agendaContext(actor.humanId) : null, boundaries: turn.boundaries[actor.humanId], avoid: dialogueLoopContext(recentOwn, turn.request.text).avoidUnpromptedTopics,
-            mechanics: scenarioMechanicsContext(view) as Record<string, unknown> | undefined, friendOnlyTurns: this.excluded[id], recentOwn, pendingQuestion: this.scene.pendingQuestion(actor.humanId) };
+            mechanics: scenarioMechanicsContext(view) as Record<string, unknown> | undefined, friendOnlyTurns: this.excluded[id], recentOwn, pendingQuestion: turn.pending[actor.humanId] };
         });
         const scenario = this.state.scenario;
         const note = doubleTurnNote({ couples, speaker: turn.human, target: turn.request.target, humanText: turn.request.text, ...(turn.request.via ? { via: turn.request.via } : {}),

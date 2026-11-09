@@ -202,7 +202,9 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
     else { record.entry = { role: 'assistant', content }; s.history.push(record.entry); }
     boundHistory(s);
   };
-  const invalidate = (s: Session) => { s.scene.director.boundaries.clearPending(); s.scene.director.chemistry.clearPending(); const old = s.generations.get(s.generation); if (old) { old.interrupted = true; updatePlaybackHistory(s, old); } s.controller?.abort(); s.controller = undefined; for (const c of s.speechControllers) c.abort(); s.speechControllers.clear(); s.allowed.clear(); s.generation++; s.scene.state.generation = s.generation; s.generations.set(s.generation, { lines: [], playback: new Map(), interrupted: false }); if (s.generations.size > 40) s.generations.delete(s.generations.keys().next().value!); };
+  // Abandoning a reply that was still being written also ends the wait for it, so the evening does not stay hushed for a line that will never arrive.
+  const invalidate = (s: Session) => { s.scene.director.boundaries.clearPending(); s.scene.director.chemistry.clearPending(); const old = s.generations.get(s.generation); if (old) { old.interrupted = true; updatePlaybackHistory(s, old); } if (s.controller) { s.controller.abort(); s.scene.director.replyEnded(); } s.controller = undefined; for (const c of s.speechControllers) c.abort(); // an abandoned reply no longer holds the table's silence
+    s.speechControllers.clear(); s.allowed.clear(); s.generation++; s.scene.state.generation = s.generation; s.generations.set(s.generation, { lines: [], playback: new Map(), interrupted: false }); if (s.generations.size > 40) s.generations.delete(s.generations.keys().next().value!); };
   const captureCues = (s: Session, fromConversation = false) => {
     const fresh = s.scene.state.evening.cues.filter(cue => !s.capturedCues.has(cue.id));
     if (!fresh.length) return;
@@ -475,10 +477,12 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
     const cutOff = spoken.filter(line => { const p = progress(line); return !!p && !p.completed && p.playedSeconds > 0; }).at(-1);
     const lastDateLine = [...s.generations.values()].flatMap(generation => generation.lines.filter(line => line.speaker === 'date').map(line => ({ line, heard: !!generation.playback.get(keyFor(line))?.completed }))).at(-1);
     const quiet = s.lastHeardAt === undefined ? 0 : Math.round((now() - s.lastHeardAt) / 1000);
+    const keptTalking = s.replyGeneration !== undefined && !cutOff && spoken.every(line => !progress(line)?.completed && !progress(line)?.playedSeconds);
     const flow: TurnFlow = {
       ...(cutOff ? { talkedOver: { heard: heardPrefix(cutOff.text, progress(cutOff)!.playedSeconds) } } : {}),
-      ...(s.replyGeneration !== undefined && !cutOff && spoken.every(line => !progress(line)?.completed && !progress(line)?.playedSeconds) ? { keptTalking: true } : {}),
-      ...(quiet >= QUIET_GAP_SECONDS ? { quietSeconds: quiet } : {}),
+      ...(keptTalking ? { keptTalking: true } : {}),
+      // A quiet table is one where nobody was speaking; talking over a line or past a reply that never played is the opposite.
+      ...(quiet >= QUIET_GAP_SECONDS && !cutOff && !keptTalking ? { quietSeconds: quiet } : {}),
       pendingQuestion: s.scene.director.pendingQuestion,
       ...(lastDateLine?.heard ? { lastDateLine: lastDateLine.line.text } : {}),
     };
@@ -497,7 +501,7 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
     try { day = await reserve(s, reservation); }
     catch (error) { releaseOwnership(); record.pending = undefined; const e = error instanceof DateApiError ? error : apiError(503, 'budget_ledger', 'The AI budget ledger could not be saved.'); emit(record, { type: 'error', message: e.message, code: e.code }); record.finished = true; for (const subscriber of record.subscribers) subscriber.end(); record.subscribers.clear(); throw e; }
     if (controller.signal.aborted || generation !== s.generation || !scenePresenceAvailable(s.scene.state) || closed) { releaseOwnership(); record.pending = undefined; settle(s, reservation, 0, day); const e = apiError(409, 'interrupted', 'This turn was interrupted before the provider request started.'); emit(record, { type: 'error', message: e.message, code: e.code }); record.finished = true; for (const subscriber of record.subscribers) subscriber.end(); record.subscribers.clear(); throw e; }
-    s.history.push({ role: 'user', content: request.text }); boundHistory(s); s.replyGeneration = generation; s.scene.director.noteHumanTurn(request.text);
+    s.history.push({ role: 'user', content: request.text }); boundHistory(s); s.replyGeneration = generation; s.lastHeardAt = now(); s.scene.director.noteHumanTurn(request.text);
     record.pending = undefined; if (!res.destroyed) subscribe(res, record, s);
     void generate(s, request, record, controller, reservation, day, system, messages, estimatedInput);
   }

@@ -10,7 +10,7 @@ import type { ClaudeRequest } from '../server/restaurant/providers';
 import { EveningDirector } from '../server/restaurant/evening';
 import { MEMORY_HARD, MEMORY_REJECT, MEMORY_TARGET, clampMemory } from '../server/restaurant/memory';
 import { TRIMMED_NOTE, START_NOTE, alternatingMessages, humanVoice, replyShapeHint, tableNow } from '../server/restaurant/dialogue-policy';
-import { QUIET_GAP_SECONDS, clarificationNudge, conversationMessages, deliveryLabel, heardPrefix, hintTurn, renderHistory, serviceFacts, turnNote, type AgendaPrompt, type TurnNoteInput } from '../server/restaurant/turn-note';
+import { NOTES_EMPTY, QUIET_GAP_SECONDS, clarificationNudge, conversationMessages, deliveryLabel, heardPrefix, hintTurn, renderHistory, serviceFacts, turnNote, type AgendaPrompt, type TurnNoteInput } from '../server/restaurant/turn-note';
 import { createEvening } from '../src/restaurant/evening';
 import type { DateId, DinnerCommand, DinnerState, SceneTurn, SceneUtterance, TurnEvent } from '../src/restaurant/types';
 import { humanLine, noteOf, privateAgenda, recordedAtTable, rightNow, section } from './helpers/turn-note';
@@ -39,13 +39,28 @@ const stored = (...lines: { speaker: string; text: string; delivery: string; pla
 
 /* ------------------------------------------------------------------ perspective */
 
+test('a human who is the subject of server narration gets the verb that goes with a name, and an object keeps the verb it had', () => {
+  const say = (text: string) => humanVoice(text, 'Mira', 'Alex');
+  assert.equal(say('Mira asks what you feel comfortable sharing.'), 'Mira asks what Alex feels comfortable sharing.');
+  assert.equal(say('There is a small pause before you decide what belongs where.'), 'There is a small pause before Alex decides what belongs where.');
+  assert.equal(say('The joke stays affectionate if you let them decide.'), 'The joke stays affectionate if Alex lets them decide.');
+  assert.equal(say('A friendly table, if that is something you want too.'), 'A friendly table, if that is something Alex wants too.');
+  assert.equal(say('Once you are alone, you can talk. Neither of you minds.'), 'Once Alex is alone, Alex can talk. Neither of them minds.');
+  assert.equal(say('What would help you feel comfortable?'), 'What would help Alex feel comfortable?', 'an object keeps the plain verb');
+  assert.equal(say('She lets you decide, and the glance she gives you is a question.'), 'She lets Alex decide, and the glance she gives Alex is a question.');
+  assert.equal(say('Do you want to share?'), 'Do Alex want to share?', 'an inverted question is left alone rather than half-converted');
+  assert.equal(humanVoice('Once you try it, you decide.', 'Mira'), 'Once the human tries it, the human decides.');
+  assert.equal(say('“Thank you,” she says. Thanks, you were kind.'), '“Thank you,” she says. Thanks, Alex was kind.', 'a thank-you is left as spoken');
+});
 test('server copy written to the player is rewritten so the date model never reads the human’s acts as its own', () => {
   assert.equal(humanVoice('You returned the risotto.', 'Mira'), 'The human returned the risotto.');
   assert.equal(humanVoice('Your date notices before you do.', 'Mira'), 'Mira notices before the human does.');
   assert.equal(humanVoice('You have only just met.', 'Mira'), 'The human and Mira have only just met.');
   assert.equal(humanVoice('You’re late, and you’ve eaten; you’ll stay if you don’t mind.', 'Mira'), 'The human is late, and the human has eaten; the human will stay if the human doesn’t mind.');
   assert.equal(humanVoice('Your glass is yours.', 'Mira'), 'The human’s glass is the human’s.');
-  assert.equal(humanVoice('Thank you for asking: you were kind.', 'Mira'), 'Thank the human for asking: the human was kind.', 'a colon does not start a sentence');
+  assert.equal(humanVoice('Thank you for asking: you were kind.', 'Mira'), 'Thank you for asking: the human was kind.', 'a colon does not start a sentence');
+  assert.equal(humanVoice('She thanks you for the wine, and Mira sees you smile.', 'Mira'), 'She thanks the human for the wine, and Mira sees the human smile.', 'someone thanking them is about them; only a spoken thank-you is left alone');
+  assert.equal(humanVoice('I thank you for coming.', 'Mira'), 'I thank you for coming.');
   assert.equal(humanVoice('You: Asked Eli for fresh water.', 'Mira'), 'The human: Asked Eli for fresh water.');
   assert.equal(humanVoice('Eli asks, "You alright?"', 'Mira'), 'Eli asks, "The human alright?"', 'a quoted line still opens a sentence');
 });
@@ -188,16 +203,40 @@ test('a trimmed window opens with its own note and never reads as the start of t
 
 test('a question about the date’s last line is pointed back at that line', () => {
   const last = 'Honestly, I am just here for the cake gossip and the company.';
-  for (const asked of ['What the heck is cake gossip?', 'what do you mean by that', 'Wait, what', 'Huh?', 'What does cake gossip even mean', 'I don’t get it', 'what are you talking about']) {
+  for (const asked of ['What the heck is cake gossip?', 'what do you mean by that', 'Wait, what', 'Huh?', 'What does cake gossip even mean', 'I don’t get it', 'what are you talking about', 'sorry, what?', 'what do you mean by cake gossip', 'whats cake gossip', 'I dont understand that']) {
     const nudge = clarificationNudge(asked, last);
     assert.match(nudge, /asking about your last line \(“Honestly, I am just here for the cake gossip and the company\.”\)/, asked);
-    assert.match(nudge, /Say plainly what you meant, or admit it was an odd thing to say, in one short sentence/);
+    assert.match(nudge, /If it had a plain meaning, say it in one short sentence\. If it made no sense, say so/);
+    assert.doesNotMatch(nudge, /admit it was an odd thing/, 'the reply is never steered toward inventing a meaning');
   }
 });
-test('ordinary questions get no clarification nudge, with or without a line to point at', () => {
+test('a clarification still counts with a name, an endearment, an interjection or a second sentence around it', () => {
+  const last = 'Wow, that is a lot of people for cake gossip.';
+  const asked = [
+    'Mira, what do you mean by that?', 'what do you mean babe', 'huh what do you mean', 'oh wait what', 'what do you mean by that? im confused',
+    'I don’t follow', 'I still don’t get it', 'I don’t get the joke', 'I’m confused', 'you lost me', 'that makes no sense',
+    'what is cake gossip lol', 'what is cake gossip though', 'what is cake gossip again', 'what is cake gossip supposed to mean', 'what is this cake gossip',
+    'what do you mean cake gossip', 'what is ‘cake gossip’', 'what do you mean by a lot', 'what the heck is cake gossip',
+    'what does that even mean', 'what exactly do you mean', 'what did you just say', 'whats that mean', 'what do you mean by that comment', 'what do you mean by that last bit',
+    'baby what do you mean', 'omg what do you mean', 'excuse me what do you mean', 'im sorry what do you mean', 'bruh what',
+  ];
+  for (const text of asked) assert.match(clarificationNudge(text, last, ['Mira']), /asking about your last line/, text);
+  for (const text of ['So what?', 'and what', 'So what, Mira?', 'so what lol', 'so what though', 'ok so what now?', 'what does that cost', 'what did you order', 'what are you drinking', 'what is a good wine here', 'my graduating class was under 70 people']) assert.equal(clarificationNudge(text, last, ['Mira']), '', text);
+});
+test('ordinary questions and stories get no clarification nudge, with or without a line to point at', () => {
   const last = 'Honestly, I am just here for the cake gossip and the company.';
-  for (const asked of ['What is that on your plate?', 'What the hell is Leeds like?', 'What are you getting?', 'What do you do for work?', 'What is pasta like here?', 'I teach primary school.']) assert.equal(clarificationNudge(asked, last), '', asked);
+  const ordinary = [
+    'What is that on your plate?', 'What the hell is Leeds like?', 'What are you getting?', 'What do you do for work?', 'What is pasta like here?', 'I teach primary school.',
+    'what are you drinking', 'what does the salmon come with', 'what is your sister called', 'what is your favorite cake?', 'what is the company called',
+    'That’s weird, I grew up near Dayton too!', 'I don’t get why people like cilantro', 'I don’t understand how anyone watches golf', 'What is good here?', 'Wait, what time is it?',
+  ];
+  for (const asked of ordinary) assert.equal(clarificationNudge(asked, last), '', asked);
   assert.equal(clarificationNudge('what do you mean by that', undefined), '', 'nothing to point at');
+});
+test('asking about a phrase needs that phrase in the line they are asking about', () => {
+  assert.equal(clarificationNudge('what is cake gossip', 'So where did you grow up?'), '');
+  assert.equal(clarificationNudge('what is cake', 'Honestly, I am just here for the cake gossip.') === '', false, 'a contiguous word of the line counts');
+  assert.equal(clarificationNudge('what is gossip cake', 'Honestly, I am just here for the cake gossip.'), '', 'but not the same words in another order');
 });
 
 /* ------------------------------------------------------------------ reply shape */
@@ -219,7 +258,7 @@ test('the note is prose in a fixed order, with the human’s words last', () => 
   const note = turnNote(input({ scene: state, tableNow: tableNow(state, 'Mira'), memory: 'HUMAN: teaches.', facts: ['You: Offered a taste of the risotto.'], avoid: ['the weather'], via: 'voice',
     scenario: { phase: 'active', description: 'Your date has gone quiet and keeps glancing at the door.' },
     boundaries: { boundaries: [{ topic: 'family', refusal: 'I would rather not talk about family.', delivered: true, disregardCount: 2 }] } }));
-  const labels = ['Right now:', 'Your notes (rewrite them into "memory"):', 'At the table so far (facts):', 'Happening now:', 'Private, never say it aloud:', 'Boundaries in play:', 'Do not bring up unprompted:', 'They said this out loud;', 'The human just said:'];
+  const labels = ['Right now:', 'Your notes (rewrite them into "memory"):', 'At the table so far (facts):', 'Happening now:', 'Private to you, not to recite:', 'Boundaries in play:', 'Do not bring up unprompted:', 'They said this out loud;', 'The human just said:'];
   const at = labels.map(label => note.indexOf(label));
   assert.ok(at.every(index => index >= 0), `every section is present: ${at}`);
   assert.deepEqual([...at].sort((a, b) => a - b), at, 'sections appear in the documented order');
@@ -229,10 +268,11 @@ test('the note is prose in a fixed order, with the human’s words last', () => 
   assert.match(section(note, 'Happening now')!, /^Mira has gone quiet and keeps glancing at the door\.$/, 'server copy is in the third person');
   assert.match(section(note, 'At the table so far')!, /- The human asked Eli for fresh water\.\n- The human: Offered a taste of the risotto\./);
 });
-test('sections with nothing to say are absent, not empty', () => {
+test('sections with nothing to say are absent, and an empty notebook says it is empty', () => {
   const note = turnNote(input());
-  assert.deepEqual(note.split('\n\n').map(part => part.split(':')[0]), ['Right now', 'Private, never say it aloud', 'The human just said']);
-  for (const label of ['Your notes', 'At the table so far', 'Happening now', 'Boundaries in play', 'Do not bring up', 'They said this out loud']) assert.equal(section(note, label), undefined, label);
+  assert.deepEqual(note.split('\n\n').map(part => part.split(':')[0]), ['Right now', 'Your notes (rewrite them into "memory")', 'Private to you, not to recite', 'The human just said']);
+  assert.ok(note.includes(`Your notes (rewrite them into "memory"):\n${NOTES_EMPTY}`), 'an empty notebook is stated, so the model neither invents entries nor reads a missing section as nothing to rewrite');
+  for (const label of ['At the table so far', 'Happening now', 'Boundaries in play', 'Do not bring up', 'They said this out loud']) assert.equal(section(note, label), undefined, label);
   assert.equal(section(turnNote(input({ scenario: { phase: 'dormant', description: 'A story that has not started.' } })), 'Happening now'), undefined, 'a dormant story is not mentioned');
   assert.equal(section(turnNote(input({ scenario: { phase: 'resolved', description: 'A story that is over.' } })), 'Happening now'), undefined, 'a resolved story is not "happening now"');
 });
@@ -331,8 +371,8 @@ test('a long quiet is mentioned coarsely, and a question the date left hanging i
   assert.match(after(turnNote(input({ flow: { quietSeconds: 90 } }))), /It was quiet for a minute or two after/);
   assert.match(after(turnNote(input({ flow: { quietSeconds: 400 } }))), /It was quiet for a long while after/);
   assert.equal(after(turnNote(input({ flow: {} }))), '');
-  assert.equal(after(turnNote(input({ flow: { pendingQuestion: 'Eli just left. So, what do you do for work?' } }))), 'You had just asked them “So, what do you do for work?” and were waiting for the answer. What they say next is most likely that answer unless it clearly changes the subject.');
-  assert.match(after(turnNote(input({ flow: { pendingQuestion: 'Say anything at all.' } }))), /You had just asked them “Say anything at all\.”/, 'a scripted aside with no question mark is quoted whole');
+  assert.equal(after(turnNote(input({ flow: { pendingQuestion: 'Eli just left. So, what do you do for work?' } }))), 'You asked them “So, what do you do for work?” a little while ago and have not had an answer. If what they say next is not an answer, just respond to what they said.');
+  assert.match(after(turnNote(input({ flow: { pendingQuestion: 'Say anything at all.' } }))), /You asked them “Say anything at all\.” a little while ago/, 'a scripted aside with no question mark is quoted whole');
   assert.equal(after(turnNote(input({ flow: { pendingQuestion: null } }))), '');
 });
 test('a request to clarify and the reply-shape hints trail the human’s words', () => {
@@ -501,7 +541,7 @@ test('a question left hanging by a scripted aside is carried into the note', asy
   const { claude, requests } = recorder();
   const server = await boot(claude); t.after(() => server.close()); const api = await server.start();
   await api.turn('Sure, why not.', { via: 'voice' });
-  assert.match(after(noteOf(requests[0])), /You had just asked them “Shall we share the lemon posset\?” and were waiting for the answer\./);
+  assert.match(after(noteOf(requests[0])), /You asked them “Shall we share the lemon posset\?” a little while ago and have not had an answer\./);
 });
 test('the director is told when the human spoke and when the date’s reply ended, and not for a reply that was replaced', async t => {
   const proto = EveningDirector.prototype, spoken: string[] = []; let ended = 0;
@@ -522,9 +562,9 @@ test('the director is told when the human spoke and when the date’s reply ende
   assert.equal(ended, 0, 'a reply still being written has not ended');
   await api.interrupt(); release.resolve(); await held;
   await delay(30);
-  assert.equal(ended, 0, 'an interrupted reply no longer owns the table, so it does not end anything');
+  assert.equal(ended, 1, 'an interrupted reply ends the wait for it exactly once, so the evening is not held quiet for a line that will never arrive');
   await api.turn('Second go.');
-  await until(() => ended, count => count === 1);
+  await until(() => ended, count => count === 2);
   assert.deepEqual(spoken, ['This one will be replaced.', 'Second go.']);
 });
 

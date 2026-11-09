@@ -27,7 +27,7 @@ export const signalOffered = (note: string): Milestone | null => (/You may now s
 export const signalFor = (note: string): Milestone | 'none' => signalOffered(note) ?? 'none';
 /** The private paragraph, split into the pieces tests care about. */
 export function privateAgenda(note: string): { goal: string; hint: string | undefined; heard: string | undefined; trusted: boolean; milestone: Milestone | null; rubric: string | undefined } {
-  const line = /^Private, never say it aloud: (.*)$/m.exec(note)?.[1] ?? '';
+  const line = /^Private to you, not to recite: (.*)$/m.exec(note)?.[1] ?? '';
   const [, goal = '', rest = ''] = /^(.+?\.)(?: (.*))?$/.exec(line) ?? [];
   const hint = rest && !/^(?:What they have already heard|They have earned|You may now signal)/.test(rest) ? /^(.+?\.)(?: |$)/.exec(rest)?.[1] : undefined;
   return { goal, hint, heard: /What they have already heard from you on this: (.*?)(?= They have earned| You may now signal|$)/.exec(line)?.[1], trusted: line.includes('They have earned your trust.'), milestone: signalOffered(line), rubric: /You may now signal "[a-z]+" only if this turn earns it: (.*)$/.exec(line)?.[1] };

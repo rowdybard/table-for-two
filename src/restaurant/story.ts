@@ -87,20 +87,20 @@ const waiter = (text: string, emotion: Emotion = 'warm'): SceneUtterance => ({ s
 const CUES: Record<DateId, Record<Exclude<StoryCueKey, 'order-nudge'>, SceneUtterance>> = {
   mira: {
     welcome: date('Hi! You found it. I got here a bit early, so I’ve read the menu twice already.', 'warm'),
-    seated: date('Good table. Nobody needs me for anything for the next hour. I like this already.'),
+    seated: date('Nobody needs me for anything for the next hour. I like this table already.'),
     ordered: date('I’m getting the tomato rigatoni. It’s the one I’d be annoyed to watch someone else eat.', 'amused'),
     'main-served': date('Oh, that smells good. My plan to be very elegant about dinner is in danger.', 'amused'),
     taste: date('Mm. I was going to make a clever observation, but the sauce has taken over.', 'amused'),
     'main-finished': date('I spend a lot of dinners photographing other people’s big nights. It’s nice having one without a camera.'),
-    'quiet-window': date('This is nice. We can just sit for a minute.'),
+    'quiet-window': date('This is nice. We can just be quiet for a minute.'),
     'beat-cold': date('I’m better at small talk than silence, and I haven’t heard a word about your week yet. Start anywhere.', 'amused'),
-    'beat-waiting-1': date('Sorry, I keep looking round the room like I’m about to take a photo. Old habit. How was your day, actually?', 'amused'),
+    'beat-waiting-1': date('Sorry, I keep looking round the room like I’m about to take a photo. Old habit. How was your day?', 'amused'),
     'beat-waiting-2': date('My sister makes me text her when I get home from a first date. Who worries about you like that?', 'amused'),
     'beat-eating-1': date('I’ll say it before I lose my nerve: this is a very good dinner. What’s your actual favourite thing to eat?', 'amused'),
     'beat-eating-2': date('You’ve gone a bit quiet. All good?'),
-    'beat-after-1': date('Plates cleared. This is usually where I decide how the night is going. I’m still deciding.', 'amused'),
+    'beat-after-1': date('This is usually where I decide how the night is going. I’m still deciding.', 'amused'),
     'beat-after-2': date('Do you go out much, or is this a rare thing for you?'),
-    'dessert-date-choice': date('I’m going to order the chocolate fondant, with two spoons in case you change your mind.', 'amused'),
+    'dessert-date-choice': date('I’m going to order the chocolate fondant. Two spoons, if you want one.', 'amused'),
     'dessert-ordered': date('Dessert is an excellent reason to stay a little longer.'),
     'dessert-served': date('Well. That has my full attention.', 'amused'),
     'dessert-shared': date('I’ve been putting off a small photo show. I might choose the prints this week. No announcement. Just choose them.'),
@@ -137,7 +137,7 @@ const CUES: Record<DateId, Record<Exclude<StoryCueKey, 'order-nudge'>, SceneUtte
     'main-finished': date('My grandmother writes corrections in all her cookbooks. Half my cooking is arguing with her handwriting.'),
     'quiet-window': date('We don’t have to fill every minute. I like a conversation that leaves a little space.'),
     'beat-cold': date('I don’t mind quiet, but I’d like to hear something about your week. Anything will do.'),
-    'beat-waiting-1': date('I fixed a cookbook last week with a coffee ring on nearly every page. Sorry, work talk. What did you get up to today?'),
+    'beat-waiting-1': date('Last week I repaired a cookbook with a coffee ring on nearly every page. That is my idea of small talk. What did you get up to today?'),
     'beat-waiting-2': date('That’s a comfortable pause for me. If it isn’t for you, say so and I’ll find a better subject.'),
     'beat-eating-1': date('Mm. This is properly creamy. Do you cook much?'),
     'beat-eating-2': date('My grandmother would have sent this back once, on principle. I’m enjoying it, which she’d call a character flaw.', 'amused'),
@@ -173,7 +173,7 @@ const CUES: Record<DateId, Record<Exclude<StoryCueKey, 'order-nudge'>, SceneUtte
   },
   dev: {
     welcome: date('Hey, there you are. I got here early, so I already have opinions about the menu. I’ll hold them for now.', 'amused'),
-    seated: date('Good table. Take your time with the menu, I won’t talk you through it.'),
+    seated: date('Take your time with the menu, I won’t talk you through it.'),
     ordered: date('I’ll have the lemon chicken. And, against instinct, I will let someone else cook it.', 'amused'),
     'main-served': date('Okay, that looks good.'),
     taste: date('Good lemon, proper seasoning. That’s my whole review.', 'amused'),
@@ -236,9 +236,9 @@ export const guardedLine = (dateId: DateId, key: string): string | undefined => 
  * hands over a confession, a compliment or an invitation the conversation has not led to.
  */
 const RESERVED: Record<DateId, Partial<Record<StoryCueKey, string>>> = {
-  mira: { 'dessert-shared': 'This was worth saving room for. I’m not going to be dignified about the last spoonful.', 'farewell-invite': 'I’ll walk out with you.', 'ending-new-friend': 'Friends is fine by me. Take care of yourself.' },
-  jules: { 'dessert-shared': 'This was worth saving room for. I’d have been annoyed to skip it.', 'farewell-invite': 'I’ll walk to the door with you.', 'ending-new-friend': 'Friends is fine. Take care.' },
-  dev: { 'dessert-shared': 'This was worth saving room for. I could go again.', 'farewell-invite': 'I’ll walk out with you.', 'ending-new-friend': 'Friends works. Take care of yourself.' },
+  mira: { 'main-finished': 'That was a good dinner.', 'dessert-shared': 'This was worth saving room for. I’m not going to be dignified about the last spoonful.', 'farewell-invite': 'I’ll walk out with you.', 'ending-new-friend': 'Friends is fine by me. Take care of yourself.' },
+  jules: { 'main-finished': 'That was a good meal.', 'dessert-shared': 'This was worth saving room for. I’d have been annoyed to skip it.', 'farewell-invite': 'I’ll walk to the door with you.', 'ending-new-friend': 'Friends is fine. Take care.' },
+  dev: { 'main-finished': 'Good meal.', 'dessert-shared': 'This was worth saving room for. I could go again.', 'farewell-invite': 'I’ll walk out with you.', 'ending-new-friend': 'Friends works. Take care of yourself.' },
 };
 
 const ALIASES: Record<string, string> = {

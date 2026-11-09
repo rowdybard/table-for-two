@@ -4,21 +4,21 @@ import type { DinnerState, SceneUtterance } from '../../src/restaurant/types';
 
 /** Shared turn direction; this does not schedule requests or change character boundaries. */
 export const DATE_DIALOGUE_INSTRUCTIONS = [
-  'The history is the real conversation so far, oldest first: what the human said and what was said at the table by you, Eli the waiter and the neighbouring diner, your scripted remarks included. A line marked (cut off…), (still being said) or (the human did not hear this) was not fully heard, so it is not established history.',
+  'The history is the real conversation so far, oldest first: what the human said and what was said at the table by you, Eli the waiter and the neighbouring diner, your scripted remarks included. A line followed by a note (“cut off”, “heard only…”, “still being said”, “did not hear this”) was not fully heard, so it is not established history.',
   '“Right now” in the latest message is where the evening physically is; never describe food, plates or staff it does not mention. “At the table so far” is what actually happened.',
   'Continue as one person who remembers all of it. Answer what they just said first, in a way that only makes sense after their words; a line that could follow any message is wrong. Never re-introduce yourself, retell what your notes say you already shared, contradict an earlier detail, or ask what they already answered. Your own news comes up only where it connects.',
   'Take their words at plain meaning and in proportion: a small number is small, a big number is big, a cheap meal is cheap. Never coin a phrase, nickname or in-joke they cannot understand; say the plain thing.',
   'If the latest message says they said it out loud, the words are an automatic transcript and can contain mishearings. A word that does not fit the sentence or the table (“knights shift” right after nursing at a hospital) is almost certainly one: silently use the plausible word, never quote or joke about the garble, and keep the plausible reading in your notes. Ask “sorry, did you say…?” only once, and only when two readings would change your answer. Otherwise the words were typed; take them exactly.',
-  'If they talked over you, do not repeat the part you were cut off before; a brief “go ahead” is natural once, not every time. If they kept talking before your reply reached them, answer both messages as one thought. If you were waiting on an answer, their words are probably it. If they are asking about your last line, explain it plainly in one line and never defend it. After a long quiet gap one light remark is fine, never an accusation.',
-  'React to a surprising claim or a real disclosure out loud (“Wait, really?” “I’m sorry, that sounds hard”) before judging it; never mock identity or illness. Unusual claims stay unverified: clarify gently, do not establish impossible events as scene facts or affirm a diagnosis.',
-  'Flirtation stays playful and responsive within the provider’s content instructions; skepticism can coexist with attraction, and not every flirt is a trust exam.',
+  'If they talked over you, do not repeat the part they already heard; a brief “go ahead” is natural once, not every time, and if they ask you to carry on, resume from where you were cut off. If they kept talking before your reply reached them, answer both messages as one thought. If you were waiting on an answer, their words are probably it. If they are asking about your last line, explain it plainly in one line and never defend it. After a long quiet gap one light remark is fine, never an accusation.',
+  'React to a surprising claim or a real disclosure out loud before judging it (“Wait, really?” suits an unlikely event, “I’m sorry, that sounds hard” suits something painful), but never act shocked by an ordinary personal trait and never mock identity or illness. If someone claims to be using this date as cover, question the concrete motive and your involvement rather than giving a generic trust lecture. Unusual claims stay unverified: clarify gently, do not establish impossible events as scene facts or affirm a diagnosis.',
+  'Flirtation stays playful and responsive within the provider’s content instructions. Adults can reciprocate, tease, decline or steer gently in their distinct voices; skepticism can coexist with attraction, and not every flirt is a trust exam.',
   'Honor any “Do not bring up unprompted” line and requests to stop a topic. Avoid scenery, props and old jokes from recent replies unless the human brings them back or something new happens; setting details never replace an answer. Do not invent human facts, promises, attraction or earlier refusals.',
   'Kindness, curiosity and humor are not automatic rewards; money never buys affection; acknowledge a sincere repair. Respect a stated lack of romantic interest even after a kind gesture. Never out anyone, mock involuntary tics, turn a medical response into flirtation, invent medical treatment, pressure staff, or ask anyone to suppress a tic or explain private identity details. A story can add a real detail to the evening; do not contradict it with a preset assumption. Agree when you agree; push back only when you actually disagree.',
 ].join('\n');
 
 export const CONTRACT_MEMORY_CHARS = 700;
 /** The three parts of the notebook, shared by the Solo and Double contracts. */
-export const MEMORY_PARTS = '"HUMAN:" what they told you in their own terms (names, numbers, places, work, family, likes, dislikes); keep every earlier item unless they corrected it, and write "says" before a claim you doubt. "TOLD THEM:" stories and facts about your own life you have already shared, a few words each, so you never tell one twice. "OPEN:" a question either of you asked that is still unanswered, or something promised, removed once settled. Leave out scenery, food, staff and your own jokes or wording; the table events are tracked for you.';
+export const MEMORY_PARTS = '"HUMAN:" only what they told you about themselves, in their own terms (names, numbers, places, work, family, likes, dislikes); keep every earlier item unless they corrected it, write "says" before a claim you doubt, never log that they arrived, greeted you, apologised, asked or ordered, and write "nothing yet" when there is nothing. "TOLD THEM:" stories and facts about your own life you have already shared, a few words each, so you never tell one twice. "OPEN:" a question either of you asked that is still unanswered, or something promised, removed once settled. Leave out scenery, food, staff and your own jokes or wording; the table events are tracked for you.';
 /** How the turn is returned. Field order matches TURN_SCHEMA: the spoken line streams first, bookkeeping follows. */
 export function outputContract(vocabulary: { emotions: readonly string[]; actions: readonly string[]; signals: readonly string[] }): string {
   return [
@@ -36,10 +36,10 @@ export function outputContract(vocabulary: { emotions: readonly string[]; action
 const wordCount = (text: string) => text.trim().split(/\s+/).filter(Boolean).length;
 const sentenceCount = (text: string) => text.split(/(?<=[.!?])\s+/).filter(Boolean).length;
 /** How much the human said sets how much to say back. */
-export function humanLengthHint(humanText: string): string {
+export function humanLengthHint(humanText: string, speaker = 'They', listener = 'you'): string {
   const said = wordCount(humanText);
-  if (said <= 6) return 'They said very little: answer in a few words or one short sentence.';
-  if (said >= 30) return 'They told you something real: acknowledge it first; two or three sentences is fine.';
+  if (said <= 6) return `${speaker} said very little: answer in a few words or one short sentence.`;
+  if (said >= 30) return `${speaker} told ${listener} something real: acknowledge it first; two or three sentences is fine.`;
   return '';
 }
 /** A nudge when the date's last few lines were all the same size or all ended in questions. `owner` names the date in a shared room. */
@@ -103,6 +103,13 @@ export function deferrableCue(key: string) { return DEFERRABLE_CUES.has(key) || 
 const dishName = (id: string | null | undefined) => id ? DESSERTS.find(d => d.id === id)?.name ?? id : '';
 
 const AGREEMENT: Record<string, string> = { do: 'does', have: 'has', are: 'is', were: 'was', "don't": "doesn't", "haven't": "hasn't", "aren't": "isn't", "weren't": "wasn't" };
+/** Plain present-tense verbs the server's narration puts right after “you” (“what you feel”, “before you decide”). */
+const PRESENT_VERBS = ['feel', 'want', 'need', 'like', 'prefer', 'think', 'know', 'mean', 'decide', 'let', 'promise', 'take', 'keep', 'choose', 'ask', 'say', 'tell', 'bring', 'get', 'give', 'share', 'find', 'try', 'stay', 'leave', 'start', 'finish', 'see', 'hear', 'notice', 'offer', 'order', 'pick', 'help', 'wait', 'agree', 'hope', 'hold', 'handle', 'enjoy', 'love', 'mind', 'care', 'wish', 'believe', 'remember', 'understand', 'look', 'seem', 'sit', 'stand', 'go', 'come', 'make', 'put', 'turn', 'pay', 'use', 'join', 'ignore', 'respect', 'prefer'];
+const VERB_AFTER_YOU = [...Object.keys(AGREEMENT).map(word => word.replace("'", "['’]")), ...PRESENT_VERBS].join('|');
+const thirdPerson = (verb: string) => /(?:s|sh|ch|x|z|o)$/i.test(verb) ? `${verb}es` : /[^aeiou]y$/i.test(verb) ? `${verb.slice(0, -1)}ies` : `${verb}s`;
+/** “you” follows a verb that takes it as an object or a helper that inverts it (“help you feel”, “do you want”): the next verb stays as it is. */
+const NOT_THE_SUBJECT = /\b(?:help|helps|helped|let|lets|make|makes|made|see|saw|hear|hears|heard|sees|watch|watches|watched|have|had|do|does|did|can|could|will|would|should|shall|may|might|must|are|is|was|were|am)\s+$/i;
+
 /**
  * Server copy such as "You returned the risotto" or "Your date notices before you do" is written for the
  * player's screen. The date model is "you" in the system prompt, so a second-person line about the human
@@ -112,17 +119,24 @@ const AGREEMENT: Record<string, string> = { do: 'does', have: 'has', are: 'is', 
 export function humanVoice(text: string, dateName: string, human = 'the human'): string {
   const cap = human[0].toUpperCase() + human.slice(1), possessive = human === 'the human' ? 'the human’s' : `${human}’s`;
   const opening = (whole: string, at: number) => /(?:^|[.!?]["”’)]*\s+|["“‘(]\s*)$/.test(whole.slice(0, at));
+  // “Thank you” opening a sentence, or “I thank you”, is a polite phrase said to the human, not a command to thank them; “she thanks you” is about them.
   return text
+    .replace(/\b(thanks?) you\b/gi, (m, word: string, at: number, whole: string) => opening(whole, at) || /\b(?:i|we)\s+$/i.test(whole.slice(0, at)) ? `${word} \u0001` : m)
     .replace(/\b[Yy]our date(['’]s)?\b/g, (_m, owns) => dateName + (owns ? '’s' : ''))
     .replace(/^You have only just met\.?/, `${cap} and ${dateName} have only just met.`)
-    .replace(/\byou(?:['’](re|ve|ll|d)|\s+(do|have|are|were|don['’]t|haven['’]t|aren['’]t|weren['’]t))?\b/gi, (_m, contraction: string | undefined, verb: string | undefined, at: number, whole: string) => {
+    .replace(/\b(neither|none|both|each|either|all) of you\b/gi, '$1 of them')
+    .replace(new RegExp(`\\byou(?:['’](re|ve|ll|d)|\\s+(${VERB_AFTER_YOU})\\b)?\\b`, 'gi'), (_m, contraction: string | undefined, verb: string | undefined, at: number, whole: string) => {
       const subject = opening(whole, at) ? cap : human;
       if (contraction) return `${subject} ${{ re: 'is', ve: 'has', ll: 'will', d: 'would' }[contraction.toLowerCase()]}`;
-      if (verb) return `${subject} ${AGREEMENT[verb.toLowerCase().replace('’', "'")].replace("'", verb.includes('’') ? '’' : "'")}`;
-      return subject;
+      if (!verb) return subject;
+      // After a verb that takes “you” as its object, or a helper that inverts it, the verb that follows stays as it is.
+      if (NOT_THE_SUBJECT.test(whole.slice(0, at))) return `${subject} ${verb}`;
+      const agreed = AGREEMENT[verb.toLowerCase().replace('’', "'")];
+      return `${subject} ${agreed ? agreed.replace("'", verb.includes('’') ? '’' : "'") : thirdPerson(verb)}`;
     })
     .replace(/\byourself\b/gi, 'themself')
-    .replace(/\byours?\b/gi, (_m, at: number, whole: string) => opening(whole, at) ? possessive[0].toUpperCase() + possessive.slice(1) : possessive);
+    .replace(/\byours?\b/gi, (_m, at: number, whole: string) => opening(whole, at) ? possessive[0].toUpperCase() + possessive.slice(1) : possessive)
+    .replace(/\u0001/g, 'you');
 }
 
 const DESSERT_NAMES = DESSERTS.map(dessert => dessert.name.toLowerCase());

@@ -208,7 +208,10 @@ export class DoubleTableScene {
       const view = this.state.views[human];
       view.evening.incident = view.phase !== 'ended' && view.evening.stance !== 'leaving' && source.evening.incident ? { ...source.evening.incident } : null;
       view.events = [...source.events]; view.evening.resolutions = { ...source.evening.resolutions }; view.evening.lastInterruptionAt = source.evening.lastInterruptionAt;
-      for (const moment of source.evening.moments) if (['wrong-order', 'spilled-drink', 'disruptive-diner'].includes(moment.id) && !view.evening.moments.some(item => item.id === moment.id)) view.evening.moments.push({ ...moment });
+      for (const moment of source.evening.moments) if (['wrong-order', 'spilled-drink', 'disruptive-diner'].includes(moment.id)) {
+        moment.owner ??= this.incidentOwner!; // written in the owner's second person, so only their pair's view of the table tells it
+        if (!view.evening.moments.some(item => item.id === moment.id)) view.evening.moments.push({ ...moment });
+      }
     }
     if (!source.evening.incident) { this.lastIncidentAt = source.elapsed; this.incidentOwner = null; }
     if (this.incidentOwner) this.state.incidentOwner = this.incidentOwner; else delete this.state.incidentOwner;

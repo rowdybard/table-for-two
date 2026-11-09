@@ -100,7 +100,7 @@ test('double dates assess the speaking player only, disclose on owning playback,
   assert.deepEqual(f.state.views.h1.evening.agenda?.clues, [clue.d1, secondClue.d1]);
   assert.deepEqual(f.state.views.h2.evening.agenda?.clues, [clue.d2, secondClue.d2]);
   const note = doubleNote(f.requests[0]);
-  assert.match(note, /Mira’s private goal, never said aloud: /); assert.match(note, /Jules’s private goal, never said aloud: /);
+  assert.match(note, /Mira’s private goal, not to recite: /); assert.match(note, /Jules’s private goal, not to recite: /);
   assert.ok(!f.requests[0].system.includes(f.scene.agendaContext('h1').goal), 'the goal is per-turn private context, not part of the cached system prompt');
   assert.ok(f.requests[0].system.includes('private goal'));
   assert.ok(f.requests[0].system.includes('Every date begins highly skeptical'), 'both dates receive the shared skepticism policy');

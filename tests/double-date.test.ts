@@ -13,6 +13,7 @@ import { initializeScenario, resolveScenario, tickScenario } from '../server/dou
 import type { SocialResponse } from '../src/restaurant/types';
 import { stepScenarioEffects } from '../server/restaurant/scenario-effects';
 import { doubleNote, humanTurnOf } from './helpers/double-note';
+import { tableFacts } from '../server/restaurant/table-facts';
 
 const encode = JSON.stringify;
 const neutral: SocialResponse = { signal: 'none', reason: 'No change in boundaries.', wantsToLeave: false };
@@ -305,7 +306,7 @@ test('all eleven scenario tracks are deterministic, remain dormant during incide
     tickScenario(room); assert.equal(room.scenario?.phase, 'active'); assert.throws(() => resolveScenario(room, 'h1', 'invalid'));
     resolveScenario(room, 'h2', room.scenario!.choices[0].id); assert.equal(room.scenario?.phase, 'active');
     if (id === 'feeling-unwell') { const target = room.views[room.scenario!.target]; target.elapsed += 6; stepScenarioEffects(target); }
-    resolveScenario(room, 'h2', room.scenario!.choices[0].id); assert.equal(room.scenario?.phase, 'resolved'); assert.ok(room.views.h1.evening.moments.some(moment => moment.id === `scenario-${id}`)); assert.ok(room.views.h2.evening.moments.some(moment => moment.description.includes('Jamie'))); assert.ok(room.views[room.scenario!.target].memory.includes('Jamie')); assert.equal(room.scenario!.decisions.length, 2);
+    resolveScenario(room, 'h2', room.scenario!.choices[0].id); assert.equal(room.scenario?.phase, 'resolved'); assert.ok(room.views.h1.evening.moments.some(moment => moment.id === `scenario-${id}`)); assert.ok(room.views.h2.evening.moments.some(moment => moment.description.includes('Jamie'))); assert.ok(tableFacts(room.views[room.scenario!.target]).some(fact => fact.includes('Jamie')), 'the choice is a recorded table fact, not a line pushed into the notebook'); assert.equal(room.scenario!.decisions.length, 2);
   }
 });
 
@@ -342,7 +343,7 @@ test('authored care and scenario choices cancel held stale table updates without
     const memories=Object.values(state.views).map(view=>view.memory), emotions=Object.values(state.views).map(view=>view.emotion);
     // A care action is a notebook moment the date reads back; it is no longer copied into the memory a model reply rewrites.
     const moments=Object.values(state.views).flatMap(view=>view.evening.moments.map(moment=>moment.description));
-    assert.ok(kind==='care' ? moments.some(text=>text.includes('fresh water')) : memories.some(memory=>memory.includes('Jamie')));
+    assert.ok(kind==='care' ? moments.some(text=>text.includes('fresh water')) : state.scenario!.decisions.length>0, 'the choice was recorded by the scenario (its table fact lives in server memory, not the snapshot)');
     const authored=state.lines.filter(line=>line.generation===state.generation && !['h1','h2'].includes(line.speaker)).at(-1)!;
     assert.ok(authored); const speech=await api.request(api.path(h2)+'/speech',h2.token,{lineId:authored.id,generation:authored.generation}); assert.equal(speech.status,200); await speech.text();
     release(); state=await api.settle(h1);
@@ -463,4 +464,52 @@ test('offstage dates cannot speak or change memory after an ending or departure 
     const lastNote = doubleNote(requests.at(-1)!); assert.match(lastNote, /rite nothing for Mira/); assert.doesNotMatch(lastNote, /rite nothing for Jules/);
     const allowed = (requests.at(-1)!.outputSchema as any).properties.utterances.items.properties.speaker.enum; assert.equal(allowed.includes('d1'), false); assert.ok(allowed.includes('d2')); assert.ok(requests.at(-1)!.system.includes('offstage'));
   }
+});
+
+async function seatBoth(api: Awaited<ReturnType<typeof boot>>, h1: DoubleRoomResponse, h2: DoubleRoomResponse) {
+  await api.walk([h1], 0, -1, 1.4); await api.walk([h2], 0, -1, 1.4);
+  for (const player of [h1, h2]) await api.okay(player, { type: 'scene', command: { type: 'interact', target: 'seat' } });
+  api.advance(7);
+}
+
+test('the question a date was waiting on reaches the model even though the friend’s own turn answers it', async t => {
+  const requests: ClaudeRequest[] = []; const api = await boot({ claude: claude(request => requests.push(request)) }); t.after(() => api.close()); const { h1, h2 } = await api.pair();
+  await seatBoth(api, h1, h2);
+  const state = await api.poll(h2);
+  assert.ok(state.lines.some(line => line.speaker === 'd2' && line.text.includes('How was your day?')), 'Jules’s greeting asks something: ' + JSON.stringify(state.lines.map(line => line.text)));
+  assert.equal((await api.request(api.path(h2) + '/turn', h2.token, { turnId: 'answer', text: 'Pretty good, I got here a bit early.', target: 'table' })).status, 202); await api.settle(h2);
+  assert.match(doubleNote(requests[0]), /Jules asked Jamie “How was your day\?” a little while ago and has not had an answer\./, 'it is read before the speaking friend’s own turn clears it');
+  assert.doesNotMatch(doubleNote(requests[0]), /Mira asked Alex/, 'the other pair’s greeting asked nothing');
+  assert.equal((await api.request(api.path(h2) + '/turn', h2.token, { turnId: 'again', text: 'And you?', target: 'table' })).status, 202); await api.settle(h2);
+  assert.doesNotMatch(doubleNote(requests[1]), /a little while ago and has not had an answer/, 'once answered it is not carried forward');
+});
+
+test('“what do you mean?” is about the line of the date they were talking to, not whoever spoke last', async t => {
+  const requests: ClaudeRequest[] = [];
+  const lines = [[{ speaker: 'd1', text: 'Honestly, I am just here for the cake gossip.', emotion: 'amused' }, { speaker: 'd2', text: 'I only came for the bread basket.', emotion: 'amused' }], [], [], [], [], []];
+  const api = await boot({ claude: claude(request => requests.push(request), () => response(lines.shift() ?? [])) }); t.after(() => api.close()); const { h1, h2 } = await api.pair();
+  await seatBoth(api, h1, h2);
+  assert.equal((await api.request(api.path(h1) + '/turn', h1.token, { turnId: 'first', text: 'My graduating class was under seventy people.', target: 'table' })).status, 202); await api.settle(h1);
+  await api.hear(h1, 'd1', 'Honestly, I am just here for the cake gossip.'); await api.hear(h1, 'd2', 'I only came for the bread basket.');
+  assert.equal((await api.request(api.path(h1) + '/turn', h1.token, { turnId: 'second', text: 'what the heck is cake gossip', target: 'd1' })).status, 202); await api.settle(h1);
+  assert.match(doubleNote(requests[1]), /Alex seems to be asking about Mira’s last line \(“Honestly, I am just here for the cake gossip\.”\)/);
+  assert.equal((await api.request(api.path(h1) + '/turn', h1.token, { turnId: 'third', text: 'what do you mean', target: 'd1' })).status, 202); await api.settle(h1);
+  assert.match(doubleNote(requests[2]), /asking about Mira’s last line/, 'it points at the date who was addressed (Mira), even though Jules spoke after her');
+  assert.equal((await api.request(api.path(h1) + '/turn', h1.token, { turnId: 'fourth', text: 'what do you mean', target: 'h2' })).status, 202); await api.settle(h1);
+  assert.doesNotMatch(doubleNote(requests[3]), /asking about/, 'said to the other friend, it is not about anything a date said');
+  assert.equal((await api.request(api.path(h1) + '/turn', h1.token, { turnId: 'fifth', text: 'Jules, what do you mean by that?', target: 'd1' })).status, 202); await api.settle(h1);
+  assert.match(doubleNote(requests[4]), /asking about Jules’s last line \(“I only came for the bread basket\.”\)/, 'a date named in the question is the one being asked');
+  assert.equal((await api.request(api.path(h1) + '/turn', h1.token, { turnId: 'sixth', text: 'huh what do you mean', target: 'table' })).status, 202); await api.settle(h1);
+  assert.match(doubleNote(requests[5]), /asking about Jules’s last line/, 'said to the table, it is about whoever spoke last');
+});
+
+test('a scripted line that arrives after the reply is not mistaken for that reply never reaching the friend', async t => {
+  const requests: ClaudeRequest[] = []; const api = await boot({ claude: claude(request => requests.push(request)) }); t.after(() => api.close()); const { h1, h2 } = await api.pair();
+  await seatBoth(api, h1, h2);
+  assert.equal((await api.request(api.path(h1) + '/turn', h1.token, { turnId: 'one', text: 'Pretty good, thanks for asking.', target: 'table' })).status, 202); await api.settle(h1);
+  const spoken = (await api.poll(h1)).lines.filter(line => line.speaker === 'd1' && line.text === 'I have been meaning to ask about your music taste.').at(-1)!;
+  await api.hear(h1, 'd1', spoken.text); api.advance(60);
+  assert.equal((await api.request(api.path(h1) + '/turn', h1.token, { turnId: 'two', text: 'I like all sorts, honestly.', target: 'table' })).status, 202); await api.settle(h1);
+  assert.ok((await api.poll(h1)).lines.some(line => line.speaker === 'waiter' && line.text.startsWith('Take your time with the menu')), 'Eli’s scripted line did land after the reply, unheard');
+  assert.doesNotMatch(doubleNote(requests[1]), /kept talking/, 'an unheard scripted line is not their reply, which they did hear');
 });

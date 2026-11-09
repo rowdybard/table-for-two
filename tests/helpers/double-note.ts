@@ -19,14 +19,18 @@ export const everything = (request: Pick<ClaudeRequest, 'messages'> & { system: 
  */
 export function doubleContext(request: Pick<ClaudeRequest, 'messages'>) {
   const text = doubleNote(request), turn = humanTurnOf(request);
-  const rows = [...text.matchAll(/^- (.+?) and (.+?) \((h[12]), (d[12])\): /gm)].map(match => ({ humanName: match[1], dateName: match[2], humanId: match[3] as 'h1' | 'h2', id: match[4] as 'd1' | 'd2' }));
+  const rows = [...text.matchAll(/^- (.+?) and (.+?) \((h[12]), (d[12])\): (.*)$/gm)].map(match => ({ humanName: match[1], dateName: match[2], humanId: match[3] as 'h1' | 'h2', id: match[4] as 'd1' | 'd2', right: match[5] }));
   const speaker = rows.find(row => row.humanName === turn.speaker)?.humanId;
   if (!speaker) throw new Error(`Unknown speaker in the note: ${turn.speaker}`);
+  const addressed = turn.to.replace(/^to /, ''), left = /talked only to each other for the last (\d+) public turns, so (.+?) (?:is|are) starting to feel left out/.exec(text);
+  const target = addressed === 'the whole table' ? 'table' : rows.find(row => row.dateName === addressed)?.id ?? rows.find(row => row.humanName === addressed)?.humanId ?? 'table';
   return {
-    humanTurn: { speaker, text: turn.text, to: turn.to },
+    humanTurn: { speaker, text: turn.text, to: turn.to, target },
+    minutes: /The evening is about (\d+) minutes? old/.exec(text) ? Number(/The evening is about (\d+) minutes? old/.exec(text)![1]) : 0,
     characters: rows.map(row => {
-      const goal = new RegExp(`${row.dateName}’s private goal, never said aloud: ([^\\n]*)`).exec(text), milestone = goal && /You may now signal "(\w+)"/.exec(goal[1]);
-      return { ...row, agenda: { evidenceReady: !!milestone, nextMilestone: (milestone ? milestone[1] : null) as 'noticed' | 'understood' | 'respected' | null } };
+      const goal = new RegExp(`${row.dateName}’s private goal, not to recite: ([^\\n]*)`).exec(text), milestone = goal && /may now signal "(\w+)"/.exec(goal[1]);
+      return { id: row.id, humanId: row.humanId, humanName: row.humanName, dateName: row.dateName, available: !/write nothing for/i.test(row.right), friendOnlyTurns: left && left[2].includes(row.dateName) ? Number(left[1]) : 0,
+        agenda: { evidenceReady: !!milestone, nextMilestone: (milestone ? milestone[1] : null) as 'noticed' | 'understood' | 'respected' | null } };
     }),
   };
 }

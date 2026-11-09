@@ -185,13 +185,17 @@ table(['Mode','People and ownership','Selection and consequences'],[
 heading('Dinner flow',2)
 tree('Arrive and sit','The human walks to the table. Seating and movement are authoritative game state.')
 tree('Choose one of three main courses','Eli nudges an unopened menu after 40 scene seconds. Food takes 45 active kitchen seconds; a care hold preserves the remaining cooking time. Try three bites (at least 500 ms apart). Eli clears the plates 200 seconds after service, 60 seconds after the cutlery is rested across the plate, or 90 seconds after the third bite.')
-tree('Spend time together','Conversation, a seeded story, conditional physical interruptions and small gestures happen here. The date breaks a long silence with an authored line of their own, at most four per evening, without a model call.')
+tree('Spend time together','Conversation, a seeded story, conditional physical interruptions and small gestures happen here. The date breaks a long silence with an authored line of their own, at most four per evening, without a model call. The line waits while the two are mid-conversation or a reply is still being written, a scripted aside is dropped when the human has just been talking, and a line that asks something is carried into the next model note as a question still waiting for its answer (it expires after 90 scene seconds). An authored line never counts as a human turn.')
 tree('Dessert decision','Eli offers dessert as the plates go. Choose lemon, chocolate or berries, or skip it; after 40 scene seconds the date suggests their favourite, or declines when guarded or hurt. Dessert takes 20 kitchen seconds and is shared from one plate; it finishes 75 seconds after service or 40 seconds after two spoonfuls. Eli brings one check 12 seconds after dessert ends or is declined.')
 tree('Settle dinner and say goodbye','Three settlement options; then stand and walk to the entrance for one of three farewell requests.',last=True)
 heading('Shared story arrival gate',2)
 p('Solo and Blind: seated, date present, no requested bill, active incident or departure; calm and quiet windows must have expired. Most stories need a served or finished main and four minutes elapsed OR four completed dialogue turns. The unwell story is an exception: it can interrupt a waiting order after 12 scene seconds, or a served plate before three bites after 90 seconds OR two dialogue turns.')
 p('Double: the target pair must meet the same physical eligibility and story-specific gate. The active table must be clear of incidents and farewells, with 25-second spacing and quiet windows respected. Ordinary shared stories also need four minutes on the minimum active-pair clock OR four dialogue turns across active pairs. A dormant story retargets if its pair has left; an active story closes if its subject leaves.')
 source('server/restaurant/evening.ts EveningDirector.step; server/double-date/scenarios.ts initializeScenario, tickScenario and resolveScenario; server/double-date/scene.ts.')
+
+heading('How the date hears the evening',2)
+p('Every mode sends a stable system prompt, a named transcript and a short prose note. Table events are facts the date cannot rewrite; its notebook holds only what was said. Talking over the date, an unanswered question or “what do you mean?” are noted from what happened. No model call was added.')
+source('server/restaurant/turn-note.ts, dialogue-policy.ts and table-facts.ts; server/double-date/table-note.ts and conversation.ts.')
 
 page('Implementation review','review')
 heading('Food mistakes now arrive with service',2)
@@ -294,7 +298,7 @@ for s in DATA['scenarios']:
     if s['id']=='too-many-drinks': specials.append('Both final choices end the date for care rather than making intoxication a romance branch.')
     if s['id']=='questioning-attraction': specials.append('Romance closes on either first choice, before the final friendship or goodbye decision.')
     if specials: p(' '.join(specials),size=9.5,after=4,before=3)
-    p('Each accepted choice appends its attributed fact to compact memory. Resolution keeps both facts as one shared moment. Choice commitment is immediate; agenda clues and personal refusals still require completed delivery to count as heard.',size=9.2,after=0,before=4,color='4F5963')
+    p('Each accepted choice records its attributed fact as a table fact that the date reads back; it is not written into the notebook the model rewrites. Resolution keeps both facts as one shared moment. Choice commitment is immediate; agenda clues and personal refusals still require completed delivery to count as heard.',size=9.2,after=0,before=4,color='4F5963')
     source(f"src/restaurant/scenarios.ts  {s['id']}  |  server/restaurant/scenario.ts applyScenarioToView  |  Mode ownership and scheduling are in the mode map.")
 
 page('Physical interruptions','physical')
@@ -459,12 +463,12 @@ table(['Source','Coverage'],[
     ['src/restaurant/scenarios.ts','All eleven seeded stories, exact player choice text, reactions, follow-through overrides, state effects and complete histories.'],
     ['src/restaurant/scenario-types.ts','Story phases, decisions, effects and care state.'],
     ['src/restaurant/scenario-care.ts; server/restaurant/scenario-effects.ts','Kitchen hold and resume, physical return, clean-up, quiet-table choice, extra-food statuses, cooking deadline and itemized charges.'],
-    ['server/restaurant/evening.ts and scenario.ts','Course gates, care gestures, three physical incidents, timing, memory facts, scoring interactions and endings.'],
+    ['server/restaurant/evening.ts and scenario.ts','Course gates, care gestures, three physical incidents, timing, table facts, scoring interactions and endings.'],
     ['server/double-date/scenarios.ts and scene.ts','Shared target, either-friend choices, one check for the table, incident recovery and independent pair endings.'],
     ['server/restaurant/agendas.ts and skepticism.ts','Sixteen private goals, exact evidence criteria, heard-clue readiness, milestones and confidence.'],
     ['server/restaurant/boundaries.ts and chemistry.ts','Delivery-dependent refusals, disregard, repair, reciprocal flirt receipts and eligibility.'],
-    ['server/double-date/conversation.ts and server/restaurant/index.ts','Friend-only attention, shared turn ownership and earned provider routing.'],
-    ['src/restaurant/content.ts, story.ts and blind-date.ts','Adult biographies, preset preferences, thirty-eight authored cue keys and seeded personality ingredients.'],
+    ['server/double-date/conversation.ts, table-note.ts and server/restaurant/index.ts, turn-note.ts','Friend-only attention, shared turn ownership, earned provider routing and what the date model reads.'],
+    ['src/restaurant/content.ts, story.ts and blind-date.ts','Adult biographies, preset preferences, '+str(DATA['counts']['storyCueKeys'])+' authored cue keys and seeded personality ingredients.'],
     ['src/restaurant/evening.ts; src/restaurant/tabletop.ts; server/restaurant/tabletop.ts','Evening pacing clocks, finite table supplies and ten deterministic prop actions.'],
 ],[4.5,5.22],small=9.5)
 heading('Editable structure',2)

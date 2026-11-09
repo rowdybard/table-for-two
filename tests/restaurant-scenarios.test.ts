@@ -215,5 +215,5 @@ test('the single-call Claude context cannot anticipate an undisclosed dormant he
   const response = await fetch(base + `/api/date/sessions/${created.state.id}/turn`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${created.token}` }, body: JSON.stringify({ turnId: 'first-greeting', text: 'Hi, good to meet you.', model: 'claude-haiku-5-5' }) });
   assert.equal(response.status, 200); await response.text();
   assert.equal(section(captured, 'Happening now'), undefined, 'a dormant story is not mentioned before it is disclosed');
-  assert.equal(/Tourette|tic\b|Something they choose to share/i.test(captured), false); assert.match(captured, /^Right now: /);
+  assert.equal(/Tourette|\btics?\b|Something they choose to share/i.test(captured), false); assert.match(captured, /^Right now: /);
 });

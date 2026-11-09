@@ -37,6 +37,8 @@ const AFTER_SPEECH = 6, REPLY_CAP = 70;
 const GUARDED = ['guarded', 'hurt', 'leaving'];
 
 /** A line that hands the turn to the human: a question, or a plain invitation to speak. */
+/** Scene seconds after which an unanswered aside is stale: the talk has moved on and the model should not wait for it. */
+const QUESTION_EXPIRES = 90;
 const ASKS = /\?|\b(?:your turn|your move|tell me|say something|start anywhere|anything will do)\b/i;
 /** A date line whose last words are a question, which the human has not answered until they next speak. */
 const ENDS_ASKING = /\?["”’)]*\s*$/;
@@ -46,11 +48,39 @@ const ENDS_ASKING = /\?["”’)]*\s*$/;
  * ("not the lemon") and exactly one dessert is named, so "lemon or chocolate?" decides nothing.
  */
 const DESSERT_WORDS: Record<string, RegExp> = { lemon: /\b(?:lemon|posset)\b/gi, chocolate: /\b(?:chocolate|fondant)\b/gi, berries: /\b(?:strawberr\w*|berries)\b/gi };
-const NEGATED = /\b(?:not|no|never|don'?t|dont|hate|without|skip|rather than|instead of)\b[^.?!,;]{0,24}$/i;
+// A negation reaches only as far as its own clause: "allergic to nuts so the lemon" and "not the lemon but the chocolate" keep the second dessert.
+const NEGATED = /\b(?:not|no|never|don'?t|dont|hate|dislike|avoid|allergic|allergy|sick of|tired of|without|skip|except|but not|anything but|rather than|instead of|(?:can'?t|cannot|can not|won'?t|wouldn'?t) (?:really |even |actually )?(?:have|eat|do|stand|handle|take|touch|tolerate|stomach|digest|be around))\b(?:(?!\b(?:so|but|then)\b)[^.?!,;]){0,24}$/i;
+/**
+ * A clause that begins as a question (“what is in the fondant?”, “does the lemon have nuts?”, “I was wondering what is in it”)
+ * and does not lead straight into a pick is about a dessert, not a choice of it. An auxiliary opens a question only when a
+ * subject follows (“would like the lemon” is a pick; “would the lemon…” is not).
+ */
+const FILLER = String.raw`and|so|but|u+m+|u+h+m*|e+r+m*|h+m+|m{2,}|oh|well|hey|ok(?:ay)?|wait|sorry|excuse me|actually|like|yeah|eli`;
+const SUBJECT = String.raw`(?:it|that|this|these|those|there|the|you|we|they|he|she|i|any|both|either)`;
+const ASKS_ABOUT = new RegExp(`^(?:(?:${FILLER})\\s+)*(?:(?:what|which|who|whose|where|when|why|how)(?:'?s)?\\b|(?:is|are|was|were|does|did|has|have|had|can|could|would|will|should|shall)(?![\\w'])\\s+${SUBJECT}\\b|do(?![\\w'])\\s+(?!the\\b)${SUBJECT}\\b|isn'?t\\b|aren'?t\\b|tell me (?:more )?(?:about|what)|describe\\b|explain\\b|(?:i (?:was )?wonder(?:ing)?|just wondering|wondering|curious|quick question|one question|i'?d (?:like|love) to know|i'?ll (?:ask|check)|let me (?:ask|know|see|check)|i'?m (?:just )?(?:asking|checking)|just (?:asking|checking))\\b)`, 'i');
+/** A proposal counts only when it leads straight to the dessert (“can we get the lemon”), not when a question sits in between (“can I ask what is in the fondant”). */
+const PROPOSAL = String.raw`let'?s|(?:can|could|may|might) (?:i|we)|shall we|should we|shouldn'?t we|wouldn'?t (?:it|that|the)|why (?:don'?t we|not)|we could|we'?ll|i'?ll|i'?d|i would|i want|i'?m (?:having|going|gonna)|i (?:think|might|may|fancy|guess|reckon|got|get|take|choose|pick|will|could)|(?:go|going|went) (?:with|for)|how about|what about|do the`;
+const PROPOSES_NEAR = new RegExp(`(?:${PROPOSAL})(?:\\s+(?!(?:ask|know|see|wonder|check|if|whether|what|which|in)\\b)[\\p{L}']+){0,2}\\s*$`, 'iu');
 const NO_DESSERT = /\b(?:no|skip|pass on|don'?t want|don'?t need|too full for)\s+(?:any\s+)?(?:dessert|pudding)\b|\b(?:i'?m|we'?re|i am|we are)\s+(?:so\s+|really\s+|too\s+)?(?:full|stuffed)\b/i;
-export function namedDessertIn(text: string): string | null {
-  const named = DESSERTS.filter(({ id }) => [...text.matchAll(DESSERT_WORDS[id])].some(hit => !NEGATED.test(text.slice(Math.max(0, hit.index - 30), hit.index)))).map(({ id }) => id);
+function dessertMentions(text: string, id: string) {
+  return [...text.matchAll(DESSERT_WORDS[id])].map(hit => {
+    const index = hit.index ?? 0, before = text.slice(0, index), clause = before.slice(Math.max(before.lastIndexOf('.'), before.lastIndexOf('?'), before.lastIndexOf('!'), before.lastIndexOf(';'), before.lastIndexOf(',')) + 1).trim();
+    const near = text.slice(Math.max(0, index - 30), index).replace(/\bwhy (?:don'?t we|not)\b/gi, 'why');
+    return { negated: NEGATED.test(near), asking: ASKS_ABOUT.test(clause) && !PROPOSES_NEAR.test(clause) };
+  });
+}
+const plainSpeech = (spoken: string) => spoken.replace(/[’‘]/g, "'");
+export function namedDessertIn(spoken: string): string | null {
+  const text = plainSpeech(spoken);
+  // "Chocolate?" or "I was thinking chocolate, what do you think?" still name one; a question that merely mentions one does not.
+  const named = DESSERTS.filter(({ id }) => dessertMentions(text, id).some(mention => !mention.negated && !mention.asking)).map(({ id }) => id);
   return named.length === 1 ? named[0] : null;
+}
+/** True when the human takes back the dessert they named earlier (“actually, not the lemon”). */
+export function withdrawsDessert(spoken: string, id: string | null): boolean {
+  if (!id || !DESSERT_WORDS[id]) return false;
+  const mentions = dessertMentions(plainSpeech(spoken), id);
+  return mentions.length > 0 && mentions.every(mention => mention.negated);
 }
 
 /**
@@ -96,6 +126,7 @@ export class EveningDirector {
   private dateAsked = false;
   /** The authored line the date asked that is still waiting for an answer. */
   private openQuestion: string | null = null;
+  private openQuestionAt = 0;
   private namedDessert: string | null = null;
   private declinedDessert = false;
   private dessertNamed = false;
@@ -166,7 +197,7 @@ export class EveningDirector {
     this.state.evening.cues = this.state.evening.cues.slice(-70);
     // A greeting that ends on a question (how was your day?) is waiting for its answer too.
     const greeting = key === 'welcome' ? utterances.find(line => line.speaker === 'date') : undefined;
-    if (greeting && ASKS.test(greeting.text)) this.openQuestion = greeting.text;
+    if (greeting && ASKS.test(greeting.text)) this.askOpen(greeting.text);
     return utterances;
   }
   private moment(id: string, title: string, description: string) { if (!this.state.evening.moments.some(m => m.id === id)) this.state.evening.moments.push({ id, title, description }); }
@@ -183,11 +214,13 @@ export class EveningDirector {
   /** The date's reply to the latest human turn has finished (or was cut off). */
   replyEnded() { this.awaitingReply = false; this.lastSpokeAt = this.repliedAt = this.state.elapsed; }
   /** An authored line the date asked that the human has not answered yet, if any. */
-  get pendingQuestion(): string | null { return this.openQuestion; }
+  get pendingQuestion(): string | null { return this.openQuestion && this.state.elapsed - this.openQuestionAt <= QUESTION_EXPIRES ? this.openQuestion : null; }
+  private askOpen(line: string) { this.openQuestion = line; this.openQuestionAt = this.state.elapsed; }
   private noteDessertWords(text: string) {
     const e = this.state.evening; if (e.main.status !== 'finished' || e.dessert.status !== 'none') return;
     const hit = namedDessertIn(text);
     if (hit) { this.namedDessert = hit; this.declinedDessert = false; } else if (NO_DESSERT.test(text)) this.declinedDessert = true;
+    else if (withdrawsDessert(text, this.namedDessert)) this.namedDessert = null;
   }
   seated() { if (!this.seatedOnce) { this.seatedOnce = true; this.seatedAt = this.state.elapsed; this.cue('seated'); } }
   ordered() {
@@ -312,7 +345,7 @@ export class EveningDirector {
     const e = this.state.evening;
     e.main.status = 'finished'; e.main.finishedAt = this.state.elapsed; e.dessert.offeredAt = this.state.elapsed;
     e.chapter = 'dessert'; this.state.stage = 'dessert'; e.lastInterruptionAt = this.state.elapsed;
-    this.cue('main-finished', { bites: e.main.bites });
+    this.cue('main-finished', { bites: e.main.bites, reserved: this.reserved });
   }
   social(turn: SceneTurn, humanText = '', context: { humanId?: string; paired?: boolean; name?: string } = {}) {
     const e = this.state.evening; e.dialogueTurns++; this.lastSpokeAt = this.state.elapsed;
@@ -462,7 +495,7 @@ export class EveningDirector {
         this.usedBeats.add(key);
         const line = this.cue(key).find(u => u.speaker === 'date');
         // The line is already in the spoken history; the only thing to carry is that it still wants an answer.
-        if (line) { e.beats++; this.lastBeatAt = t; if (ASKS.test(line.text)) this.openQuestion = line.text; }
+        if (line) { e.beats++; this.lastBeatAt = t; if (ASKS.test(line.text)) this.askOpen(line.text); }
       }
     }
     refreshScenarioBill(this.state);

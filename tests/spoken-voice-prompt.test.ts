@@ -14,8 +14,8 @@ import { createEvening } from '../src/restaurant/evening';
 import { CHARACTER_STORIES } from '../src/restaurant/story';
 import type { DateId, DinnerState, SceneTurn, SceneUtterance } from '../src/restaurant/types';
 
-/** Preset Solo prompts were ~15.7k characters before this pass. The register, memory contract and voice lines are new; nothing may grow past this. */
-const PROMPT_BOUND = 16_000;
+/** The prompt is cached, so its size costs little per turn, but a small model reads all of it: nothing may grow past this without a deliberate decision. Preset Solo prompts are ~16.3k characters. */
+const PROMPT_BOUND = 16_500;
 const turn: SceneTurn = { utterances: [{ speaker: 'date', text: 'Oh, nice.', emotion: 'warm' }], emotion: 'warm', action: 'none', memory: '', social: { signal: 'none', reason: 'No change in boundaries.', wantsToLeave: false } };
 
 /** Boots the real Solo server with a mock provider and returns the system prompt of the first model request. */
@@ -62,7 +62,7 @@ test('a blind date gets the same ordering with a voice derived from its seeded t
 
 test('the system prompt names the turn-note sections and memory labels, not the old JSON keys', async () => {
   const { system } = await systemPromptFor({ dateId: 'dev' });
-  for (const label of ['Right now', 'Your notes', 'At the table so far', 'Private, never say it aloud', 'Do not bring up unprompted', 'You may now signal', 'HUMAN:', 'TOLD THEM:', 'OPEN:', 'at most 700 characters', '(cut off', '(still being said)', '(the human did not hear this)']) present(system, label);
+  for (const label of ['Right now', 'Your notes', 'At the table so far', 'Private to you, not to recite', 'Do not bring up unprompted', 'You may now signal', 'HUMAN:', 'TOLD THEM:', 'OPEN:', 'at most 700 characters', 'cut off', 'still being said', 'did not hear this']) present(system, label);
   for (const retired of ['playerSaid', 'tableNow', 'scene.evening', 'avoidUnpromptedTopics', 'nextMilestone', 'evidenceReady', 'dateAgenda', 'naturalHint', 'playerVia', 'playerTalkedOver']) assert.equal(system.includes(retired), false, `old key still in the prompt: ${retired}`);
   assert.ok(system.includes('agenda {signal,evidence,clue}') && system.includes('Every date begins highly skeptical'));
 });

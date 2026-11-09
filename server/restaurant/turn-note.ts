@@ -70,24 +70,87 @@ export function conversationMessages(history: readonly Entry[], trimmed: boolean
 
 /* ------------------------------------------------------------------ what they are asking about */
 
-const aboutYourLine = /\b(?:what\s+(?:do|did)\s+you\s+mean|what\s+does\s+that\s+mean|wait,?\s+what\b|(?:i\s+)?(?:don['’]?t|do\s+not)\s+(?:get|understand|follow)\b|what\s+are\s+you\s+talking\s+about|that['’]?s\s+(?:a\s+)?weird)|^\s*(?:huh|what)\s*\??\s*$/i;
-const whatIsX = /\bwhat\s+(?:the\s+)?(?:(?:heck|hell)\s+)?(?:is|are|was|does)\s+(?:a\s+|an\s+|the\s+)?([\p{L}'’ -]{3,40})\??\s*$/iu;
-const FILLER = new Set(['that', 'this', 'your', 'their', 'there', 'here', 'with', 'from', 'into', 'like', 'even', 'mean', 'just', 'really', 'about', 'what', 'have', 'does', 'supposed', 'going']);
+const squash = (text: string) => text.toLowerCase().normalize('NFKC').replace(/[’‘`]/g, "'").replace(/[^\p{L}\p{N}' ]+/gu, ' ').replace(/(^| )'+|'+(?= |$)/g, ' ').replace(/\s+/g, ' ').trim();
 const stem = (word: string) => word.replace(/s$/, '');
-const wordsOf = (text: string) => text.toLowerCase().normalize('NFKC').match(/[\p{L}]{4,}/gu) ?? [];
+const escapeRegex = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** Interjections, softeners and endearments that can sit around the question without changing what it asks. */
+const LEAD_WORDS = 'um+|uh+|hm+|mm+|oh+|ah+|huh|ha+|haha|lol|lmao|wait|hold on|hang on|sorry|okay|ok|well|no|yeah|yes|like|hey|hi|wow|ugh|so|and|but|please|actually|honestly|seriously|really|dude|man|babe|honey|hon|sweetie|mate|baby|darling|love|sweetheart|cutie|bro|bae|bruh|omg|whoa|woah|damn|yo|excuse me|i\'?m sorry|oh my (?:god|gosh)|wait a minute|hold up|wtf';
+const TAIL_WORDS = 'by that|by this|there|here|again|though|tho|exactly|even|anyway|now|please|sorry|lol|haha|ha|lmao|really|actually|honestly|seriously|dude|man|babe|honey|hon|sweetie|mate|friend|baby|darling|love|sweetheart|cutie|bro|bae|bruh|wtf';
+const PLAIN_CORE = [
+  'huh', 'what', 'what did you (?:just )?say', 'what (?:exactly )?(?:do|did) you (?:even |actually )?mean(?: by (?:that|this)(?: \\p{L}+){0,3})?', 'what (?:does|did) (?:that|this|it) (?:even |actually )?mean', 'what(?:\'?s| is) that mean', 'what are you (?:talking about|saying)', '(?:what is|what\'?s|whats|what was) that supposed to mean',
+  '(?:i )?(?:(?:really|still|just|honestly|totally|genuinely) )?(?:don\'?t|do not|didn\'?t|did not|can\'?t|cannot) (?:really |quite |fully )?(?:get|understand|follow|catch)(?: (?:it|that|you|this|what you mean|what you said|what you\'?re saying|what you are saying|what that means|the joke|the reference))?',
+  'i\'?m (?:so |really |still |very )?(?:confused|lost)', 'i\'?m not following(?: you)?', 'you lost me',
+  '(?:that|this|it) (?:(?:doesn\'?t|does not|didn\'?t|did not) make (?:any )?sense|makes? (?:no|zero|little) sense|made no sense)',
+].join('|');
+interface AskPatterns { plain: RegExp; shrug: RegExp; named: { pattern: RegExp; strict: boolean }[] }
+const patternCache = new Map<string, AskPatterns>();
+/** The whole sentence is the question: "huh?", "wait, what", "Mira, what do you mean by that", "I don't get it". */
+function askPatterns(names: readonly string[]): AskPatterns {
+  const key = names.join('|'), cached = patternCache.get(key);
+  if (cached) return cached;
+  const vocative = names.map(name => escapeRegex(squash(name))).filter(Boolean).join('|');
+  const lead = `(?:(?:${LEAD_WORDS}${vocative ? `|${vocative}` : ''})\\s+)*`, tail = `(?:\\s+(?:${TAIL_WORDS}${vocative ? `|${vocative}` : ''}))*`;
+  const phrase = "([\\p{L}' ]+?)", det = '(?:a |an |the |this |that |these |those )?';
+  const built: AskPatterns = {
+    plain: new RegExp(`^${lead}(?:${PLAIN_CORE})${tail}$`, 'u'),
+    shrug: new RegExp(`^${lead}(?:so|and|but) what${tail}$`, 'u'),
+    named: [
+      // "what is cake gossip", "what the heck is cake gossip lol", "what exactly is this cake gossip"
+      { strict: true, pattern: new RegExp(`^${lead}what(?: the)?(?: (?:heck|hell|fuck))?(?: (?:in the world|on earth|exactly|even|actually))?(?: is| are| was| were|'?s) ${det}${phrase}(?: (?:even|exactly|supposed to be|supposed to mean|anyway))*${tail}$`, 'u') },
+      // "what do you mean by cake gossip", "what do you mean cake gossip"
+      { strict: false, pattern: new RegExp(`^${lead}what (?:do|did) you mean (?:(?:by|with) )?${det}${phrase}${tail}$`, 'u') },
+      // "what does cake gossip even mean"
+      { strict: false, pattern: new RegExp(`^${lead}what (?:does|do) ${det}${phrase} (?:even |actually )?mean${tail}$`, 'u') },
+    ],
+  };
+  patternCache.set(key, built);
+  return built;
+}
+const PERSONAL = /^(?:you|your|yours|youre|my|mine|i|me|we|our|he|she|they|their|it|its)(?:'|$)/;
+const COMMON = new Set(['that', 'this', 'there', 'here', 'what', 'which', 'good', 'time', 'going', 'doing', 'getting', 'happening', 'wrong', 'nice', 'special', 'today', 'tonight', 'else', 'next', 'the', 'and', 'for']);
+
+/**
+ * The asked-about phrase is a contiguous run of the date's own words, never a pronoun, a description or a food
+ * question. A plain "what is X" is also held to a word of some substance; "what do you mean by X" is explicit enough
+ * to name short ones ("a lot", "cap").
+ */
+function namedInLine(subject: string, line: string, strict: boolean): boolean {
+  const words = subject.split(' ').filter(Boolean);
+  if (words.length === 0 || words.length > 4 || words.includes('like') || words.some(word => PERSONAL.test(word))) return false;
+  if (words.length === 1 && (COMMON.has(words[0]) || words[0].length < (strict ? 4 : 2))) return false;
+  const said = ` ${squash(line).split(' ').map(stem).join(' ')} `;
+  return said.includes(` ${words.map(stem).join(' ')} `);
+}
+
+/**
+ * True when the human's message asks the date to explain the line they just said, not a new question. Each sentence of
+ * a short message is judged on its own, so "huh what do you mean babe" and "what do you mean by that? im confused" count while
+ * "I don't get why people like cilantro" and "what are you drinking" never do. `names` are the people who may be addressed ("Mira, what do you mean").
+ */
+export function asksAboutLine(humanText: string, lastDateLine?: string, names: readonly string[] = []): boolean {
+  if (!lastDateLine) return false;
+  const sentences = humanText.split(/[.!?;…]+/).map(squash).filter(Boolean);
+  if (!sentences.length || sentences.join(' ').split(' ').length > 16) return false;
+  const { plain, shrug, named } = askPatterns(names);
+  return sentences.some(sentence => {
+    if (shrug.test(sentence)) return false; // "so what?" and "so what, Mira?" are a shrug, not a question about the line
+    if (plain.test(sentence)) return true;
+    return named.some(({ pattern, strict }) => { const subject = pattern.exec(sentence)?.[1]; return subject !== undefined && namedInLine(subject.trim(), lastDateLine, strict); });
+  });
+}
+
+/** What to do with a clarification: say what it meant if it meant something, own it if it did not, and never invent a meaning now. */
+export const CLARIFY_REPLY = 'If it had a plain meaning, say it in one short sentence. If it made no sense, say so (“that came out wrong, scratch that”) instead of inventing a meaning now. Then pick up what they were telling you.';
 
 /**
  * When the human asks "what do you mean?" or "what is cake gossip?", the thing they are asking about is
  * the date's own last line. A buried rule does not reliably make a small model look there, so say so next
- * to the question. Fires only on the date's last delivered line, never on an ordinary question.
+ * to the question. Fires only when a sentence of the message is the question itself or names words from that line, so an
+ * ordinary question or a story that happens to say "I don't get why" never triggers it.
  */
-export function clarificationNudge(humanText: string, lastDateLine?: string): string {
-  if (!lastDateLine) return '';
-  const said = new Set(wordsOf(lastDateLine).map(stem));
-  // "What is X like?" asks for a description of something; "what is X?" asks what the date's own word meant.
-  const subject = whatIsX.exec(humanText)?.[1] ?? '', asked = /\blike\b/i.test(subject) ? [] : wordsOf(subject).filter(word => !FILLER.has(word));
-  if (!aboutYourLine.test(humanText) && !asked.some(word => said.has(stem(word)))) return '';
-  return `They seem to be asking about your last line (“${lastDateLine}”). Say plainly what you meant, or admit it was an odd thing to say, in one short sentence, then go back to what they were telling you.`;
+export function clarificationNudge(humanText: string, lastDateLine?: string, names: readonly string[] = []): string {
+  if (!lastDateLine || !asksAboutLine(humanText, lastDateLine, names)) return '';
+  return `They seem to be asking about your last line (“${lastDateLine}”). ${CLARIFY_REPLY}`;
 }
 
 /* ------------------------------------------------------------------ the note */
@@ -130,6 +193,8 @@ export interface TurnNoteInput {
 }
 
 export const quote = (text: string) => `“${text}”`;
+/** What the notes section says when there is nothing to keep, so an empty notebook reads as empty rather than as a missing section. */
+export const NOTES_EMPTY = '(empty so far: nothing worth keeping has come up)';
 export const clean = (text: string) => text.replace(/\s+/g, ' ').trim();
 
 /** The natural hint is offered on the third human turn and every third after, or when asked directly. */
@@ -140,11 +205,11 @@ export function hintTurn(dialogueTurns: number, humanText: string): boolean {
 
 const EXTRA_STATUS: Record<string, string> = { pending: 'still cooking', served: 'on the table', shared: 'shared', cancelled: 'cancelled', boxed: 'boxed up' };
 /** The kitchen, staff and table facts from scenarioMechanicsContext, in plain words. */
-export function serviceFacts(mechanics: Record<string, unknown> | undefined, dateName: string): string[] {
+export function serviceFacts(mechanics: Record<string, unknown> | undefined, dateName: string, pair = 'You'): string[] {
   if (!mechanics) return [];
   const out: string[] = [], cleanup = mechanics.cleanup as { wine: string; glassesCleared: boolean } | undefined;
   if (mechanics.dinnerHeld) out.push('The kitchen is holding dinner for now.');
-  if (mechanics.table === 'quiet') out.push('You have moved to a quieter part of the restaurant.');
+  if (mechanics.table === 'quiet') out.push(`${pair} have moved to a quieter part of the restaurant.`);
   if (mechanics.staff === 'medical') out.push(`Eli and the staff are helping ${dateName} with a medical need.`);
   else if (mechanics.staff === 'safe-finish') out.push('Eli and the staff are helping bring the evening to a safe close.');
   if (mechanics.spaceCleared) out.push('The space around the table has been cleared.');
@@ -171,12 +236,12 @@ export function boundaryLines(context: BoundaryPrompt, who = 'they'): string[] {
   });
 }
 
-export function agendaLine(agenda: AgendaPrompt, showHint: boolean, lead = 'Private, never say it aloud'): string {
+export function agendaLine(agenda: AgendaPrompt, showHint: boolean, lead = 'Private to you, not to recite', who?: { date: string; human: string }): string {
   const parts = [`${lead}: ${agenda.goal}${showHint ? ` ${agenda.naturalHint}` : ''}`];
-  if (agenda.heardClues.length) parts.push(`What they have already heard from you on this: ${agenda.heardClues.map(quote).join(' ')}`);
-  if (agenda.confidence === 'earned') parts.push('They have earned your trust.');
+  if (agenda.heardClues.length) parts.push(`What ${who ? who.human : 'they'} ${who ? 'has' : 'have'} already heard from ${who ? who.date : 'you'} on this: ${agenda.heardClues.map(quote).join(' ')}`);
+  if (agenda.confidence === 'earned') parts.push(who ? `${who.human} has earned ${who.date}’s trust.` : 'They have earned your trust.');
   // The server discards a signal it cannot accept, so the rubric is shown only when one could count.
-  if (agenda.nextMilestone && agenda.evidenceReady) parts.push(`You may now signal "${agenda.nextMilestone}" only if this turn earns it: ${agenda.rubric[agenda.nextMilestone]}`);
+  if (agenda.nextMilestone && agenda.evidenceReady) parts.push(`${who ? who.date : 'You'} may now signal "${agenda.nextMilestone}" only if this turn earns it: ${agenda.rubric[agenda.nextMilestone]}`);
   return parts.join(' ');
 }
 
@@ -194,7 +259,7 @@ export function turnNote(input: TurnNoteInput): string {
   if (e.care.romanceClosed) now.push('Romance is closed tonight; stay friendly and do not flirt.');
   else if (e.chemistry?.unlocked) now.push(`Mutual chemistry is established between you and ${human}.`);
   out.push(`Right now: ${now.join(' ')}`);
-  if (input.memory.trim()) out.push(`Your notes (rewrite them into "memory"):\n${input.memory.trim()}`);
+  out.push(`Your notes (rewrite them into "memory"):\n${input.memory.trim() || NOTES_EMPTY}`);
   const facts = [...new Set([...e.moments.map(moment => moment.description), ...input.facts].map(say))].slice(-8);
   if (facts.length) out.push(`At the table so far (facts):\n${facts.map(fact => `- ${fact}`).join('\n')}`);
   if (input.scenario?.phase === 'active') out.push(`Happening now: ${say(input.scenario.description)}`);
@@ -210,8 +275,8 @@ export function turnNote(input: TurnNoteInput): string {
   if (flow.talkedOver) after.push(flow.talkedOver.heard ? `${overlap} while you were still speaking; you were cut off after ${quote(flow.talkedOver.heard)}.` : `${overlap} while you were still speaking, right at the start of your line.`);
   if (flow.keptTalking && input.via !== 'typed') after.push('They kept talking before your last reply reached them; treat this as the continuation of their previous message.');
   if (flow.quietSeconds) after.push(`It was quiet for ${flow.quietSeconds < 60 ? `about ${flow.quietSeconds} seconds` : flow.quietSeconds < 150 ? 'a minute or two' : 'a long while'} after your last line before they spoke.`);
-  if (flow.pendingQuestion) after.push(`You had just asked them ${quote(lastQuestion(flow.pendingQuestion))} and were waiting for the answer. What they say next is most likely that answer unless it clearly changes the subject.`);
-  const nudge = clarificationNudge(input.humanText, flow.lastDateLine);
+  if (flow.pendingQuestion) after.push(`You asked them ${quote(lastQuestion(flow.pendingQuestion))} a little while ago and have not had an answer. If what they say next is not an answer, just respond to what they said.`);
+  const nudge = clarificationNudge(input.humanText, flow.lastDateLine, [date]);
   if (nudge) after.push(nudge);
   const shape = replyShapeHint(input.recentDelivered ?? [], input.humanText);
   if (shape) after.push(shape);
