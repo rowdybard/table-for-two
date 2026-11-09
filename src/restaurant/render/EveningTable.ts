@@ -1,15 +1,22 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MENU } from '../content';
 import type { DinnerState } from '../types';
+import { castSpotShadow, receiveSpotShadow, tagContactShadow } from './PlaceSettingShadows';
 import { createProceduralMaterial } from './ProceduralMaterials';
-import { dessertLayout } from './TabletopProps';
+import { CLEARED_GLASS_DOUBLE, dessertLayout, SPILLED_GLASS } from './TabletopProps';
+import { VENUE_ENV } from './VenueContract';
 
 type FoodSurface = 'crumb' | 'sauce' | 'pasta' | 'roast' | 'rice' | 'cream' | 'cork' | 'leaf';
-/** Small deterministic marks are authored in code; color maps tint the existing food colors. */
-function foodMaterial(color: string, kind: FoodSurface) {
-  const size = 256, make = () => { const canvas = document.createElement('canvas'); canvas.width = canvas.height = size; return { canvas, ctx: canvas.getContext('2d')! }; };
-  const albedo = make(), surface = make(), relief = make();
+type FoodMaps = { map: THREE.CanvasTexture; roughnessMap: THREE.CanvasTexture; bumpMap: THREE.CanvasTexture };
+/**
+ * Small deterministic marks are authored in code; color maps tint the existing food colors. The marks depend
+ * only on the kind, so every dish of a kind shares one set: colour at 256 px, roughness and relief at 128 px.
+ */
+function foodMaps(kind: FoodSurface): FoodMaps {
+  const size = 256, make = (pixels: number) => { const canvas = document.createElement('canvas'); canvas.width = canvas.height = pixels; const ctx = canvas.getContext('2d')!; ctx.scale(pixels / size, pixels / size); return { canvas, ctx }; };
+  const albedo = make(size), surface = make(128), relief = make(128);
   albedo.ctx.fillStyle = '#f4f2ec'; albedo.ctx.fillRect(0, 0, size, size);
   surface.ctx.fillStyle = kind === 'sauce' || kind === 'cream' ? '#a0a0a0' : '#dedede'; surface.ctx.fillRect(0, 0, size, size);
   relief.ctx.fillStyle = '#808080'; relief.ctx.fillRect(0, 0, size, size);
@@ -36,8 +43,12 @@ function foodMaterial(color: string, kind: FoodSurface) {
       for (let x = 25; x < 245; x += 31) { ctx.moveTo(x, 128); ctx.lineTo(x - 22, 30); ctx.moveTo(x, 128); ctx.lineTo(x - 22, 226); } ctx.stroke();
     }
   }
-  const texture = (canvas: HTMLCanvasElement, isColor: boolean) => { const t = new THREE.CanvasTexture(canvas); t.colorSpace = isColor ? THREE.SRGBColorSpace : THREE.NoColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4; return t; };
-  const material = new THREE.MeshStandardMaterial({ color, map: texture(albedo.canvas, true), roughnessMap: texture(surface.canvas, false), bumpMap: texture(relief.canvas, false),
+  const texture = (canvas: HTMLCanvasElement, isColor: boolean) => { const t = new THREE.CanvasTexture(canvas); t.name = `authored-food-${kind}`; t.colorSpace = isColor ? THREE.SRGBColorSpace : THREE.NoColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4; return t; };
+  return { map: texture(albedo.canvas, true), roughnessMap: texture(surface.canvas, false), bumpMap: texture(relief.canvas, false) };
+}
+function foodMaterial(color: string, kind: FoodSurface, cache: Map<FoodSurface, FoodMaps>) {
+  let maps = cache.get(kind); if (!maps) { maps = foodMaps(kind); cache.set(kind, maps); }
+  const material = new THREE.MeshStandardMaterial({ color, ...maps,
     roughness: kind === 'sauce' ? .43 : kind === 'cream' ? .58 : kind === 'leaf' ? .69 : .86, bumpScale: kind === 'cork' ? .0008 : kind === 'crumb' ? .00045 : .00018 });
   material.name = `authored-table-${kind}`; if (kind === 'leaf') material.side = THREE.DoubleSide;
   return material;
@@ -66,6 +77,19 @@ function sauceSmear() {
   const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geo.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));geo.setIndex(indices);geo.computeVertexNormals();return geo;
 }
 
+/**
+ * The wine stain lies on open linen, never on paper. Solo: between the plates, clear of the order ticket. Double: beside
+ * the human's place, rotated lengthwise, clear of the menu and napkin. Its height sits apart from the paper props (.783)
+ * and from a spilled-water puddle (.783-.7843), so overlapping decals never z-fight.
+ */
+const WINE_STAIN = { y: .7836, solo: { x: .09, z: -.96 }, double: { dx: .055, z: -.72 } } as const;
+/** The cleaning cloth lies beside the stain. In solo it stays clear of the bill, which arrives where a used cloth would wait. */
+const CLEANUP_CLOTH = { solo: { x: .29, z: -.86 }, double: { dx: .06, z: -.66 } } as const;
+/** An offered taste rests on the date's plate, toward the human. */
+const OFFERED_BITE = { dx: .105, y: .818, dz: .105 } as const;
+/** Extra dishes in a 2x2 grid at the table centre, shifted left so the fourth stays clear of the bill folio at x .31. */
+const EXTRA_SLOTS = { x: [-.155, .075], z: [-1.26, -1.04] } as const;
+
 /** Visible courses and tabletop tools follow server state; this class never resolves an activity. */
 export class EveningTable {
   readonly root = new THREE.Group();
@@ -92,10 +116,11 @@ export class EveningTable {
   constructor() {
     const mat = (color: string, roughness = .8, metalness = 0) => { const m = new THREE.MeshStandardMaterial({ color, roughness, metalness }); this.materials.push(m); return m; };
     const own = <T extends THREE.Material>(material: T) => { this.materials.push(material); return material; };
-    const cream = own(createProceduralMaterial('ceramic', '#eee3c8', { roughness: .42, bumpScale: .0002 }));
-    const brown = own(foodMaterial('#78523a', 'roast')), gold = mat('#bda16c', .35, .5);
-    const red = own(foodMaterial('#a15a42', 'sauce')), pasta = own(foodMaterial('#d6a053', 'pasta')), rice = own(foodMaterial('#d1bc8f', 'rice'));
-    const roast = own(foodMaterial('#c78b56', 'roast')), leaf = own(foodMaterial('#547652', 'leaf')), softCream = own(foodMaterial('#eee3c8', 'cream'));
+    const maps = new Map<FoodSurface, FoodMaps>(), food = (color: string, kind: FoodSurface) => own(foodMaterial(color, kind, maps));
+    const cream = own(createProceduralMaterial('ceramic', '#eee3c8', { roughness: .42, bumpScale: .0002 })); cream.userData.venueEnv = VENUE_ENV.glaze;
+    const brown = food('#78523a', 'roast'), gold = mat('#d2ad6a', .3, 1); gold.userData.venueEnv = VENUE_ENV.metal;
+    const red = food('#a15a42', 'sauce'), pasta = food('#d6a053', 'pasta'), rice = food('#d1bc8f', 'rice');
+    const roast = food('#c78b56', 'roast'), leaf = food('#547652', 'leaf'), softCream = food('#eee3c8', 'cream');
     const mesh = (parent: THREE.Object3D, geometry: THREE.BufferGeometry, material: THREE.Material, x: number, y: number, z: number) => { const m = new THREE.Mesh(geometry, material); m.position.set(x, y, z); parent.add(m); return m; };
     // Shared hollow ridged rigatoni geometry remains readable from the inspection camera.
     const pastaProfile: THREE.Vector2[] = [new THREE.Vector2(.008, -.022), new THREE.Vector2(.011, -.022)];
@@ -122,8 +147,9 @@ export class EveningTable {
         for (let i = 0; i < 2; i++) { const basil=mesh(group, herbGeometry, leaf, -.012+i*.03, .055, .015-i*.025); basil.rotation.y=i*1.4; basil.userData.bite=i*6; }
       } else if (meal === 1) {
         for (let i = 0; i < 3; i++) {
-          const p = mesh(group, roastPiece, roast, (i - 1) * .038, .031 + i*.001, -.015 + i * .014); p.scale.set(.035 + i*.003, .022, .075 - i*.008); p.rotation.y = -.38+i*.1; p.userData.bite = i * 5;
-          for (let j = 0; j < 3; j++) { const line = mesh(group, grillMark, grill, (i - 1) * .038, .050 + i*.001, -.04 + j * .022 + i * .014); line.rotation.y = -.38+i*.1; line.userData.bite = i * 5; }
+          // The roast pieces sit on the plate's well (.012), with their grill marks on top.
+          const p = mesh(group, roastPiece, roast, (i - 1) * .038, .034 + i*.001, -.015 + i * .014); p.scale.set(.035 + i*.003, .022, .075 - i*.008); p.rotation.y = -.38+i*.1; p.userData.bite = i * 5;
+          for (let j = 0; j < 3; j++) { const line = mesh(group, grillMark, grill, (i - 1) * .038, .053 + i*.001, -.04 + j * .022 + i * .014); line.rotation.y = -.38+i*.1; line.userData.bite = i * 5; }
         }
         for (let i = 0; i < 5; i++) { const p = mesh(group, garnish, leaf, -.065 + i * .03, .014, .078 + (i%2)*.014); p.rotation.y = (i - 2) * .45; p.userData.bite = i * 3; }
         const lemonWedge=mesh(group,new THREE.CylinderGeometry(.025,.025,.006,16,1,false,0,Math.PI*.7),lemon,.077,.017,.065); lemonWedge.rotation.y=.4;lemonWedge.userData.bite=8;
@@ -134,17 +160,21 @@ export class EveningTable {
         for (let i=0;i<7;i++){const a=i*2.399+.3,r=.025+(i%4)*.018,h=.018+.034*Math.sqrt(Math.max(0,1-(r/.11)**2));const slice=mesh(group,mushroomGeometry,brown,Math.cos(a)*r,h,Math.sin(a)*r*.9);slice.rotation.set(-Math.PI/2,0,a);slice.userData.bite=i*2;}
       }
       const herb = mesh(group, herbGeometry, leaf, .025, meal===0?.052:meal===1?.055:.049, .018); herb.rotation.y = -.3; herb.userData.course = true;
-      group.visible = false; this.meals[plate]!.push(group); this.root.add(group);
+      receiveSpotShadow(group); group.visible = false; this.meals[plate]!.push(group); this.root.add(group);
     }
     // One shared dessert plate with two spoons. Each dessert is its own small build; spoonfuls take pieces away.
     const plateGeometry=new THREE.CylinderGeometry(.125,.118,.012,28),dollopGeometry=new THREE.SphereGeometry(1,12,8),mintGeometry=garnishLeaf(.012,.006,.003);
-    const spoonBowl=new THREE.SphereGeometry(1,10,8),spoonHandle=new THREE.BoxGeometry(.008,.003,.075);
-    const chocolate=own(foodMaterial('#4a2a1f','crumb')),posset=own(new THREE.MeshStandardMaterial({color:'#f3e3a6',roughness:.5})),ramekin=own(new THREE.MeshStandardMaterial({color:'#d9e6e2',roughness:.15,transparent:true,opacity:.35,depthWrite:false,side:THREE.DoubleSide}));
-    const shortbread=own(foodMaterial('#dcc08a','crumb')),strawberry=own(foodMaterial('#b8322f','sauce')),zest=mat('#e9d35c',.6);
+    // A dessert spoon is one mesh lying flat on the plate: bowl and handle both touch the porcelain.
+    const spoonParts=[new THREE.SphereGeometry(1,10,8).scale(.013,.005,.019).translate(0,.005,.045),new THREE.BoxGeometry(.008,.003,.075).translate(0,.0015,0)];
+    const spoonGeometry=mergeGeometries(spoonParts)!;spoonParts.forEach(part=>part.dispose());
+    const chocolate=food('#4a2a1f','crumb'),posset=own(new THREE.MeshStandardMaterial({color:'#f3e3a6',roughness:.5})),ramekin=own(new THREE.MeshStandardMaterial({color:'#d9e6e2',roughness:.05,transparent:true,opacity:.3,depthWrite:false,side:THREE.DoubleSide}));
+    ramekin.userData.venueGlass=true;ramekin.userData.venueEnv=VENUE_ENV.glass;
+    const shortbread=food('#dcc08a','crumb'),strawberry=food('#b8322f','sauce'),zest=mat('#e9d35c',.6);
     const makeDessert=(root:THREE.Group,variants:THREE.Group[])=>{
-      const plate=mesh(root,plateGeometry,cream,0,.006,0);plate.userData.centralTray=true;
-      for(let side=0;side<2;side++){const spoon=new THREE.Group();spoon.position.set(side?.1:-.1,.013,side?.035:-.035);spoon.rotation.y=side?-.5:2.65;
-        const bowl=mesh(spoon,spoonBowl,gold,0,.004,.045);bowl.scale.set(.013,.005,.019);mesh(spoon,spoonHandle,gold,0,.002,0);root.add(spoon);}
+      const plate=mesh(root,plateGeometry,cream,0,.006,0);plate.userData.centralTray=true;castSpotShadow(plate);receiveSpotShadow(plate);
+      tagContactShadow(plate,{rx:.15,rz:.15,opacity:.5,y0:.006});
+      for(let side=0;side<2;side++){const spoon=new THREE.Group();spoon.position.set(side?.1:-.1,.012,side?.035:-.035);spoon.rotation.y=side?-.5:2.65;
+        castSpotShadow(mesh(spoon,spoonGeometry,gold,0,0,0));root.add(spoon);}
       // Lemon posset: a glass ramekin of set cream, a shortbread finger and a curl of zest.
       const lemon=new THREE.Group();const cup=mesh(lemon,new THREE.CylinderGeometry(.036,.03,.04,20,1,true),ramekin,0,.032,0);cup.userData.course=true;
       const fill=mesh(lemon,new THREE.CylinderGeometry(.034,.029,.03,20),posset,0,.027,0);fill.userData.course=true;
@@ -153,11 +183,12 @@ export class EveningTable {
       // Chocolate fondant: a dark dome, vanilla cream and mint.
       const fondant=new THREE.Group();const cake=mesh(fondant,new RoundedBoxGeometry(.062,.046,.062,2,.014),chocolate,0,.035,0);cake.userData.course=true;
       const dollop=mesh(fondant,dollopGeometry,softCream,.045,.024,.03);dollop.scale.set(.022,.012,.018);dollop.userData.bite=0;
-      const mint=mesh(fondant,mintGeometry,leaf,.01,.06,0);mint.rotation.y=.35;mint.userData.bite=2;
+      const mint=mesh(fondant,mintGeometry,leaf,.01,.0582,0);mint.rotation.y=.35;mint.userData.bite=2;
       // Strawberries and cream: halved berries around a soft dollop.
-      const berries=new THREE.Group();const creamDollop=mesh(berries,dollopGeometry,softCream,0,.026,0);creamDollop.scale.set(.03,.016,.026);creamDollop.userData.course=true;
-      for(let i=0;i<6;i++){const a=i*1.05,berry=mesh(berries,dollopGeometry,strawberry,Math.cos(a)*.052,.022,Math.sin(a)*.052);berry.scale.set(.016,.012,.013);berry.rotation.y=a;berry.userData.bite=i%4;}
-      for(const group of [lemon,fondant,berries]){group.position.y=.012;group.visible=false;root.add(group);variants.push(group);}
+      const berries=new THREE.Group();const creamDollop=mesh(berries,dollopGeometry,softCream,0,.0275,0);creamDollop.scale.set(.03,.016,.026);creamDollop.userData.course=true;
+      for(let i=0;i<6;i++){const a=i*1.05,berry=mesh(berries,dollopGeometry,strawberry,Math.cos(a)*.052,.0235,Math.sin(a)*.052);berry.scale.set(.016,.012,.013);berry.rotation.y=a;berry.userData.bite=i%4;}
+      // Every piece is authored from the plate's top (.012), so the variants sit at the plate origin.
+      for(const group of [lemon,fondant,berries]){receiveSpotShadow(group);group.visible=false;root.add(group);variants.push(group);}
       this.root.add(root);
     };
     makeDessert(this.dessert,this.dessertVariants[0]!);makeDessert(this.otherDessert,this.dessertVariants[1]!);
@@ -166,7 +197,7 @@ export class EveningTable {
     const wine = own(new THREE.MeshStandardMaterial({color:'#692938',roughness:.4,transparent:true,opacity:.64,depthWrite:false}));
     const winePatch=sauceSmear();
     [[0,0,.12,.065],[.14,.04,.018,.012],[-.14,-.04,.013,.009]].forEach(([x,z,sx,sz]) => {
-      const mark=mesh(this.wineStain,winePatch,wine,x!, .784,z!);mark.scale.set(sx!/.106,1,sz!/.106);
+      const mark=mesh(this.wineStain,winePatch,wine,x!,WINE_STAIN.y,z!);mark.scale.set(sx!/.106,1,sz!/.106);
     });
     this.wineStain.visible = false; this.root.add(this.wineStain);
     // Actual extra courses, not a stack of empty placeholder plates. Each dish or
@@ -178,7 +209,7 @@ export class EveningTable {
     const cartonBand=new THREE.BoxGeometry(.033,.0015,.108);
     for(let slot=0;slot<4;slot++){
       const root=new THREE.Group(),serving=new THREE.Group(),carton=new THREE.Group(),dishes:THREE.Group[]=[];
-      root.position.set(slot%2? .115:-.115, .782, slot<2?-1.26:-1.04);this.root.add(root);root.add(serving,carton);serving.position.y=-.012;carton.position.y=-.009;
+      root.position.set(EXTRA_SLOTS.x[slot%2]!, .782, EXTRA_SLOTS.z[slot<2?0:1]!);this.root.add(root);root.add(serving,carton);serving.position.y=-.012;carton.position.y=-.009;
       mesh(serving,plateExtra,cream,0,.016,0);const rim=mesh(serving,rimExtra,cream,0,.021,0);rim.rotation.x=Math.PI/2;
       for(let dish=0;dish<3;dish++){
         const food=new THREE.Group();serving.add(food);dishes.push(food);
@@ -189,12 +220,14 @@ export class EveningTable {
         const garnishMesh=mesh(food,herbGeometry,leaf,0,.048,.01);garnishMesh.scale.setScalar(.65);
       }
       mesh(carton,cartonBase,cartonMaterial,0,.035,0);mesh(carton,cartonLid,cartonMaterial,0,.066,0);mesh(carton,cartonBand,cream,0,.073,0);
+      castSpotShadow(serving.children[0]!,serving.children[1]!,carton);receiveSpotShadow(root);tagContactShadow(root,{rx:.12,rz:.12,opacity:.5});
       root.visible=false;this.extraOrders.push({root,serving,carton,dishes});
     }
     const cleanFabric=own(createProceduralMaterial('linen','#e4d7be',{roughness:1,bumpScale:.0004}));
     mesh(this.cleanupCloth,new RoundedBoxGeometry(.105,.008,.075,2,.004),cleanFabric,0,.786,0);
     mesh(this.cleanupCloth,new RoundedBoxGeometry(.087,.004,.034,2,.002),cleanFabric,0,.793,-.017);
     this.cleanupStain=mesh(this.cleanupCloth,new THREE.CircleGeometry(.017,16),wine,0,.796,.012);this.cleanupStain.rotation.x=-Math.PI/2;
+    receiveSpotShadow(this.cleanupCloth);tagContactShadow(this.cleanupCloth,{rx:.066,rz:.048,opacity:.4});
     this.cleanupCloth.visible=false;this.root.add(this.cleanupCloth);
     for (let pair = 0; pair < 2; pair++) {
       const bite = new THREE.Group();
@@ -202,28 +235,32 @@ export class EveningTable {
         const morsel = mesh(bite, new THREE.SphereGeometry(1, 10, 8), material, 0, 0, 0);
         morsel.scale.set(.025, .012, .019);
       }
-      bite.visible = false; this.offeredBites.push(bite); this.root.add(bite);
+      receiveSpotShadow(bite); bite.visible = false; this.offeredBites.push(bite); this.root.add(bite);
     }
-    const glass = own(new THREE.MeshStandardMaterial({ color: '#d8e7e2', roughness: .18, transparent: true, opacity: .22, depthWrite: false, side: THREE.DoubleSide }));
-    const water = own(new THREE.MeshStandardMaterial({ color: '#92b5ae', roughness: .2, transparent: true, opacity: .31, depthWrite: false }));
+    const glass = own(new THREE.MeshStandardMaterial({ color: '#d8e7e2', roughness: .05, transparent: true, opacity: .14, depthWrite: false, side: THREE.DoubleSide }));
+    glass.userData.venueGlass = true; glass.userData.venueEnv = VENUE_ENV.glass;
+    const water = own(new THREE.MeshStandardMaterial({ color: '#92b5ae', roughness: .05, transparent: true, opacity: .38, depthWrite: false }));
+    water.userData.venueEnv = VENUE_ENV.water;
     const friendProfile = [[.038, 0], [.041, .006], [.047, .146], [.046, .15], [.043, .15], [.037, .012], [.034, .009], [0, .009]].map(([r,y]) => new THREE.Vector2(r, y));
     mesh(this.friendGlass, new THREE.LatheGeometry(friendProfile, 32), glass, 0, 0, 0);
     for (const [radius, y] of [[.046, .15], [.039, .006]]) { const rim = mesh(this.friendGlass, new THREE.TorusGeometry(radius, .002, 6, 32), glass, 0, y, 0); rim.rotation.x = Math.PI / 2; }
     this.friendWater = mesh(this.friendGlass, new THREE.CylinderGeometry(.043, .036, .08, 20), water, 0, .042, 0);
+    tagContactShadow(this.friendGlass, { rx: .06, rz: .06, opacity: .45, cy: .075 });
     this.friendGlass.visible = false; this.root.add(this.friendGlass);
-    mesh(this.root, new THREE.CylinderGeometry(.049, .055, .012, 20), gold, .61, .788, -1.13);
+    const bellBase = mesh(this.root, new THREE.CylinderGeometry(.049, .055, .012, 20), gold, .61, .788, -1.13);
     const bell = mesh(this.root, new THREE.SphereGeometry(1, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), gold, .61, .793, -1.13); bell.scale.set(.04, .033, .04);
-    mesh(this.root, new THREE.CylinderGeometry(.008, .008, .016, 10), gold, .61, .835, -1.13);
+    const bellKnob = mesh(this.root, new THREE.CylinderGeometry(.008, .008, .016, 10), gold, .61, .835, -1.13);
+    castSpotShadow(bellBase, bell, bellKnob); tagContactShadow(bellBase, { rx: .065, rz: .065, opacity: .45, y0: .006 });
     // A plain linen napkin at the player's place: it wipes a spill and folds, nothing more.
     const linen = own(createProceduralMaterial('linen', '#ebe2cc', { roughness: 1, bumpScale: .0004 }));
-    this.napkin = mesh(this.root, new THREE.PlaneGeometry(.16, .16), linen, .40, .783, -.48); this.napkin.rotation.x = -Math.PI / 2; this.napkin.rotation.z = -.12;
+    this.napkin = mesh(this.root, new THREE.PlaneGeometry(.16, .16), linen, .39, .783, -.50); this.napkin.rotation.x = -Math.PI / 2; this.napkin.rotation.z = -.12; this.napkin.receiveShadow = true;
     this.napkinFold = mesh(this.napkin, new THREE.PlaneGeometry(.16, .08), linen, 0, .04, .002); this.napkinFold.visible = false;
     const ticketCanvas = document.createElement('canvas'); this.ticketCanvas = ticketCanvas; ticketCanvas.width = 256; ticketCanvas.height = 384;
     const tc = ticketCanvas.getContext('2d')!; tc.fillStyle = '#f4ead4'; tc.fillRect(0, 0, 256, 384); tc.fillStyle = '#4d4d38'; tc.font = 'bold 26px monospace'; tc.textAlign = 'center'; tc.fillText('TABLE 02', 128, 62); tc.font = '17px monospace'; tc.fillText('ORDER TICKET', 128, 105);
     tc.textAlign = 'left'; tc.font = '15px monospace'; ['DINNER SERVICE', '--------------------', '1  RIGATONI', '1  RISOTTO', '--------------------', 'THANK YOU'].forEach((line, i) => tc.fillText(line, 29, 150 + i * 33));
     const ticketTexture = new THREE.CanvasTexture(ticketCanvas); this.ticketTexture = ticketTexture; ticketTexture.colorSpace = THREE.SRGBColorSpace;
     const ticketMat = new THREE.MeshStandardMaterial({ map: ticketTexture, roughness: 1 }); this.materials.push(ticketMat);
-    const ticket = mesh(this.ticket, new THREE.PlaneGeometry(.13, .2), ticketMat, .34, .783, -1.03); ticket.rotation.set(-Math.PI / 2, 0, -.16); this.root.add(this.ticket);
+    const ticket = mesh(this.ticket, new THREE.PlaneGeometry(.13, .2), ticketMat, .34, .783, -1.03); ticket.rotation.set(-Math.PI / 2, 0, -.16); ticket.receiveShadow = true; this.root.add(this.ticket);
     const target = (name: string, x: number, y: number, z: number, sx: number, sy: number, sz: number) => { const m = mesh(this.root, new THREE.BoxGeometry(sx, sy, sz), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, colorWrite: false, depthWrite: false }), x, y, z); m.userData.target = name; this.targets.push(m); };
     target('ticket', .34, .85, -1.03, .17, .1, .24); target('napkin', .30, .85, -.5, .24, .1, .24);
     target('dessert', .06, .86, -1.16, .3, .14, .3); target('service-bell', .61, .85, -1.13, .13, .15, .13); target('window', -6.43, 1.8, -.8, .16, 1.65, 2.6);
@@ -242,28 +279,32 @@ export class EveningTable {
     const scenarioView=state.doubleDate?.scenario?.target && state.doubleDate.scenario.target!==state.doubleDate.localHumanId ? state.doubleDate.otherView ?? state : state;
     const scenarioCare=scenarioView.evening.scenarioCare;
     this.wineStain.visible = scenarioCare?.cleanup.wine === 'wet' || (scenarioCare?.cleanup.wine !== 'clean' && !!scenario && ((scenario.id === 'wine-spill' && scenario.phase === 'active') || scenario.effects.wineStain));
-    const stainX = state.doubleDate?.scenario?.target === 'h2' ? .57 : state.doubleDate ? -.57 : 0;
-    this.wineStain.position.set(stainX + .17, 0, state.doubleDate ? -.72 : -.96);
+    const stainX = state.doubleDate?.scenario?.target === 'h2' ? .57 : state.doubleDate ? -.57 : 0, stainSide = Math.sign(stainX);
+    // In Double the stain runs lengthwise on the open linen between the menu and the napkin.
+    this.wineStain.position.set(state.doubleDate ? stainX + stainSide * WINE_STAIN.double.dx : WINE_STAIN.solo.x, 0, state.doubleDate ? WINE_STAIN.double.z : WINE_STAIN.solo.z);
+    this.wineStain.rotation.y = state.doubleDate ? Math.PI / 2 : 0;
     const items=scenarioCare?.extraOrder.items ?? [];
     this.extraOrders.forEach((extra,index)=>{const item=items[index];const status=item?.status;
       extra.root.visible=status==='served'||status==='shared'||status==='boxed';extra.serving.visible=status==='served'||status==='shared';extra.carton.visible=status==='boxed';
       const choice=Math.max(0,MENU.indexOf(item?.dish??''));extra.dishes.forEach((dish,i)=>dish.visible=i===choice);
     });
     const cloth=scenarioCare?.cleanup.cloth??'none';this.cleanupCloth.visible=cloth!=='none';this.cleanupStain.visible=cloth==='used';
-    this.cleanupCloth.position.set(state.doubleDate?stainX+(stainX>0?-.20:.20):.29,0,state.doubleDate?-.75:-1.0);
+    this.cleanupCloth.position.set(state.doubleDate?stainX+stainSide*CLEANUP_CLOTH.double.dx:CLEANUP_CLOTH.solo.x,0,state.doubleDate?CLEANUP_CLOTH.double.z:CLEANUP_CLOTH.solo.z);
     this.offeredBites.forEach((bite, pair) => {
       const view = pair === 0 ? state : state.doubleDate?.otherView;
       const offer = view?.evening.care.tasteOffer;
       bite.visible = !!offer && offer.result === 'accepted' && view?.evening.main.status === 'served' && !view?.evening.scenarioCare?.kitchen.held;
-      bite.position.set((pair === 0 ? doubleX : -doubleX) + .085, .851, datePlateZ + .07);
+      bite.position.set((pair === 0 ? doubleX : -doubleX) + OFFERED_BITE.dx, OFFERED_BITE.y, datePlateZ + OFFERED_BITE.dz);
       const dish = Math.max(0, MENU.indexOf(offer?.dish || ''));
       bite.children.forEach((piece, index) => { piece.visible = index === dish; });
     });
     const friendEvening = state.doubleDate?.otherView?.evening;
     this.friendGlass.visible = !!state.doubleDate;
     const friendCleared=!!friendEvening?.scenarioCare?.cleanup.glassesCleared;
-    this.friendGlass.position.set(friendCleared?Math.sign(-doubleX)*.70:-doubleX+.25, .782, friendCleared?-1.0:-.48);
-    this.friendGlass.rotation.z = friendEvening?.incident?.event === 'spilled-drink' && (!state.doubleDate?.incidentOwner || state.doubleDate.incidentOwner!==state.doubleDate.localHumanId) ? -.95 : 0;
+    // The friend's glass mirrors the local glass: same cleared spot on their side, same spilled pose.
+    const friendSpilled = friendEvening?.incident?.event === 'spilled-drink' && (!state.doubleDate?.incidentOwner || state.doubleDate.incidentOwner!==state.doubleDate.localHumanId);
+    this.friendGlass.position.set(friendCleared?Math.sign(-doubleX)*CLEARED_GLASS_DOUBLE.x:-doubleX+.25, friendSpilled ? SPILLED_GLASS.y : .782, friendCleared?CLEARED_GLASS_DOUBLE.z:-.48);
+    this.friendGlass.rotation.z = friendSpilled ? SPILLED_GLASS.tilt : 0;
     const friendTabletop = (friendEvening as (typeof friendEvening & { tabletop?: { glassFill: number } }))?.tabletop;
     const friendWaterLevel = friendTabletop ? THREE.MathUtils.clamp(friendTabletop.glassFill / 4, 0, 1) : friendEvening?.care.water.status === 'served' ? 1 : .55;
     this.friendWater.scale.y = Math.max(.001, friendWaterLevel); this.friendWater.position.y = .002 + .04 * friendWaterLevel; this.friendWater.visible = friendWaterLevel > .001;
@@ -282,9 +323,10 @@ export class EveningTable {
     }
     const layout=dessertLayout(state), otherDessert=state.doubleDate?.otherView?.evening.dessert;
     this.dessert.visible=layout.own;this.otherDessert.visible=!!state.doubleDate&&layout.other;
-    this.napkin.position.set(state.doubleDate ? Math.sign(doubleX) * .84 : .40, .783, state.doubleDate ? -.80 : -.48);
+    this.napkin.position.set(state.doubleDate ? Math.sign(doubleX) * .84 : .39, .783, state.doubleDate ? -.80 : -.50);
     const folded = !!e.tabletop?.napkinFolded; this.napkin.scale.y = folded ? .62 : 1; this.napkin.rotation.z = folded ? .26 : -.12; this.napkinFold.visible = folded;
-    const center=(other:boolean)=>{const side=other?-Math.sign(doubleX):Math.sign(doubleX);return {x:layout.park?(side<0?-.45:.47):.06,z:layout.park?-1.55:-1.16};};
+    // Parked desserts leave the centre to extra dishes or to the other pair's dessert. A lone parked dessert goes right, clear of the carafe.
+    const center=(other:boolean)=>{const side=other?-Math.sign(doubleX):Math.sign(doubleX);return {x:!layout.park?.06:layout.dual?(side<0?-.45:.47):state.doubleDate?.47:.53,z:layout.park?-1.55:-1.16};};
     const arrange=(root:THREE.Group,variants:THREE.Group[],value:typeof e.dessert|undefined,other:boolean)=>{
       const c=center(other);root.position.set(c.x,.782,c.z);
       const chosen=Math.max(0,['lemon','chocolate','berries'].indexOf(value?.choice??'')),bites=value?.bites??0;
