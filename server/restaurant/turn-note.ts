@@ -3,7 +3,7 @@
 // history keeps its JSON form because conversation-routing parses it; it is rendered for the model at send time.
 import type { DinnerState, SceneUtterance, TurnVia } from '../../src/restaurant/types';
 import type { RestaurantScenarioState } from '../../src/restaurant/scenario-types';
-import { TRIMMED_NOTE, alternatingMessages, humanVoice, START_NOTE } from './dialogue-policy';
+import { TRIMMED_NOTE, alternatingMessages, humanVoice, replyShapeHint, START_NOTE } from './dialogue-policy';
 
 type Entry = { role: 'user' | 'assistant'; content: string };
 
@@ -88,20 +88,6 @@ export function clarificationNudge(humanText: string, lastDateLine?: string): st
   const subject = whatIsX.exec(humanText)?.[1] ?? '', asked = /\blike\b/i.test(subject) ? [] : wordsOf(subject).filter(word => !FILLER.has(word));
   if (!aboutYourLine.test(humanText) && !asked.some(word => said.has(stem(word)))) return '';
   return `They seem to be asking about your last line (“${lastDateLine}”). Say plainly what you meant, or admit it was an odd thing to say, in one short sentence, then go back to what they were telling you.`;
-}
-
-/* ------------------------------------------------------------------ reply shape */
-
-const wordCount = (text: string) => text.trim().split(/\s+/).filter(Boolean).length;
-const sentenceCount = (text: string) => text.split(/(?<=[.!?])\s+/).filter(Boolean).length;
-/** Local nudges on length and endings, from the date's last three delivered replies. No model call. */
-export function turnShape(recent: readonly SceneUtterance[], humanText: string): string {
-  const mine = recent.filter(line => line.speaker === 'date').slice(-3), hints: string[] = [], words = wordCount(humanText);
-  if (words <= 6) hints.push('They said very little: answer in a few words or one short sentence.');
-  else if (words >= 30) hints.push('They told you something real: acknowledge it first; two or three sentences is fine.');
-  if (mine.length === 3 && mine.every(line => sentenceCount(line.text) === sentenceCount(mine[0].text))) hints.push(`Your last three replies were all ${sentenceCount(mine[0].text)} sentence${sentenceCount(mine[0].text) === 1 ? '' : 's'} long: change the shape.`);
-  if (mine.filter(line => /\?["”’)]*\s*$/.test(line.text.trim())).length >= 2) hints.push('Your last replies ended in questions: end this one on a statement.');
-  return hints.join(' ');
 }
 
 /* ------------------------------------------------------------------ the note */
@@ -223,7 +209,7 @@ export function turnNote(input: TurnNoteInput): string {
   if (flow.pendingQuestion) after.push(`You had just asked them ${quote(lastQuestion(flow.pendingQuestion))} and were waiting for the answer. What they say next is most likely that answer unless it clearly changes the subject.`);
   const nudge = clarificationNudge(input.humanText, flow.lastDateLine);
   if (nudge) after.push(nudge);
-  const shape = turnShape(input.recentDelivered ?? [], input.humanText);
+  const shape = replyShapeHint(input.recentDelivered ?? [], input.humanText);
   if (shape) after.push(shape);
   out.push([`${Human} just said: ${quote(clean(input.humanText))}`, ...after].join('\n'));
   return out.join('\n\n');

@@ -9,8 +9,8 @@ import { attachRestaurantServer, type ClaudeAdapter, type RestaurantOptions } fr
 import type { ClaudeRequest } from '../server/restaurant/providers';
 import { EveningDirector } from '../server/restaurant/evening';
 import { MEMORY_HARD, MEMORY_REJECT, MEMORY_TARGET, clampMemory } from '../server/restaurant/memory';
-import { TRIMMED_NOTE, START_NOTE, alternatingMessages, humanVoice, tableNow } from '../server/restaurant/dialogue-policy';
-import { QUIET_GAP_SECONDS, clarificationNudge, conversationMessages, deliveryLabel, heardPrefix, hintTurn, renderHistory, serviceFacts, turnNote, turnShape, type AgendaPrompt, type TurnNoteInput } from '../server/restaurant/turn-note';
+import { TRIMMED_NOTE, START_NOTE, alternatingMessages, humanVoice, replyShapeHint, tableNow } from '../server/restaurant/dialogue-policy';
+import { QUIET_GAP_SECONDS, clarificationNudge, conversationMessages, deliveryLabel, heardPrefix, hintTurn, renderHistory, serviceFacts, turnNote, type AgendaPrompt, type TurnNoteInput } from '../server/restaurant/turn-note';
 import { createEvening } from '../src/restaurant/evening';
 import type { DateId, DinnerCommand, DinnerState, SceneTurn, SceneUtterance, TurnEvent } from '../src/restaurant/types';
 import { humanLine, noteOf, privateAgenda, recordedAtTable, rightNow, section } from './helpers/turn-note';
@@ -203,13 +203,13 @@ test('ordinary questions get no clarification nudge, with or without a line to p
 /* ------------------------------------------------------------------ reply shape */
 
 test('reply-shape hints come from the human’s length and the date’s last three delivered replies', () => {
-  assert.match(turnShape([], 'Yeah, sure.'), /answer in a few words or one short sentence/);
-  assert.match(turnShape([], 'word '.repeat(30)), /They told you something real: acknowledge it first/);
-  assert.equal(turnShape([], 'I teach primary school and I have done for about nine years now.'), '');
+  assert.match(replyShapeHint([], 'Yeah, sure.'), /answer in a few words or one short sentence/);
+  assert.match(replyShapeHint([], 'word '.repeat(30)), /They told you something real: acknowledge it first/);
+  assert.equal(replyShapeHint([], 'I teach primary school and I have done for about nine years now.'), '');
   const same = [line('One thing. Two things.'), line('Another one. And more.'), line('Third reply. Also two.')];
-  assert.match(turnShape(same, 'I teach primary school and I have done for about nine years now.'), /Your last three replies were all 2 sentences long: change the shape\./);
-  assert.match(turnShape([line('Is that right?'), line('So you like it?'), line('Fine.')], 'I teach primary school and I have done for about nine years now.'), /end this one on a statement/);
-  assert.doesNotMatch(turnShape([line('Is that right?'), line('Fine.'), line('Good.')], 'I teach primary school and I have done for about nine years now.'), /statement/, 'one question is not a habit');
+  assert.match(replyShapeHint(same, 'I teach primary school and I have done for about nine years now.'), /Your last three replies were all 2 sentences long: change the shape\./);
+  assert.match(replyShapeHint([line('Is that right?'), line('So you like it?'), line('Fine.')], 'I teach primary school and I have done for about nine years now.'), /end this one on a statement/);
+  assert.doesNotMatch(replyShapeHint([line('Is that right?'), line('Fine.'), line('Good.')], 'I teach primary school and I have done for about nine years now.'), /statement/, 'one question is not a habit');
 });
 
 /* ------------------------------------------------------------------ the note */
