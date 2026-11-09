@@ -16,7 +16,7 @@ export const KEY_SHADOW = { position: [2.2, 10.74, 4.88], target: [0, 0, 0], nea
  * down is kept only if the next window's mean frame time drops below `gain` of the slow one; a
  * capped display (30 Hz power saving) or main-thread-bound frames gain nothing and get it back.
  */
-export const ADAPTIVE_PIXEL_RATIO = { delay: 4, window: 3, slowFrame: .022, step: .25, gain: .9, capMargin: 1.25 } as const;
+export const ADAPTIVE_PIXEL_RATIO = { delay: 3, window: 2, slowFrame: .022, step: .25, gain: .9, capMargin: 1.25 } as const;
 /** Renders between full-scene venue tag rescans (about two seconds at 60 fps). */
 const TAG_RESCAN_RENDERS = 120;
 
@@ -213,6 +213,8 @@ export interface RestaurantLightingOptions {
   roomLights: THREE.Group;
   set: RestaurantSet;
   quality: RenderQuality;
+  /** Applies the adaptive resolution scale (1 = full) through the renderer's pixel-ratio policy. */
+  setResolutionScale(scale: number): void;
 }
 
 export interface RestaurantLighting {
@@ -227,7 +229,7 @@ export interface RestaurantLighting {
  * tags before the shader warmup, adds the glow halos and refreshes the static key shadow from
  * scene.onBeforeRender, which runs after world matrices update and before the shadow pass.
  */
-export function createRestaurantLighting({ renderer, scene, quality, roomLights, set }: RestaurantLightingOptions): RestaurantLighting {
+export function createRestaurantLighting({ renderer, scene, quality, roomLights, set, setResolutionScale }: RestaurantLightingOptions): RestaurantLighting {
   const rig = buildLightRig(quality, roomLights, set.diningRoot);
   const { key } = rig;
   ensureVenueShadowLayers(set);
@@ -303,7 +305,8 @@ export function createRestaurantLighting({ renderer, scene, quality, roomLights,
   // Adaptive pixel ratio: never above the start, only from frames that rendered while visible.
   const samples = new Float32Array(512), sorted = new Float32Array(512);
   let sampleCount = 0, windowFrames = 0, windowTime = 0, playingSince: number | null = null, glowTime = 0;
-  const governor = createPixelRatioGovernor(renderer.getPixelRatio(), quality.pixelRatioFloor);
+  // The governor judges a resolution scale (1 = the tier's full resolution); the renderer turns it into a pixel ratio.
+  const governor = createPixelRatioGovernor(1, quality.minScale);
   const resetWindow = () => { sampleCount = 0; windowFrames = 0; windowTime = 0; };
   const adapt = (state: DinnerState, dt: number, time: number, gameplay: boolean) => {
     const rendered = renderedSinceUpdate;
@@ -323,7 +326,7 @@ export function createRestaurantLighting({ renderer, scene, quality, roomLights,
     const median = sorted[sampleCount >> 1]!, mean = windowTime / windowFrames;
     resetWindow();
     const next = governor.judge(median, mean);
-    if (next !== null) renderer.setPixelRatio(next);
+    if (next !== null) setResolutionScale(next);
   };
 
   return {
