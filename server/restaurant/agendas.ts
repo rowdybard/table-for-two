@@ -123,6 +123,9 @@ export class DateAgendaDirector {
     this.updateScore();
   }
 
+  /** This date said a quiet stretch is fine, so a long pause is not read as lost interest. */
+  get likesQuiet(): boolean { return this.agenda.goal.startsWith('Feel comfortable with pauses'); }
+
   finish(): void {
     if (this.finished) return;
     this.finished = true; this.pendingClues = [];

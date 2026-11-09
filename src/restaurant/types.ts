@@ -19,6 +19,12 @@ export type EveningAction = 'taste' | 'order-dessert' | 'skip-dessert' | 'settle
 /** Player-facing actions the server still accepts; course progression itself is paced by the waiter. */
 export const EVENING_ACTIONS: readonly EveningAction[] = ['taste', 'order-dessert', 'skip-dessert', 'settle-bill', 'farewell', 'inspect-ticket', 'return-order', 'keep-order', 'wipe', 'steady-glass', 'ask-quiet', 'let-it-go', 'apologize', 'offer-taste', 'toast', 'request-water', 'check-in', 'resume-dinner'];
 export type DateStance = 'curious' | 'comfortable' | 'guarded' | 'hurt' | 'leaving';
+/**
+ * How into the evening the date seems, 0..100, for the player to read off the date's body and one quiet cue.
+ * A presentation read-out the server derives from delivered feelings, social signals, agenda steps, chemistry
+ * and boundaries. Nothing reads it back: not the prompt, chemistry, routing or endings.
+ */
+export interface DateInterest { level: number; trend: -1 | 0 | 1; changedAt: number }
 export interface EveningCue { id: string; key: string; utterances: SceneUtterance[] }
 /** `owner` (a shared room's human id) marks a moment written for one friend's pair that was copied to the other's view. */
 export interface EveningMoment { id: string; title: string; description: string; owner?: string }
@@ -28,6 +34,7 @@ export interface EveningState {
   scenarioCare?: import('./scenario-types').ScenarioCareState;
   /** Earned independently per couple; provider credentials never enter this state. */
   chemistry?: { unlocked: boolean };
+  interest?: DateInterest;
   /** Heard clues and earned understanding only. The private goal is revealed at the ending. */
   agenda?: import('./agenda-types').DateAgendaProgress;
   scenario?: import('./scenario-types').RestaurantScenarioState;
@@ -36,7 +43,9 @@ export interface EveningState {
   lastInterruptionAt: number;
   variation: number; dialogueTurns: number; stance: DateStance; stanceReason: string;
   /** Courses are served and cleared by the waiter on scene time; bites are the player's own physical eating. */
-  main: { status: 'none' | 'waiting' | 'served' | 'finished'; bites: number; dateDish: string | null; servedDish: string | null; orderedAt?: number; servedAt?: number; finishedAt?: number };
+  main: { status: 'none' | 'waiting' | 'served' | 'finished'; bites: number;
+    /** The date eats their own plate at their own pace while it is on the table; it never touches the human's. */
+    dateBites?: number; dateDish: string | null; servedDish: string | null; orderedAt?: number; servedAt?: number; finishedAt?: number };
   dessert: { choice: string | null; status: 'none' | 'waiting' | 'served' | 'finished' | 'skipped'; bites: number; chosenBy: 'you' | 'date' | null; offeredAt?: number; servedAt?: number; finishedAt?: number };
   /** Authored lines the date offered to break a silence; no model request is made for them. */
   beats: number;

@@ -14,6 +14,7 @@ import { TabletopDirector } from './tabletop';
 import { scenarioMayOpen, scenePresenceAvailable } from '../../src/restaurant/scenario-care';
 import { applyScenarioEffects, stepScenarioEffects, scenarioKitchenDelay, refreshScenarioBill, resumeScenarioDinner } from './scenario-effects';
 import { noteTableFact } from './table-facts';
+import { DateInterestDirector, openingInterest } from './interest';
 
 type Action = Extract<DinnerCommand, { type: 'evening' }>;
 const incidentActions = ['inspect-ticket', 'return-order', 'keep-order', 'wipe', 'steady-glass', 'ask-quiet', 'let-it-go', 'apologize'];
@@ -93,6 +94,7 @@ export class EveningDirector {
   readonly boundaries: DateBoundaryDirector;
   readonly chemistry: DateChemistryDirector;
   readonly tabletop: TabletopDirector;
+  readonly interest: DateInterestDirector;
   private readonly ownHumanId: string;
   private redirectSequence = 0;
   private orderedAt = 0;
@@ -131,6 +133,7 @@ export class EveningDirector {
   private declinedDessert = false;
   private dessertNamed = false;
   private lastBeatAt = -1000;
+  private lastDateBiteAt = 0;
   private readonly usedBeats = new Set<string>();
   private readonly blind?: BlindDateIdentity;
   constructor(private state: DinnerState, options: { scenarioId?: RestaurantScenarioId; humanId?: string } = {}) {
@@ -140,6 +143,7 @@ export class EveningDirector {
     this.boundaries = new DateBoundaryDirector(state);
     this.chemistry = new DateChemistryDirector(state);
     this.tabletop = new TabletopDirector(state);
+    this.interest = new DateInterestDirector(state, openingInterest(state, this.blind?.traits.openness));
     if (state.mode !== 'double-date') state.evening.scenario = createRestaurantScenario(state.blindDate?.seed ?? state.id, options.scenarioId);
     this.cue('welcome');
   }
@@ -358,14 +362,18 @@ export class EveningDirector {
     if (boundary.kind === 'disregard') { if (paired) { this.agenda.pressure(); this.chemistry.revoke(); } }
     else this.agenda.assess(paired ? turn.agenda : turn.agenda ? { ...turn.agenda, signal: 'none', evidence: '' } : undefined, paired ? humanText : '', turn.utterances);
     this.chemistry.observe(turn, humanText, { paired, boundaryEvent: boundary.kind });
-    if (!turn.social) return;
-    const { signal, reason, wantsToLeave } = turn.social;
-    if (boundary.kind === 'disregard') { this.pressure = boundary.count; this.wasHurt = true; e.stance = boundary.count > 1 ? 'hurt' : 'guarded'; e.stanceReason = reason; }
-    // The reply the model just gave is already the acknowledgment, so no canned repair line follows it.
-    else if (boundary.kind === 'repair') { this.pressure = boundary.count + 1; this.repair(reason, true); }
-    else if (signal === 'repair' && !this.pressure) this.repair(reason, true);
-    else if (['kindness', 'curiosity', 'humor'].includes(signal) && e.stance !== 'hurt' && e.stance !== 'guarded' && hasEarnedConfidence(e.agenda)) { e.stance = 'comfortable'; e.stanceReason = reason; }
-    if (wantsToLeave && boundary.canLeave) { e.stance = 'leaving'; e.stanceReason = reason; this.beginEnding('walked-away', paired ? undefined : context.name ?? 'your friend'); }
+    if (turn.social) {
+      const { signal, reason, wantsToLeave } = turn.social;
+      if (boundary.kind === 'disregard') { this.pressure = boundary.count; this.wasHurt = true; e.stance = boundary.count > 1 ? 'hurt' : 'guarded'; e.stanceReason = reason; }
+      // The reply the model just gave is already the acknowledgment, so no canned repair line follows it.
+      else if (boundary.kind === 'repair') { this.pressure = boundary.count + 1; this.repair(reason, true); }
+      else if (signal === 'repair' && !this.pressure) this.repair(reason, true);
+      else if (['kindness', 'curiosity', 'humor'].includes(signal) && e.stance !== 'hurt' && e.stance !== 'guarded' && hasEarnedConfidence(e.agenda)) { e.stance = 'comfortable'; e.stanceReason = reason; }
+      if (wantsToLeave && boundary.canLeave) { e.stance = 'leaving'; e.stanceReason = reason; this.beginEnding('walked-away', paired ? undefined : context.name ?? 'your friend'); }
+    }
+    // A read-out only: it follows what this turn established and feeds nothing back.
+    this.interest.observe(turn, { paired, boundary: boundary.kind });
+    this.interest.noticeProgress();
   }
   /**
    * Settle the date down after an apology. The canned line is for the apologize gesture only (no model
@@ -392,7 +400,7 @@ export class EveningDirector {
   }
   earlyExit() { this.beginEnding('early-exit'); if (this.state.order && !this.state.evening.bill.settlement) { this.state.evening.bill.requested = true; this.state.evening.bill.settlement = 'separate'; this.moment('bill', 'Dinner is settled', 'The ordered dinner was settled separately before the early goodbye.'); } this.state.phase = 'ended'; this.state.stage = 'finished'; this.state.reason = this.state.evening.farewell.ending!.description; }
   window() { if (this.state.evening.moments.some(m => m.id === 'window')) return; this.moment('window', 'Away from the table', 'You took a quiet moment together by the rain-streaked window.'); this.cue('quiet-window'); }
-  acknowledge(line: SceneUtterance, humanId = this.ownHumanId) { this.boundaries.acknowledge(line, humanId); if (humanId === this.ownHumanId) { this.agenda.acknowledge(line); this.chemistry.acknowledge(line); if (line.speaker === 'date' && line.text === this.state.evening.farewell.ending?.dateLine) this.farewellHeard = true; } }
+  acknowledge(line: SceneUtterance, humanId = this.ownHumanId) { this.boundaries.acknowledge(line, humanId); if (humanId === this.ownHumanId) { this.agenda.acknowledge(line); this.chemistry.acknowledge(line); this.interest.noticeProgress(); if (line.speaker === 'date' && line.text === this.state.evening.farewell.ending?.dateLine) this.farewellHeard = true; } }
   /** A provider limit creates a scene beat, never a personal-boundary strike. */
   redirectConversation(allowIncident = true) {
     if (this.state.phase !== 'playing' || this.departing) return;
@@ -441,11 +449,16 @@ export class EveningDirector {
     if (!this.nudged && seatedAndCalm && !this.state.order && this.seatedAt !== null && t - this.seatedAt >= P.orderNudge) { this.nudged = true; this.cue('order-nudge'); }
     let justServed = false;
     if (calm && e.main.status === 'waiting' && t - this.orderedAt - (scenarioKitchenDelay(this.state) - this.orderKitchenDelay) >= P.mainKitchen) {
-      e.main.status = 'served'; e.main.servedDish = this.state.order; e.main.servedAt = t; this.state.stage = 'dining'; justServed = true;
+      e.main.status = 'served'; e.main.servedDish = this.state.order; e.main.servedAt = t; e.main.dateBites = 0; this.lastDateBiteAt = t - P.dateBiteEvery + P.dateFirstBite; this.state.stage = 'dining'; justServed = true;
       this.mainServeDelay = scenarioKitchenDelay(this.state); this.cutleryRestedAt = null; this.thirdBiteAt = null;
       // An incorrect plate arrives with service, before any bites, rather than replacing eaten food.
       if (!canInterrupt || !this.startIncident('wrong-order')) this.cue('main-served', { dish: this.state.order ?? '' });
       e.lastInterruptionAt = t;
+    }
+    // The date eats their own plate at their own pace while it is in front of them, never mid-reply or
+    // during something at the table. It is how the plate looks, not a step towards clearing it.
+    if (e.main.status === 'served' && seatedAndCalm && !this.awaitingReply && (e.main.dateBites ?? 0) < P.dateBiteLimit && t - this.lastDateBiteAt >= P.dateBiteEvery) {
+      e.main.dateBites = (e.main.dateBites ?? 0) + 1; this.lastDateBiteAt = t;
     }
     // Resting the cutlery across the plate tells Eli the course is done.
     if (e.main.status === 'served') {
@@ -498,6 +511,7 @@ export class EveningDirector {
         if (line) { e.beats++; this.lastBeatAt = t; if (ASKS.test(line.text)) this.askOpen(line.text); }
       }
     }
+    this.interest.step(t - this.lastHumanAt, { calm: seatedAndCalm && !this.departing && !this.awaitingReply && !!this.state.order && !e.bill.requested, likesQuiet: this.agenda.likesQuiet, quietRequested: t < e.care.quietUntil });
     refreshScenarioBill(this.state);
     if (this.leavingAt !== null && (this.farewellHeard || t - this.leavingAt >= 30)) { const date = this.state.participants[1].position; if (Math.hypot(date[0] - .8, date[2] - 5.5) < .8 || t - this.leavingAt > 45) { this.state.phase = 'ended'; this.state.stage = 'finished'; this.state.reason = e.farewell.ending!.description; } }
   }
