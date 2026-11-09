@@ -84,3 +84,11 @@ test('listening previews do not replace authored humor, flirtation or consequent
     assert.equal(calmEnoughForListening(emotion), false);
   }
 });
+
+test('laughing along and a plain compliment show on the listener before the line ends; a negated one does not', () => {
+  const cue = (text: string) => { const preview = new ListeningPreviewController(); preview.start(0, 'date'); preview.partial(text, 1); return preview.sample(1000); };
+  assert.equal(cue('haha okay that is fair')?.emotion, 'amused');
+  assert.equal(cue('you look really lovely tonight')?.cue, 'flattered');
+  assert.equal(cue('I like your laugh')?.emotion, 'embarrassed');
+  for (const text of ["you're not cute", 'he said you are pretty', '"you are gorgeous" is a line from a film', 'what is so funny']) assert.equal(cue(text)?.cue, 'attentive', text);
+});

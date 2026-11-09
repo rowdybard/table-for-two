@@ -84,6 +84,13 @@ export class RestaurantRenderer {
   private readonly inspectionAnchor = new THREE.Vector3();
   private readonly inspectionOffset = new THREE.Vector3();
   private listeningPreview: ListeningPreview | null = null;
+  /** The local date's reply is on its way (sent, not yet speaking). */
+  private dateThinking = false;
+  /** Scene time anybody at the table last made a sound, for the date's idle business. */
+  private lastVoiceAt = 0;
+  /** QA harness overrides: hold a listening or thinking state, or start a gesture once. */
+  private behaviourOverride: { listening?: boolean; thinking?: boolean; force?: string } = {};
+  private readonly tableScratch = { glass: new THREE.Vector3(), plate: new THREE.Vector3(), otherGlass: new THREE.Vector3(), otherPlate: new THREE.Vector3() };
   private readonly reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   private readonly previousView = new THREE.Quaternion();
   private focusTransition = 0;
@@ -191,6 +198,24 @@ export class RestaurantRenderer {
   }
 
   /** A view-only first impression; never changes authoritative emotion, dialogue or memory. */
+  /** True while the local date is working out a reply to the human (sent, nothing spoken yet). */
+  setDateThinking(thinking: boolean) { this.dateThinking = thinking; }
+  /** QA only: hold listening/thinking, or play a named gesture once. */
+  setDateBehaviourInput(value: { listening?: boolean; thinking?: boolean; force?: string }) { this.behaviourOverride = { ...value }; }
+
+  /** The table context a seated date reads for their own business: their glass, their plate, interest and the talk. */
+  private dateTable(view: DinnerState, pairX: number, double: boolean, diningOffset: number, thinking: boolean, glass: THREE.Vector3, plate: THREE.Vector3) {
+    const evening = view.evening, served = evening.main.status === 'served' && !evening.scenarioCare?.kitchen.held;
+    const glassAt = evening.scenarioCare?.cleanup.glassesCleared ? null : this.set.tabletop.dateGlassRest(pairX, double, glass);
+    return { interest: evening.interest?.level, thinking, mainServed: served, dateBites: evening.main.dateBites ?? 0, quietFor: this.time - this.lastVoiceAt,
+      glass: glassAt, plate: served ? plate.set(pairX, .782, (double ? -1.98 : -1.67) + diningOffset) : null };
+  }
+  /** After the date's update: their glass follows their hand and their fork sits where they left it. */
+  private applyDateProps(actor: RestaurantActor, pairX: number, double: boolean) {
+    this.set.tabletop.holdDateGlass(pairX, double, actor.heldGlass.weight > 0 ? actor.heldGlass : null);
+    this.set.tabletop.setDateFork(pairX, double, actor.fork);
+  }
+
   setListeningPreview(preview: ListeningPreview | null) {
     if (!this.disposed) this.listeningPreview = preview;
   }
@@ -408,7 +433,11 @@ export class RestaurantRenderer {
       const speaking = playback.actorId === otherDate.id || (!playback.actorId && playback.speaker === 'other-date');
       const listening = this.listeningFor(otherDate.id, state, playback, otherDate.emotion, otherDate.stance, double.otherView ?? state);
       const resting = listening && listening.cue !== 'attentive' ? listening.emotion : otherDate.emotion;
-      actor.update(this.time, dt, speaking ? playback.emotion : resting, speaking, speaking ? playback.amplitude : 0, speaking || listening ? this.camera.position : speakerPosition ? gazeAt : partnerGaze, speed, { stance: otherDate.stance, attentive: !!listening, reducedMotion: this.reducedMotion.matches });
+      // The friend's date has their own glass, plate and interest on the other side of the table.
+      const otherX = otherDate.humanId === 'h1' ? -.57 : .57, otherView = double.otherView;
+      const table = !preview && seated && otherView ? this.dateTable(otherView, otherX, true, diningOffsetZ(state), false, this.tableScratch.otherGlass, this.tableScratch.otherPlate) : undefined;
+      actor.update(this.time, dt, speaking ? playback.emotion : resting, speaking, speaking ? playback.amplitude : 0, speaking || listening ? this.camera.position : speakerPosition ? gazeAt : partnerGaze, speed, { stance: otherDate.stance, attentive: !!listening, reducedMotion: this.reducedMotion.matches, table });
+      if (!preview) this.applyDateProps(actor, otherX, true);
     }
     if (otherHuman && this.friend) {
       const actor = this.friend;
@@ -567,12 +596,20 @@ export class RestaurantRenderer {
       if (otherDate && otherDate.humanId !== state.doubleDate.localHumanId) this.gaze.set(otherDate.position[0], 1.3, otherDate.position[2]);
       else if (otherHuman) this.gaze.set(otherHuman.position[0], 1.3, otherHuman.position[2]);
     }
-    const restingEmotion = evening.stance === 'hurt' ? 'embarrassed' : evening.stance === 'guarded' ? 'defensive' : evening.stance === 'comfortable' && state.emotion === 'neutral' ? 'warm' : state.emotion;
+    const restingEmotion = evening.stance === 'hurt' ? 'embarrassed' : evening.stance === 'guarded' ? 'defensive' : (evening.stance === 'comfortable' || (evening.interest?.level ?? 0) >= 65) && state.emotion === 'neutral' ? 'warm' : state.emotion;
     const dateSpeaking = playback.actorId ? playback.actorId === localDoubleDate?.id : playback.speaker === 'date';
     const listening = this.listeningFor(localDoubleDate?.id ?? 'date', state, playback, restingEmotion, evening.stance);
     if (listening) this.gaze.copy(this.camera.position);
-    const firstImpression = listening && listening.cue !== 'attentive' ? listening.emotion : restingEmotion;
-    this.date.update(this.time, dt, dateSpeaking ? playback.emotion : firstImpression, dateSpeaking, dateSpeaking ? playback.amplitude : 0, this.gaze, walkingSpeed, { stance: evening.stance, shared: evening.sharedActivities.length > 0, attentive: !!listening, reducedMotion: this.reducedMotion.matches });
+    // A compliment from someone they are not into gets a polite face, not a blush.
+    const coolToCompliments = listening?.cue === 'flattered' && (evening.interest?.level ?? 35) < 40;
+    const firstImpression = listening && listening.cue !== 'attentive' ? coolToCompliments ? 'neutral' : listening.emotion : restingEmotion;
+    if (playback.speaker || this.listeningPreview) this.lastVoiceAt = this.time;
+    const override = this.behaviourOverride;
+    if (override.force) { this.date.playGesture(override.force as Parameters<RestaurantActor['playGesture']>[0]); override.force = undefined; }
+    const pairX = state.doubleDate ? (state.doubleDate.localHumanId === 'h1' ? -.57 : .57) : 0;
+    const table = this.dateTable(state, pairX, !!state.doubleDate, diningOffset, override.thinking ?? (this.dateThinking && !dateSpeaking), this.tableScratch.glass, this.tableScratch.plate);
+    this.date.update(this.time, dt, dateSpeaking ? playback.emotion : firstImpression, dateSpeaking, dateSpeaking ? playback.amplitude : 0, this.gaze, walkingSpeed, { stance: evening.stance, shared: evening.sharedActivities.length > 0, attentive: override.listening ?? !!listening, reducedMotion: this.reducedMotion.matches, table: dateSeated ? table : undefined });
+    this.applyDateProps(this.date, pairX, !!state.doubleDate);
     if (state.doubleDate) this.updateDoubleActors(dt, state, playback);
     const scenarioService = (state.doubleDate?.scenario ?? evening.scenario)?.effects.service;
     const serviceCues = [

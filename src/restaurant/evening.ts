@@ -43,6 +43,10 @@ export const EVENING_PACE = Object.freeze({
   /** Physical incidents belong to a course rather than to wall-clock minutes: the spill to the main (any calm moment before dessert arrives), the loud neighbour to dessert. */
   spillAfterService: 60,
   dinerAfterDessertServed: 30,
+  /** The date starts on their own plate this long after it lands, then takes a bite this often, up to `dateBiteLimit`. */
+  dateFirstBite: 14,
+  dateBiteEvery: 30,
+  dateBiteLimit: 3,
 });
 
 export function createEvening(dateId: DateId, variation = 0): EveningState {

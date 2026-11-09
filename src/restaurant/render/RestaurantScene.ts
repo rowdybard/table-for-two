@@ -29,6 +29,8 @@ export interface RestaurantSet {
   setDoubleDate(enabled: boolean): void;
   update(time: number, reducedMotion: boolean): void;
   updateTabletop(state: DinnerState, dt: number, reducedMotion?: boolean): void;
+  /** The close-range table props, for the dates' glasses and forks. */
+  tabletop: TabletopProps;
   dispose(): void;
 }
 
@@ -455,7 +457,7 @@ export function createRestaurantScene(): RestaurantSet {
   b.root.add(exterior.root);
   b.bake();
   return {
-    root: b.root, diningRoot, targets, food, menu, bill, spill, playerGlass, flame,
+    root: b.root, diningRoot, targets, food, menu, bill, spill, playerGlass, flame, tabletop,
     setDoubleDate(enabled) { soloFurniture.root.visible = !enabled; doubleFurniture.root.visible = enabled; tabletop.setDoubleDate(enabled); },
     update(time, reducedMotion) { exterior.update(time, reducedMotion); },
     updateTabletop(state, dt, reducedMotion) {

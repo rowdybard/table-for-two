@@ -22,17 +22,19 @@ import { TabletopInspector, isInspectionTarget, type InspectionTarget } from './
 import { tableActionForTarget, tabletopActionAvailability } from './tabletop';
 import { scenePresenceAvailable } from './scenario-care';
 import { diningOffsetZ } from './dining-space';
+import { InterestCue } from './InterestCue';
 import { createPerfStats } from './PerfStats';
 import { createFrameCap } from './FrameCap';
 
 document.title = 'Table for Two';
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = markup;
+const interestCue = new InterestCue(document.querySelector<HTMLElement>('#dinner-hud')!);
 const el = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const btn = (id: string) => el<HTMLButtonElement>(id);
 const input = (id: string) => el<HTMLInputElement>(id);
 const blankUsage = () => ({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, speechCharacters: 0, cacheHits: 0, claudeRequests: 0, claudeCost: 0, speechCost: 0, totalCost: 0, responseMs: null, firstAudioMs: null });
 const preview = (dateId: DateId): DinnerState => ({ evening: createEvening(dateId), id: '', generation: 0, mode: 'ai-date', phase: 'playing', dateId, stage: 'arrival', elapsed: 0, participants: [{ id: 'p1', kind: 'human', name: 'You', position: [0, 0, 5.6] }, { id: 'p2', kind: 'ai', name: getDate(dateId)!.name, position: [0, 0, -2.25] }], events: [], emotion: 'warm', seated: false, order: null, glassRaised: false, memory: '', usage: blankUsage(), sessionLimit: 2 });
-type Preferences = { model: ClaudeModel; modelSource?: 'chat-command'; sessionLimit: number; speech: boolean; captions: boolean; volume: number; ambience: boolean };
+type Preferences = { model: ClaudeModel; modelSource?: 'chat-command'; sessionLimit: number; speech: boolean; captions: boolean; volume: number; ambience: boolean; interestCue?: boolean };
 const preferences: Preferences = { model: 'claude-haiku-5-5', sessionLimit: 2, speech: true, captions: true, volume: .8, ambience: true };
 try {
   const saved = JSON.parse(localStorage.getItem('table-for-two-settings') || '{}') as Partial<Preferences>;
@@ -187,6 +189,7 @@ function applyState(next: DinnerState) {
   if (!joined) return;
   const wingman = state.doubleDate?.role === 'wingman';
   el('date-status').textContent = wingman ? 'Staying for your friend' : `An evening with ${getDate(state.dateId)!.name}`;
+  interestCue.update(state, preferences.interestCue !== false);
   btn('finish-date').textContent = wingman ? 'Show my ending' : state.mode === 'double-date' ? 'End my date' : 'End date';
   const stages = { arrival: 'Arrival', seated: 'Dinner', ordered: 'Dinner', dining: 'Dinner', dessert: 'Dessert', farewell: 'Farewell', finished: 'Goodnight' };
   el('dinner-stage').textContent = wingman ? 'At the table' : stages[state.stage];
@@ -891,10 +894,17 @@ document.querySelectorAll<HTMLButtonElement>('[data-order]').forEach(button => b
 input('speech-enabled').checked = preferences.speech; input('captions-enabled').checked = preferences.captions;
 const ambientSetting = document.createElement('label'); ambientSetting.className = 'setting-row';
 const ambientCopy = document.createElement('span'); ambientCopy.textContent = 'Restaurant ambience';
-const ambientDescription = document.createElement('small'); ambientDescription.textContent = 'Rain, room tone, and quiet lounge music'; ambientCopy.append(ambientDescription);
+const ambientDescription = document.createElement('small'); ambientDescription.textContent = 'Rain, the other tables, and quiet lounge piano'; ambientCopy.append(ambientDescription);
 const ambientToggle = document.createElement('input'); ambientToggle.type = 'checkbox'; ambientToggle.id = 'ambience-enabled'; ambientToggle.checked = preferences.ambience;
 ambientSetting.append(ambientCopy, ambientToggle); el('settings-title').insertAdjacentElement('afterend', ambientSetting);
 ambientToggle.addEventListener('change', () => { preferences.ambience = ambientToggle.checked; ambience.setEnabled(preferences.ambience); savePreferences(); });
+// How the date seems: a small heart that fills as they warm up. On unless the player turns it off.
+const interestSetting = document.createElement('label'); interestSetting.className = 'setting-row';
+const interestCopy = document.createElement('span'); interestCopy.textContent = 'Show how your date seems';
+const interestDescription = document.createElement('small'); interestDescription.textContent = 'A small heart that fills as they warm to you'; interestCopy.append(interestDescription);
+const interestToggle = document.createElement('input'); interestToggle.type = 'checkbox'; interestToggle.id = 'interest-cue-enabled'; interestToggle.checked = preferences.interestCue !== false;
+interestSetting.append(interestCopy, interestToggle); ambientSetting.insertAdjacentElement('afterend', interestSetting);
+interestToggle.addEventListener('change', () => { preferences.interestCue = interestToggle.checked; interestCue.update(state, preferences.interestCue); savePreferences(); });
 input('voice-volume').value = String(preferences.volume); input('session-limit').value = String(preferences.sessionLimit);
 btn('settings-open').addEventListener('click', async () => {
   releasePointer(); closeTypedInput(); settingsPaused = joined && state.phase === 'playing' && !doubleClient.active; el('settings-dialog').hidden = false;
@@ -1020,6 +1030,7 @@ function frame(now: number) {
     if (cue && cue.target !== currentListeningTarget()) clearListeningPreview();
     else renderer.setListeningPreview(cue);
   }
+  renderer.setDateThinking(busy && !playback.speaker);
   renderer.update(dt, state, playback);
   if (tabletopInspector?.target && !renderer.hasTableTarget(tabletopInspector.target)) tabletopInspector.close();
   el('scene-loading').hidden = renderer.isReady;

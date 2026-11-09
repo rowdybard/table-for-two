@@ -11,6 +11,18 @@ export interface BodyPerformance {
   /** Speech beat gesture envelope 0..1 and which hand carries it (-1 left, 1 right, 0 both). */
   beat?: number;
   beatHand?: -1 | 0 | 1;
+  /**
+   * Seated hand overrides in the body's own space (index 0 is the -x hand), blended over the resting pose by
+   * weight. Used for the date's business at the table: bites, sips, a hand at the chin.
+   */
+  arms?: readonly { target: THREE.Vector3; orientation: THREE.Quaternion; weight: number; bend?: THREE.Vector3 }[];
+  /** Small vertical shake of the shoulders (a laugh), metres. */
+  bounce?: number;
+  /** Props held in the +x hand. */
+  fork?: boolean;
+  phone?: boolean;
+  /** The -x hand is closed around a glass. */
+  gripGlass?: boolean;
 }
 export interface CharacterBodyRig {
   root: THREE.Group;
@@ -24,8 +36,9 @@ export interface CharacterBodyRig {
 interface Ring { y: number; rx: number; rz: number; cx?: number; cz?: number; power?: number; opening?: number; front?: number; crease?: number }
 interface Chain {
   root: THREE.Group; upper: THREE.Bone; lower: THREE.Bone; end: THREE.Bone;
-  upperLength: number; lowerLength: number; hand?: THREE.Mesh; grip?: THREE.Mesh; phone?: THREE.Group;
+  upperLength: number; lowerLength: number; hand?: THREE.Mesh; grip?: THREE.Mesh; phone?: THREE.Group; fork?: THREE.Group;
 }
+const DATES: readonly CharacterKind[] = ['mira', 'jules', 'dev'];
 const DOWN = new THREE.Vector3(0, -1, 0);
 const REST: BodyPerformance = { guarded: false, comfortable: false, speaking: false, amplitude: 0, shared: false, phoneActive: false };
 const PALETTES = {
@@ -365,6 +378,7 @@ class TailoredBody implements CharacterBodyRig {
   private gait = 0;
   private walkBlend = 0;
   private lean = 0;
+  private readonly bendScratch = new THREE.Vector3();
   private seed: number;
   private disposed = false;
 
@@ -429,6 +443,22 @@ class TailoredBody implements CharacterBodyRig {
         const bracelet = add(arm.end, new THREE.TorusGeometry(.0255, .0014, 5, 24), metal);
         bracelet.rotation.x = Math.PI / 2; bracelet.scale.y = .70; bracelet.position.y = kind === 'dev' ? .018 : -.008;
       }
+      if (DATES.includes(kind)) {
+        // The dates hold things: a glass in the -x hand, the fork and now and then a phone in the +x hand.
+        arm.grip = add(arm.end, palmGeometry(side, true), skin); arm.grip.visible = false;
+        if (side === 1) {
+          const fork = new THREE.Group(), steel = solid('#d9d8d3', .22, 1);
+          const shaft = add(fork, new THREE.BoxGeometry(.006, .15, .0035), steel); shaft.position.set(0, -.075, 0);
+          for (let tine = 0; tine < 4; tine++) { const t = add(fork, new THREE.BoxGeometry(.0016, .04, .0016), steel); t.position.set((tine - 1.5) * .0042, -.168, .002); }
+          fork.position.set(-.004, -.045, .018); fork.rotation.set(-.35, 0, .25);
+          arm.end.add(fork); arm.fork = fork; fork.visible = false;
+          const phone = new THREE.Group();
+          const casing = add(phone, new THREE.BoxGeometry(.068, .14, .008), solid('#22252c', .4)); casing.position.set(0, -.07, .026);
+          const screen = add(phone, new THREE.PlaneGeometry(.058, .124), solid('#9fb6c4', .3)); screen.position.set(0, -.07, .0302);
+          (screen.material as THREE.MeshStandardMaterial).emissive.set('#5d7280'); (screen.material as THREE.MeshStandardMaterial).emissiveIntensity = .6;
+          arm.end.add(phone); arm.phone = phone; phone.visible = false;
+        }
+      }
       if (kind === 'diner' && side === 1) {
         arm.grip = add(arm.end, palmGeometry(side, true), skin); arm.grip.visible = false;
         const phone = new THREE.Group();
@@ -476,7 +506,7 @@ class TailoredBody implements CharacterBodyRig {
     const restPose = this.seated ? 0 : 1 - this.walkBlend, weightSide = this.kind === 'jules' ? 1 : -1;
     this.pelvis.position.x = restPose * weightSide * .004;
     this.pelvis.position.y = this.seated ? -.295 : -lowering;
-    this.upperBody.position.set(this.pelvis.position.x, (this.seated ? .745 : 1.04 - lowering) + breath, 0);
+    this.upperBody.position.set(this.pelvis.position.x, (this.seated ? .745 : 1.04 - lowering) + breath + (this.seated ? performance.bounce ?? 0 : 0), 0);
     const leanTarget = this.seated ? (performance.guarded ? -.055 : performance.comfortable ? .025 : .005) + (performance.leanBias ?? 0) : 0;
     this.lean = THREE.MathUtils.lerp(this.lean, leanTarget, dt > 0 ? 1 - Math.exp(-dt * 5) : 1);
     this.upperBody.rotation.set(this.lean, restPose * weightSide * .018, restPose * weightSide * .011 + this.walkBlend * Math.sin(this.gait) * .008);
@@ -486,13 +516,19 @@ class TailoredBody implements CharacterBodyRig {
     for (let i = 0; i < this.arms.length; i++) {
       const arm = this.arms[i]!, side = i ? 1 : -1;
       const gesture = performance.speaking ? Math.max(0, Math.sin(time * 2.3 + i * .9)) * (.035 + Math.min(1, performance.amplitude) * .025) : 0;
-      let target: THREE.Vector3, handOrientation: THREE.Quaternion;
+      let target: THREE.Vector3, handOrientation: THREE.Quaternion, bend: THREE.Vector3 | undefined;
       if (this.seated) {
         const carries = (performance.beatHand ?? 1) === 0 || (performance.beatHand ?? 1) === side;
         const beat = carries && !performance.guarded ? (performance.beat ?? 0) : 0;
         // A beat lifts the hand off the cloth, turns the palm up and opens toward the other person.
         target = new THREE.Vector3(side * ((performance.guarded ? .14 : .18) + beat * .03), (performance.guarded ? .80 : .808 + (i === 0 || performance.shared ? gesture : 0)) + beat * .085, (performance.guarded ? .29 : .385) + beat * .04);
         handOrientation = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2 - gesture * 2 + beat * 1.1, side * ((performance.guarded ? .25 : .06) + beat * .3), side * (.035 - beat * .5)));
+        const override = performance.arms?.[i];
+        if (override && override.weight > .001) {
+          const w = Math.min(1, override.weight);
+          target.lerp(override.target, w); handOrientation.slerp(override.orientation, w);
+          if (override.bend) bend = this.bendScratch.set(side * .47, -.55, -.69).lerp(override.bend, w);
+        }
       } else {
         const swing = Math.sin(this.gait + i * Math.PI) * .075 * this.walkBlend;
         const posed = this.kind === 'mira' && i === 1 || this.kind === 'dev' && i === 0;
@@ -505,15 +541,17 @@ class TailoredBody implements CharacterBodyRig {
       }
       const phone = this.kind === 'diner' && i === 1 && performance.phoneActive;
       if (phone) { target.set(.235, 1.46, .07); handOrientation.setFromEuler(new THREE.Euler(0, .1, Math.PI)); }
-      if (arm.phone) arm.phone.visible = phone;
-      if (arm.grip) arm.grip.visible = phone;
-      if (arm.hand) arm.hand.visible = !phone;
+      const held = this.seated && (i === 1 ? !!performance.fork || !!performance.phone : !!performance.gripGlass);
+      if (arm.phone) arm.phone.visible = phone || this.seated && i === 1 && !!performance.phone;
+      if (arm.fork) arm.fork.visible = this.seated && i === 1 && !!performance.fork && !performance.phone;
+      if (arm.grip) arm.grip.visible = phone || held;
+      if (arm.hand) arm.hand.visible = !(phone || held);
       arm.root.updateMatrix();
       const transform = this.upperBody.matrix.clone().multiply(arm.root.matrix);
       target.applyMatrix4(transform.clone().invert());
       const bodyOrientation = new THREE.Quaternion().setFromRotationMatrix(transform);
       handOrientation.premultiply(bodyOrientation.invert());
-      poseChain(arm, target, new THREE.Vector3(side * (this.seated ? .47 : .36), -.55, -.69), handOrientation, phone ? 0 : this.seated ? .10 : .72);
+      poseChain(arm, target, bend ?? new THREE.Vector3(side * (this.seated ? .47 : .36), -.55, -.69), handOrientation, phone ? 0 : this.seated ? .10 : .72);
     }
     for (let i = 0; i < this.legs.length; i++) {
       const leg = this.legs[i]!, side = i ? 1 : -1;

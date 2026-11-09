@@ -1,17 +1,17 @@
 import type { Emotion } from './types';
 
 export type ListeningPreviewTarget = 'date' | 'd1' | 'd2' | null;
-export type ListeningCue = 'attentive' | 'reassuring' | 'guarded';
+export type ListeningCue = 'attentive' | 'reassuring' | 'guarded' | 'amused' | 'flattered';
 export interface ListeningPreview {
   readonly target: Exclude<ListeningPreviewTarget, null>;
   readonly cue: ListeningCue;
-  readonly emotion: 'neutral' | 'warm' | 'defensive';
+  readonly emotion: 'neutral' | 'warm' | 'defensive' | 'amused' | 'embarrassed';
   readonly expiresAt: number;
 }
 
 const expiryMs = 2600;
-const settleMs: Record<ListeningCue, number> = { attentive: 0, reassuring: 180, guarded: 360 };
-const emotion: Record<ListeningCue, ListeningPreview['emotion']> = { attentive: 'neutral', reassuring: 'warm', guarded: 'defensive' };
+const settleMs: Record<ListeningCue, number> = { attentive: 0, reassuring: 180, guarded: 360, amused: 120, flattered: 260 };
+const emotion: Record<ListeningCue, ListeningPreview['emotion']> = { attentive: 'neutral', reassuring: 'warm', guarded: 'defensive', amused: 'amused', flattered: 'embarrassed' };
 
 function impression(text: string): ListeningCue {
   const words = text.slice(0, 2000).toLowerCase().replace(/’/g, "'").replace(/\s+/g, ' ').trim();
@@ -26,6 +26,11 @@ function impression(text: string): ListeningCue {
     if (!/\b(?:stupid|pathetic|worthless|idiot)\b/.test(said)
       && !/\b(?:actually|no)[, ]+(?:i(?:'m| am) )?not\b/.test(said)
       && /^i(?:'m| am) (?:(?:a little|kind of|really|so|quite) )?(?:nervous|anxious|awkward|sorry)\b/.test(said)) return 'reassuring';
+    // Laughing along shows on their face before the line is finished; so does being paid a plain compliment.
+    if (/(?:^|\s)(?:ha(?:ha)+|he(?:he)+|lol|lmao)\b/.test(said)) return 'amused';
+    if (!/\b(?:not|never|isn't|aren't|wasn't)\b/.test(said)
+      && (/\byou(?:'re| are| look| looked)\s+(?:(?:really|so|very|quite|honestly|actually|kind of)\s+)?(?:beautiful|gorgeous|pretty|cute|stunning|lovely|funny|charming|great|sweet|adorable)\b/.test(said)
+        || /\bi (?:really )?(?:like|love) your (?:smile|laugh|eyes|hair|style|jacket|voice)\b/.test(said))) return 'flattered';
   }
   return 'attentive';
 }

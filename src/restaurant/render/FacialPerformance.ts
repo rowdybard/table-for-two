@@ -14,6 +14,14 @@ export interface PerformanceInput {
   attentive: boolean;
   /** prefers-reduced-motion: keep expression, suppress idle movement. */
   reducedMotion: boolean;
+  /** Added to the expression's smile, -1..1: how the evening is going shows even in a resting face. */
+  smileBias?: number;
+  /** 0..1: how readily the eyes drift off the person in front of them. */
+  wander?: number;
+  /** 0..1: eyes up and aside, working something out. */
+  lookUp?: number;
+  /** 0..1: eyes down at the hands. */
+  lookDown?: number;
 }
 
 export interface FacePose {
@@ -133,7 +141,7 @@ export class FacialPerformance {
     const settle = (current: number, goal: number, attack: number, release: number) =>
       approach(current, goal, dt, Math.abs(goal) > Math.abs(current) ? attack : release);
     const speechSmile = input.speaking ? -.06 * clamp(input.amplitude, 0, 1) : 0;
-    pose.smile = settle(pose.smile, target.smile + speechSmile, 6, 2.6);
+    pose.smile = settle(pose.smile, clamp(target.smile + speechSmile + (input.smileBias ?? 0), -1, 1), 6, 2.6);
     pose.asymmetry = settle(pose.asymmetry, target.asymmetry, 5, 2.5);
     pose.squint = settle(pose.squint, target.squint * (input.speaking ? .8 : 1), 5.5, 2.2);
     pose.press = settle(pose.press, input.speaking ? target.press * .35 : target.press, 7, 3);
@@ -177,7 +185,7 @@ export class FacialPerformance {
     // Gaze: micro-saccades between the listener's eyes, thinking glances while speaking,
     // and a brief look away when embarrassed or defensive.
     if (motion && time >= this.nextSaccade) {
-      const away = input.emotion === 'embarrassed' ? .55 : input.emotion === 'defensive' ? .3 : input.speaking ? .22 : .08;
+      const away = (input.emotion === 'embarrassed' ? .55 : input.emotion === 'defensive' ? .3 : input.speaking ? .22 : .08) + (input.speaking ? 0 : (input.wander ?? 0) * .45);
       if (this.rand() < away) {
         const sideways = (this.rand() < .5 ? -1 : 1) * (.35 + this.rand() * .45);
         this.saccadeX = sideways;
@@ -192,9 +200,10 @@ export class FacialPerformance {
       }
     }
     if (this.glanceUntil >= 0 && time >= this.glanceUntil) { this.glanceUntil = -1; this.saccadeX *= .2; this.saccadeY *= .2; this.nextSaccade = time + .2; }
-    // Saccades move fast; the eyes rest between them.
-    pose.gazeX = approach(pose.gazeX, this.saccadeX * motion, dt, 22);
-    pose.gazeY = approach(pose.gazeY, this.saccadeY * motion, dt, 22);
+    // Saccades move fast; the eyes rest between them. Thinking looks up and away; a phone pulls the eyes down.
+    const up = clamp(input.lookUp ?? 0, 0, 1), down = clamp(input.lookDown ?? 0, 0, 1);
+    pose.gazeX = approach(pose.gazeX, lerp(this.saccadeX * motion, .55, up * .8), dt, 22);
+    pose.gazeY = approach(pose.gazeY, lerp(lerp(this.saccadeY * motion, .6, up), -.9, down), dt, 22);
 
     // Head: listening nods, speaking accents, emotional tilt and a slow idle drift.
     let nod = 0;
@@ -237,8 +246,8 @@ export class FacialPerformance {
     const glanceYaw = this.glanceUntil >= 0 ? this.saccadeX * .09 : 0;
     const glancePitch = this.glanceUntil >= 0 ? -this.saccadeY * .05 : 0;
     const accent = input.speaking ? peak * .035 * motion : 0;
-    pose.headPitch = approach(pose.headPitch, nod + accent + glancePitch + (input.emotion === 'embarrassed' ? .06 : input.emotion === 'defensive' ? -.03 : 0), dt, 10);
-    pose.headYaw = approach(pose.headYaw, (this.idleYaw + glanceYaw) * motion, dt, 3);
+    pose.headPitch = approach(pose.headPitch, nod + accent + glancePitch + (input.emotion === 'embarrassed' ? .06 : input.emotion === 'defensive' ? -.03 : 0) - up * .07 + down * .26, dt, 10);
+    pose.headYaw = approach(pose.headYaw, (this.idleYaw + glanceYaw) * motion + up * .12, dt, 3);
     const flirtRoll = input.emotion === 'flirtatious' || input.emotion === 'amused' || input.emotion === 'warm' ? -target.tilt : target.tilt;
     pose.headRoll = approach(pose.headRoll, flirtRoll + this.idleRoll * motion, dt, 3.5);
     return pose;
