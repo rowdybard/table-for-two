@@ -583,7 +583,9 @@ test('model reset discards an ordinary turn still waiting for interruption befor
     await page.keyboard.press('t');
     await page.locator('#conversation-input').fill('/model reset');
     await expect(page.locator('#send-turn')).toBeEnabled();
-    await page.locator('#send-turn').click();
+    // Submit the chat command before the bounded interruption wait expires.
+    // Waiting for two slow mouse-actionability frames would test a later reset instead.
+    await page.locator('#conversation-input').press('Enter');
     await expect(page.locator('#conversation-form')).toBeHidden();
     expect(resetPosts).toEqual([]);
     releaseInterruption();
