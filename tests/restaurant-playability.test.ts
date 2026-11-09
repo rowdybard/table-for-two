@@ -41,15 +41,15 @@ test('the full entrance range offered by the farewell menu accepts a goodbye', (
   } finally { director.free(); }
 });
 
-test('a table game during dessert does not erase the dessert chapter or prevent the timed diner interruption', () => {
+test('the noisy diner still arrives during dessert without disturbing the dessert chapter', () => {
   const view = dinner(), director = new EveningDirector(view);
   try {
-    view.evening.main.status = 'finished'; view.evening.dessert.status = 'served'; view.evening.dessert.choice = 'lemon'; view.evening.chapter = 'dessert'; view.stage = 'dessert';
+    view.evening.main.status = 'finished'; view.evening.main.servedAt = 820; view.evening.main.finishedAt = 860;
+    view.evening.dessert.status = 'served'; view.evening.dessert.choice = 'lemon'; view.evening.dessert.servedAt = 880; view.evening.chapter = 'dessert'; view.stage = 'dessert';
     view.evening.resolutions['wrong-order'] = 'The meal was checked earlier.'; view.evening.resolutions['spilled-drink'] = 'The table was dried earlier.';
-    director.action({ type: 'evening', action: 'start-coasters' }, 1000);
-    assert.equal(view.evening.chapter, 'dessert');
-    view.elapsed = 901; director.step(1 / 60, { allowScenarios: false });
+    view.elapsed = 911; director.step(1 / 60, { allowScenarios: false });
     assert.equal(view.evening.incident?.event, 'disruptive-diner');
+    assert.equal(view.evening.chapter, 'dessert'); assert.equal(view.evening.dessert.status, 'served');
   } finally { director.free(); }
 });
 
@@ -66,17 +66,17 @@ test('pending kitchen service does not restart dinner or make a departing date s
   } finally { director.free(); }
 });
 
-test('a shot in progress cannot append a congratulatory date line after a farewell starts', () => {
+test('authored silence beats and course service stop once a farewell starts', () => {
   const view = dinner(), director = new EveningDirector(view);
   try {
-    director.action({ type: 'evening', action: 'start-coasters' }, 1000);
-    Object.assign(view.evening.coasters, { phase: 'aiming', turn: 'date', round: 3 });
-    director.coasters.shoot(0, .6, 'date');
+    view.evening.main.status = 'served'; view.evening.main.servedDish = view.order; view.evening.main.servedAt = 0;
+    view.evening.resolutions['wrong-order'] = 'The meal was checked earlier.'; view.evening.resolutions['spilled-drink'] = 'The table was dried earlier.';
     departAfterIgnoringDeliveredBoundary(view, director);
     const farewellCueCount = view.evening.cues.length;
-    for (let frame = 0; frame < 160; frame++) { view.elapsed += .05; director.step(.05); }
+    for (let frame = 0; frame < 1200 && view.phase === 'playing'; frame++) { view.elapsed += .1; director.step(.1, { allowScenarios: false }); }
     assert.equal(view.evening.cues.length, farewellCueCount);
-    assert.equal(view.evening.sharedActivities.includes('coasters'), false);
+    assert.equal(view.evening.beats, 0);
+    assert.equal(view.evening.main.status, 'served', 'Eli does not clear a table the date is leaving');
   } finally { director.free(); }
 });
 

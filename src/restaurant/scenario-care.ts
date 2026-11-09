@@ -24,7 +24,7 @@ export function scenarioResumeAvailability(view: DinnerState): { enabled: boolea
 /** Directors retain their scheduling thresholds; this validates physical eligibility. */
 export function scenarioCanStart(view: DinnerState) {
   const e = view.evening, scenario = e.scenario;
-  return !!scenario && scenario.phase === 'dormant' && scenePresenceAvailable(view) && view.seated && !e.bill.requested && !e.incident && !['aiming', 'rolling'].includes(e.coasters.phase) && (scenario.id === 'feeling-unwell' ? e.main.status === 'waiting' || e.main.status === 'served' && e.main.bites < 3 : ['served', 'finished'].includes(e.main.status));
+  return !!scenario && scenario.phase === 'dormant' && scenePresenceAvailable(view) && view.seated && !e.bill.requested && !e.incident && (scenario.id === 'feeling-unwell' ? e.main.status === 'waiting' || e.main.status === 'served' && e.main.bites < 3 : ['served', 'finished'].includes(e.main.status));
 }
 export function scenarioMayOpen(view: DinnerState) {
   if (!scenarioCanStart(view)) return false;

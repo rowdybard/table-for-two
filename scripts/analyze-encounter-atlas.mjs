@@ -19,7 +19,7 @@ const sources = [
   'src/restaurant/story.ts', 'src/restaurant/blind-date.ts', 'src/restaurant/agenda-types.ts',
   'server/restaurant/evening.ts', 'server/restaurant/scenario.ts', 'server/restaurant/agendas.ts',
   'server/restaurant/skepticism.ts', 'server/restaurant/boundaries.ts', 'server/restaurant/chemistry.ts',
-  'server/restaurant/coasters.ts', 'server/double-date/scenarios.ts', 'server/double-date/scene.ts',
+  'server/double-date/scenarios.ts', 'server/double-date/scene.ts',
   'server/double-date/conversation.ts', 'server/restaurant/tabletop.ts', 'src/restaurant/tabletop.ts',
   'src/restaurant/scenario-care.ts', 'server/restaurant/scenario-effects.ts', 'src/restaurant/EveningInterface.ts',
   'server/restaurant/index.ts', 'src/restaurant/dining-space.ts',

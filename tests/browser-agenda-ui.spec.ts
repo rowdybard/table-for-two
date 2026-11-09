@@ -28,7 +28,7 @@ test.beforeAll(async () => {
         const state = { id:'agenda-ui', generation:1, mode:'ai-date', phase:'playing', dateId:'mira', stage:'dining', elapsed:60,
           participants:[], events:[], emotion:'warm', seated:true, order:'Rigatoni', glassRaised:false, memory:'', usage:{},sessionLimit:2,evening:createEvening('mira') };
         state.evening.agenda = {clues:['I want to be heard, even when we disagree.'],milestones:[{kind:'noticed',evidence:'You want room to disagree.'},{kind:'understood',evidence:'You want someone to listen, not just agree.'}],score:65,possible:100,goal:null,reflection:null};
-        const ui = new EveningInterface({async command(){},openActivity(){},releasePointer(){},modalChanged(){},notice(){}});
+        const ui = new EveningInterface({async command(){},releasePointer(){},modalChanged(){},notice(){}});
         ui.update(state);
         window.__agendaFixture = {ui,state,finish(){
           state.phase='ended'; state.evening.agenda.goal='To feel heard without having someone take over or fix everything.';

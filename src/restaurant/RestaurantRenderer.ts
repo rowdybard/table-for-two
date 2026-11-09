@@ -18,7 +18,7 @@ import { scenePresenceAvailable } from './scenario-care';
 type InteractionTarget = Extract<DinnerCommand, { type: 'interact' }>['target'];
 export interface RestaurantInteraction { target: InteractionTarget; label: string; actorId?: ConversationTarget }
 export type RestaurantPresentation = 'selection' | 'gameplay';
-export type TableFocus = 'menu' | 'coasters' | 'napkin' | 'dessert' | 'farewell' | null;
+export type TableFocus = 'menu' | 'farewell' | null;
 
 /** Client-only cast portraits and first-person presentation. The server owns movement and dinner. */
 export class RestaurantRenderer {
@@ -139,7 +139,7 @@ export class RestaurantRenderer {
 
   setTableFocus(focus: TableFocus) {
     if (this.tableFocus === focus) return;
-    if ([focus, this.tableFocus].some(view => view === 'coasters' || view === 'farewell')) {
+    if ([focus, this.tableFocus].some(view => view === 'farewell')) {
       this.previousView.copy(this.camera.quaternion);
       this.focusTransition = this.reducedMotion.matches ? 0 : 1;
     }
@@ -147,9 +147,6 @@ export class RestaurantRenderer {
     if (focus) this.listeningPreview = null;
     const labels: Record<Exclude<TableFocus, null>, string> = {
       menu: 'Reading the dinner menu at the table',
-      coasters: 'Looking down at the physical coaster board',
-      napkin: 'Drawing on the table napkin',
-      dessert: 'Sharing the dessert tray',
       farewell: 'Facing your date by the restaurant door',
     };
     this.canvas.setAttribute('aria-label', focus ? labels[focus] : 'First-person view of Table for Two restaurant');
@@ -171,13 +168,6 @@ export class RestaurantRenderer {
       || view.stage === 'farewell' || view.stage === 'finished'
       || ['d1', 'd2', 'waiter', 'diner'].includes(state.doubleDate?.speakingActor ?? '')) return null;
     return preview;
-  }
-
-  projectCoaster(x: number, z: number): [number, number] | null {
-    if (this.tableFocus !== 'coasters') return null;
-    const screen = new THREE.Vector3(.06 + x / .9 * .465 * .86, .821, -1.16 + this.lastDiningOffset + z / 1.1 * .565 * .78).project(this.camera);
-    const rect = this.canvas.getBoundingClientRect();
-    return [rect.left + (screen.x + 1) * rect.width / 2, rect.top + (1 - screen.y) * rect.height / 2];
   }
 
   constructor(private readonly container: HTMLElement, dateId: DateId) {
@@ -490,7 +480,7 @@ export class RestaurantRenderer {
     }
     this.farewellLight.intensity = focus === 'farewell' ? 2 : 0;
     if (focus === 'farewell' && companion) this.farewellLight.position.set(companion.position[0] - .3, 2.05, companion.position[2] - 1.2);
-    const fov = inspecting ? 40 : focus === 'coasters' ? 42 : state.doubleDate && state.seated ? 57 : state.seated || focus === 'farewell' ? 43 : 61;
+    const fov = inspecting ? 40 : state.doubleDate && state.seated ? 57 : state.seated || focus === 'farewell' ? 43 : 61;
     if (Math.abs(this.camera.fov - fov) > .01) {
       this.camera.fov = THREE.MathUtils.lerp(this.camera.fov, fov, 1 - Math.exp(-dt * 12));
       this.camera.updateProjectionMatrix();
@@ -499,7 +489,6 @@ export class RestaurantRenderer {
       if (state.doubleDate) { this.cameraTarget.y += .075; this.cameraTarget.z -= .06; }
       else { this.cameraTarget.x += .51; this.cameraTarget.y += .075; this.cameraTarget.z -= .28; }
     }
-    if (focus === 'coasters') this.cameraTarget.set(.06, 1.9, -.86 + diningOffset);
     if (focus === 'farewell' && companion) {
       this.cameraTarget.set(companion.position[0] + .55, 1.56, companion.position[2] - 1.65);
     }
@@ -511,7 +500,6 @@ export class RestaurantRenderer {
     if (movedTables && state.seated) this.camera.position.copy(this.cameraTarget);
     this.camera.position.lerp(this.cameraTarget, this.reducedMotion.matches && (focus || inspecting) ? 1 : 1 - Math.exp(-dt * 14));
     this.camera.rotation.set(this.pitch, -this.yaw + (state.seated && !state.doubleDate ? .245 : 0), 0, 'YXZ');
-    if (focus === 'coasters') this.camera.lookAt(.06, .825, -1.15 + diningOffset);
     if (focus === 'farewell' && companion) this.camera.lookAt(companion.position[0] + .47, 1.39, companion.position[2]);
     if (inspecting) this.camera.lookAt(this.inspectionAnchor);
     if (this.focusTransition > 0) {
@@ -583,7 +571,7 @@ export class RestaurantRenderer {
     this.waiter.update(this.time, dt, waiterEmotion, playback.speaker === 'waiter', playback.amplitude, this.gaze, dt > 0 ? waiterStep / dt : 0, { shared: serving, reducedMotion: this.reducedMotion.matches });
     const phoneActive = serviceEvening.incident?.event === 'disruptive-diner';
     this.diner.update(this.time, dt, playback.speaker === 'diner' ? playback.emotion : phoneActive ? 'annoyed' : 'neutral', playback.speaker === 'diner', playback.amplitude, this.gaze, 0, { phoneActive, reducedMotion: this.reducedMotion.matches });
-    this.table.update(state, focus);
+    this.table.update(state);
     const windowTarget = this.table.targets.find(target => target.userData.target === 'window');
     if (windowTarget) windowTarget.position.z = -.8 - diningOffset;
     this.set.food.visible = false;
@@ -650,18 +638,17 @@ export class RestaurantRenderer {
         cutlery: 'Arrange your cutlery', lamp: 'Adjust the light', vase: 'Turn the flowers', plate: 'Turn your plate',
         date: `Talk to ${getDate(state.dateId)?.name ?? 'your date'}`,
         exit: 'Leave the restaurant',
-        bill: 'Ask for the bill',
+        bill: 'Read the check',
         ticket: 'Check the order ticket',
-        napkin: interactionEvening.incident?.event === 'spilled-drink' ? 'Wipe the spill' : 'Draw on the napkin',
-        meal: state.evening.main.bites < 3 ? 'Try a bite' : 'Ready for dessert',
-        coasters: 'Play a little table game',
-        dessert: 'Share dessert',
+        napkin: 'Wipe the spill',
+        meal: state.evening.main.bites ? 'Another bite' : 'Try a bite',
+        dessert: state.evening.dessert.bites ? 'Another spoonful' : 'Take a spoonful',
         'service-bell': interactionEvening.incident?.event === 'disruptive-diner' ? 'Ask for a little quiet' : interactionEvening.incident?.event === 'wrong-order' ? 'Ask for the right dish' : 'Ask for water',
         window: 'Watch the rain together',
       };
       const actorId = hit.object.userData.actorId as ConversationTarget | undefined;
       const actorName = state.doubleDate && actorId ? state.doubleDate.members.find(member => member.id === actorId)?.name ?? getDate(state.doubleDate.dates.find(date => date.id === actorId)?.dateId ?? state.dateId)?.name : undefined;
-      const action = target === 'napkin' || target === 'glass' && state.evening.incident?.event === 'spilled-drink' ? null : tableActionForTarget(target);
+      const action = (target === 'napkin' || target === 'glass') && interactionEvening.incident?.event === 'spilled-drink' ? null : tableActionForTarget(target);
       const label = action ? tabletopActionAvailability(state, action).label : labels[target];
       return { target, label: actorName ? `Talk to ${actorName}` : label, ...(actorId ? { actorId } : {}) };
     }

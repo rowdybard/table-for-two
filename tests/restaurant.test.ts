@@ -141,7 +141,7 @@ test('scene physics bounds movement, stages only legitimate seated orders, pause
     scene.command({ type: 'pause', paused: true }); const elapsed = scene.state.elapsed; scene.step(60); assert.equal(scene.state.elapsed, elapsed);
     scene.command({ type: 'pause', paused: false }); scene.step(45); scene.step(4 * 60); assert.deepEqual(scene.state.events, ['wrong-order']); scene.step(6 * 60); scene.step(7 * 60); assert.deepEqual(scene.state.events, ['wrong-order'], 'later incidents must wait for a real resolution');
     scene.applyTurn({ ...turn, action: 'finish' }); assert.equal(scene.state.phase, 'playing');
-    assert.throws(() => scene.command({ type: 'interact', target: 'bill' })); scene.command({ type: 'finish' }); assert.equal(scene.state.phase, 'ended'); assert.equal(scene.state.evening.farewell.ending?.kind, 'early-exit');
+    assert.throws(() => scene.command({ type: 'evening', action: 'settle-bill', choice: 'split' })); scene.command({ type: 'finish' }); assert.equal(scene.state.phase, 'ended'); assert.equal(scene.state.evening.farewell.ending?.kind, 'early-exit');
   } finally { scene.free(); }
 });
 

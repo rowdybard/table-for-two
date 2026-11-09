@@ -5,7 +5,7 @@ import './tabletop.css';
 
 export const INSPECTION_TARGETS = [
   'menu', 'glass', 'carafe', 'bread', 'salt', 'pepper', 'cutlery', 'lamp',
-  'vase', 'plate', 'meal', 'napkin', 'coasters', 'dessert', 'ticket', 'bill', 'service-bell',
+  'vase', 'plate', 'meal', 'napkin', 'dessert', 'ticket', 'bill', 'service-bell',
 ] as const;
 
 export type InspectionTarget = typeof INSPECTION_TARGETS[number];
@@ -18,15 +18,15 @@ export function isInspectionTarget(target: string): target is InspectionTarget {
 const OBJECT_NAMES: Record<InspectionTarget, string> = {
   menu: 'Menu', glass: 'Water glass', carafe: 'Water carafe', bread: 'Bread basket',
   salt: 'Salt', pepper: 'Pepper', cutlery: 'Cutlery', lamp: 'Table lamp', vase: 'Flowers',
-  plate: 'Dinner plate', meal: 'Dinner', napkin: 'Napkin', coasters: 'Coasters', dessert: 'Dessert',
+  plate: 'Dinner plate', meal: 'Dinner', napkin: 'Napkin', dessert: 'Dessert',
   ticket: 'Order ticket', bill: 'Bill', 'service-bell': 'Service bell',
 };
 
 const DEFAULT_VERBS: Record<InspectionTarget, string> = {
   menu: 'Read menu', glass: 'Take a sip', carafe: 'Pour water', bread: 'Take some bread',
   salt: 'Add salt', pepper: 'Add pepper', cutlery: 'Arrange cutlery', lamp: 'Adjust light',
-  vase: 'Turn vase', plate: 'Turn plate', meal: 'Take a bite', napkin: 'Draw on napkin', coasters: 'Play coasters',
-  dessert: 'Share dessert', ticket: 'Check order', bill: 'Read bill', 'service-bell': 'Call waiter',
+  vase: 'Turn vase', plate: 'Turn plate', meal: 'Take a bite', napkin: 'Fold napkin',
+  dessert: 'Take a spoonful', ticket: 'Check order', bill: 'Read the check', 'service-bell': 'Call waiter',
 };
 
 interface InspectorCallbacks {
@@ -177,14 +177,15 @@ export class TabletopInspector {
     if (this.aimed) this.trigger.setAttribute('aria-label', `Inspect ${OBJECT_NAMES[this.aimed.target].toLowerCase()}`);
     this.parent.dataset.tableInspection = String(this.isOpen);
     const action = this.inspected ? tableActionForTarget(this.inspected) : null;
-    // Napkin's primary opens drawing; a spill's glass action steadies the glass.
-    const usesTableAction = action && this.inspected !== 'napkin' && !(this.inspected === 'glass' && this.state?.evening.incident?.event === 'spilled-drink');
+    // During a spill the napkin wipes and the glass is set upright; otherwise both are ordinary table actions.
+    const spill = this.state?.evening.incident?.event === 'spilled-drink';
+    const usesTableAction = action && !((this.inspected === 'napkin' || this.inspected === 'glass') && spill);
     const primary = usesTableAction && this.state ? tabletopActionAvailability(this.state, action) : null;
     if (primary) this.primary.textContent = primary.label;
     this.primary.disabled = this.pending || !!primary && !primary.enabled;
     const fold = this.state ? tabletopActionAvailability(this.state, 'fold-napkin') : null;
     this.fold.disabled = this.pending || !fold?.enabled;
-    this.fold.hidden = this.inspected !== 'napkin';
+    this.fold.hidden = this.inspected !== 'napkin' || !spill;
     this.fold.textContent = fold?.label ?? 'Fold napkin';
     const unavailable = primary?.reason ?? null;
     const message = this.pending ? null : this.actionError ?? unavailable;

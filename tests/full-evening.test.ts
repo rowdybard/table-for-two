@@ -4,7 +4,8 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { DinnerScene } from '../server/restaurant/scene';
 import { validateTurn } from '../server/restaurant/index';
 import { MENU } from '../src/restaurant/content';
-import type { DateId, DinnerCommand, EveningAction, SceneTurn } from '../src/restaurant/types';
+import { CHARACTER_STORIES } from '../src/restaurant/story';
+import type { DateId, DinnerCommand, DinnerEvent, EveningAction, SceneTurn } from '../src/restaurant/types';
 
 async function setup(dateId: DateId = 'mira', storyRate = 20) {
   await RAPIER.init(); const scene = new DinnerScene(dateId, 2, { storyRate, variation: 1, scenarioId: 'family-visit' }); let time = 1000;
@@ -38,27 +39,42 @@ async function setup(dateId: DateId = 'mira', storyRate = 20) {
     assert.equal(scene.state.evening.agenda?.score, 100);
     assert.equal(scene.state.evening.stance, 'comfortable');
   };
-  const main = () => { advance(46 / storyRate); assert.equal(scene.state.evening.incident?.event, 'wrong-order'); assert.equal(scene.state.evening.main.bites, 0); action('inspect-ticket'); action('return-order'); for (let i = 0; i < 4; i++) command({ type: 'interact', target: 'meal' }); };
-  const waitForIncident = (event: 'spilled-drink' | 'disruptive-diner', at: number) => {
-    advance(Math.max(0, at - scene.state.elapsed) / storyRate); settleStory();
-    for (let attempt = 0; attempt < 4 && scene.state.evening.incident?.event !== event; attempt++) {
+  /** Let the evening carry itself, answering any table story that opens, until the predicate holds. */
+  const until = (label: string, predicate: () => boolean, maxSeconds = 300) => {
+    const start = scene.state.elapsed;
+    while (!predicate()) {
       const e = scene.state.evening;
-      advance(Math.max(26, e.care.quietUntil - scene.state.elapsed + 1, e.lastInterruptionAt + 26 - scene.state.elapsed) / storyRate); settleStory();
+      assert.ok(scene.state.elapsed - start <= maxSeconds, `${label} did not happen within ${maxSeconds} scene seconds (incident ${e.incident?.event ?? 'none'}, main ${e.main.status}, dessert ${e.dessert.status}, elapsed ${scene.state.elapsed.toFixed(1)})`);
+      advance(1 / storyRate); settleStory();
     }
-    assert.equal(scene.state.evening.incident?.event, event);
   };
-  const spill = () => { waitForIncident('spilled-drink', 480); for (let i = 0; i < 3; i++) command({ type: 'interact', target: 'napkin' }); command({ type: 'interact', target: 'glass' }); };
-  const dessert = () => { action('order-dessert', { choice: 'lemon' }); advance(21 / storyRate); for (let piece = 0; piece < 4; piece++) action('serve-dessert', { piece, plate: piece % 2 ? 'date' : 'you' }); waitForIncident('disruptive-diner', 900); action('ask-quiet'); action('finish-dessert'); };
+  const waitForIncident = (event: DinnerEvent) => until(`the ${event} interruption`, () => scene.state.evening.incident?.event === event);
+  const main = () => { until('service', () => scene.state.evening.main.status === 'served'); assert.equal(scene.state.evening.incident?.event, 'wrong-order'); assert.equal(scene.state.evening.main.bites, 0); action('inspect-ticket'); action('return-order'); for (let i = 0; i < 4; i++) command({ type: 'interact', target: 'meal' }); assert.equal(scene.state.evening.main.bites, 3); };
+  const spill = () => { waitForIncident('spilled-drink'); for (let i = 0; i < 3; i++) command({ type: 'interact', target: 'napkin' }); command({ type: 'interact', target: 'glass' }); };
+  const dessert = (choice = 'lemon') => {
+    until('Eli clearing the plates', () => scene.state.evening.main.status === 'finished');
+    assert.equal(scene.state.evening.dessert.status, 'none', 'the dessert offer stays open for the table');
+    action('order-dessert', { choice }); until('dessert service', () => scene.state.evening.dessert.status === 'served');
+    for (let spoon = 0; spoon < 2; spoon++) command({ type: 'interact', target: 'dessert' });
+    waitForIncident('disruptive-diner'); action('ask-quiet');
+    until('the end of dessert', () => scene.state.evening.dessert.status === 'finished');
+  };
+  const check = () => until('the check', () => scene.state.evening.bill.requested);
   const entrance = () => { command({ type: 'interact', target: 'seat' }); move(0, 1, 1.5); };
-  return { scene, action, command, advance, move, social, earnConfidence, main, spill, dessert, entrance, settleStory };
+  return { scene, action, command, advance, move, social, earnConfidence, until, waitForIncident, main, spill, dessert, check, entrance, settleStory };
 }
 
-test('complete restaurant night has real courses, three recoveries, dessert sharing, neutral bill and a heard farewell', async () => {
+test('complete restaurant night carries itself: Eli serves and clears, three recoveries, a shared dessert, one check and a heard farewell', async () => {
   const f = await setup('mira', 2); try {
     assert.equal(f.scene.state.evening.main.status, 'waiting'); assert.ok(f.scene.state.evening.main.dateDish); f.earnConfidence(); f.main();
-    assert.equal(f.scene.state.evening.main.status, 'finished'); f.spill(); assert.equal(f.scene.state.evening.incident, null); f.dessert();
-    assert.equal(f.scene.state.evening.dessert.status, 'finished'); assert.equal(f.scene.state.evening.dessert.portions.length, 4); assert.equal(Object.keys(f.scene.state.evening.resolutions).length, 3);
-    f.action('request-bill'); const stance = f.scene.state.evening.stance; f.action('settle-bill', { choice: 'treat' }); assert.equal(f.scene.state.evening.stance, stance, 'paying must not purchase romance');
+    assert.equal(f.scene.state.evening.main.status, 'served', 'the plates stay until Eli clears them');
+    f.spill(); assert.equal(f.scene.state.evening.incident, null); f.dessert();
+    assert.ok(f.scene.state.evening.main.finishedAt! - f.scene.state.evening.main.servedAt! >= 90, 'the main course ran its own length after the third bite');
+    assert.ok(f.scene.state.evening.cues.some(cue => cue.key === 'main-finished' && cue.utterances[0].speaker === 'waiter'), 'Eli offers dessert as he clears');
+    assert.equal(f.scene.state.evening.dessert.status, 'finished'); assert.equal(f.scene.state.evening.dessert.chosenBy, 'you'); assert.equal(f.scene.state.evening.dessert.bites, 2);
+    assert.equal(Object.keys(f.scene.state.evening.resolutions).length, 3);
+    f.check(); assert.equal(f.scene.state.evening.chapter, 'bill'); assert.ok(f.scene.state.evening.cues.some(cue => cue.key === 'bill-requested' && cue.utterances[0].speaker === 'waiter'));
+    const stance = f.scene.state.evening.stance; f.action('settle-bill', { choice: 'treat' }); assert.equal(f.scene.state.evening.stance, stance, 'paying must not purchase romance');
     assert.equal(f.scene.state.stage, 'farewell'); assert.equal(f.scene.state.phase, 'playing'); assert.throws(() => f.action('farewell', { choice: 'again' })); f.entrance();
     f.action('farewell', { choice: 'again' }); assert.equal(f.scene.state.evening.farewell.ending?.kind, 'another-evening'); assert.equal(f.scene.state.phase, 'playing', 'do not cut off the goodbye line');
     const last = f.scene.state.evening.cues.at(-1)!; assert.ok(last.utterances.length); f.scene.acknowledge(last.utterances.find(line => line.speaker === 'date')!); f.advance(7); assert.equal(f.scene.state.phase, 'ended');
@@ -67,14 +83,24 @@ test('complete restaurant night has real courses, three recoveries, dessert shar
   } finally { f.scene.free(); }
 });
 
-test('coasters run six actual physical shots with delayed AI turns, pause stops motion and a spill waits for settlement', async () => {
-  const f = await setup('dev', 1); try {
-    f.action('start-coasters'); f.command({ type: 'coaster-shot', angle: 0, power: .59 }); const before = f.scene.state.evening.coasters.disc.z; f.advance(.2); assert.ok(f.scene.state.evening.coasters.disc.z < before);
-    f.command({ type: 'pause', paused: true }); const frozen = f.scene.snapshot(); f.advance(2); assert.deepEqual(f.scene.state.evening.coasters, frozen.evening.coasters); assert.equal(f.scene.state.elapsed, frozen.elapsed); f.command({ type: 'pause', paused: false });
-    f.advance(7); assert.ok(f.scene.state.evening.coasters.shots >= 2, 'date takes its own physical turn');
-    for (let i = 0; i < 2000 && f.scene.state.evening.coasters.phase !== 'complete'; i++) { if (f.scene.state.evening.coasters.phase === 'aiming' && f.scene.state.evening.coasters.turn === 'human') f.command({ type: 'coaster-shot', angle: .04, power: .6 }); f.advance(.05); }
-    assert.equal(f.scene.state.evening.coasters.phase, 'complete'); assert.equal(f.scene.state.evening.coasters.shots, 6); assert.ok(f.scene.state.evening.coasters.humanScore > 0); assert.ok(f.scene.state.evening.sharedActivities.includes('coasters'));
-    const points = Array.from({ length: 8 }, (_, i) => [i / 10, i / 12] as [number, number]); f.command({ type: 'napkin', points, complete: true }); assert.equal(f.scene.state.evening.napkin.complete, true); assert.ok(f.scene.state.evening.sharedActivities.includes('napkin')); assert.throws(() => f.command({ type: 'napkin', points: [[2, 0]], complete: true }));
+test('an evening with no course actions still reaches the door: Eli nudges, serves and clears, the date fills a silence and picks dessert, the check comes on its own', async () => {
+  const f = await setup('dev', 20); try {
+    assert.ok(f.scene.state.evening.cues.some(cue => cue.key === 'order-nudge' && cue.utterances[0].speaker === 'waiter'), 'Eli came over while the menu sat unopened');
+    f.until('service', () => f.scene.state.evening.main.status === 'served'); assert.equal(f.scene.state.evening.incident?.event, 'wrong-order');
+    f.action('inspect-ticket'); f.action('keep-order'); f.spill();
+    f.until('Eli clearing the plates', () => f.scene.state.evening.main.status === 'finished', 260);
+    assert.ok(f.scene.state.evening.main.finishedAt! - f.scene.state.evening.main.servedAt! >= 199, 'an untouched plate runs the full course clock');
+    assert.ok(f.scene.state.evening.beats >= 1, 'the date filled a long silence with a line of their own'); assert.ok(f.scene.state.memory.includes('broke a silence'));
+    assert.equal(f.scene.state.evening.dialogueTurns, 0, 'an authored beat is not a human turn');
+    f.until('the date choosing dessert', () => f.scene.state.evening.dessert.status !== 'none');
+    assert.equal(f.scene.state.evening.dessert.chosenBy, 'date'); assert.equal(f.scene.state.evening.dessert.choice, CHARACTER_STORIES.dev.preferredDessert);
+    assert.ok(f.scene.state.evening.cues.some(cue => cue.key === 'dessert-date-choice'));
+    f.until('dessert service', () => f.scene.state.evening.dessert.status === 'served');
+    f.waitForIncident('disruptive-diner'); f.action('let-it-go');
+    f.until('the end of dessert', () => f.scene.state.evening.dessert.status === 'finished'); assert.equal(f.scene.state.evening.dessert.bites, 0);
+    assert.ok(f.scene.state.evening.sharedActivities.includes('dessert'), 'a dessert put on the table was still shared');
+    f.check(); f.action('settle-bill', { choice: 'split' }); f.entrance(); f.action('farewell', { choice: 'friendly' });
+    assert.equal(f.scene.state.evening.farewell.ending?.kind, 'new-friend'); assert.equal(f.scene.state.usage.claudeRequests, 0);
   } finally { f.scene.free(); }
 });
 
@@ -85,23 +111,26 @@ test('repeat pressure allows a real NPC departure while repair supports a distin
     const date = f.scene.state.participants[1].position.slice(); f.advance(3); assert.notDeepEqual(f.scene.state.participants[1].position, date); assert.equal(f.scene.state.phase, 'playing', 'departure line gets a delivery window');
     const goodbye = f.scene.state.evening.cues.at(-1)!.utterances.find(u => u.speaker === 'date')!; f.scene.acknowledge(goodbye); f.advance(8); assert.equal(f.scene.state.phase, 'ended');
   } finally { f.scene.free(); }
-  const repaired = await setup(); try { repaired.earnConfidence(); repaired.social('pressure'); assert.equal(repaired.scene.state.evening.agenda?.score, 65); repaired.social('repair'); assert.equal(repaired.scene.state.evening.stance, 'curious', 'an apology reopens conversation before belief is earned'); repaired.earnConfidence(true); repaired.main(); repaired.spill(); repaired.dessert(); repaired.action('request-bill'); repaired.action('settle-bill', { choice: 'split' }); repaired.entrance(); repaired.action('farewell', { choice: 'again' }); assert.equal(repaired.scene.state.evening.farewell.ending?.kind, 'second-chance'); } finally { repaired.scene.free(); }
-  const wordsOnly = await setup(); try { wordsOnly.social('pressure'); wordsOnly.social('repair'); wordsOnly.main(); wordsOnly.spill(); wordsOnly.dessert(); wordsOnly.action('request-bill'); wordsOnly.action('settle-bill', { choice: 'split' }); wordsOnly.entrance(); wordsOnly.action('farewell', { choice: 'again' }); assert.equal(wordsOnly.scene.state.evening.farewell.ending?.kind, 'new-friend', 'an apology without corroboration does not manufacture a second-chance romance'); } finally { wordsOnly.scene.free(); }
+  const repaired = await setup(); try { repaired.earnConfidence(); repaired.social('pressure'); assert.equal(repaired.scene.state.evening.agenda?.score, 65); repaired.social('repair'); assert.equal(repaired.scene.state.evening.stance, 'curious', 'an apology reopens conversation before belief is earned'); repaired.earnConfidence(true); repaired.main(); repaired.spill(); repaired.dessert(); repaired.check(); repaired.action('settle-bill', { choice: 'split' }); repaired.entrance(); repaired.action('farewell', { choice: 'again' }); assert.equal(repaired.scene.state.evening.farewell.ending?.kind, 'second-chance'); } finally { repaired.scene.free(); }
+  const wordsOnly = await setup(); try { wordsOnly.social('pressure'); wordsOnly.social('repair'); wordsOnly.main(); wordsOnly.spill(); wordsOnly.dessert(); wordsOnly.check(); wordsOnly.action('settle-bill', { choice: 'split' }); wordsOnly.entrance(); wordsOnly.action('farewell', { choice: 'again' }); assert.equal(wordsOnly.scene.state.evening.farewell.ending?.kind, 'new-friend', 'an apology without corroboration does not manufacture a second-chance romance'); } finally { wordsOnly.scene.free(); }
 });
 
-test('progression rejects bypasses and social payloads while late ordering never stacks unresolved incidents', async () => {
+test('progression rejects bypasses and social payloads while an unresolved wrong plate holds the whole evening', async () => {
   const f = await setup('mira', 60); try {
-    assert.throws(() => f.action('settle-bill', { choice: 'split' })); assert.throws(() => f.action('finish-main')); assert.throws(() => f.action('order-dessert', { choice: 'lemon' })); assert.throws(() => f.action('serve-dessert', { piece: 0, plate: 'date' }));
+    assert.throws(() => f.action('settle-bill', { choice: 'split' })); assert.throws(() => f.action('taste'), /Wait for your dinner/); assert.throws(() => f.action('order-dessert', { choice: 'lemon' })); assert.throws(() => f.action('skip-dessert'));
+    assert.throws(() => f.command({ type: 'evening', action: 'finish-main' } as unknown as DinnerCommand), 'the removed course shortcuts are gone');
     f.advance(20); f.settleStory(); f.advance(26 / 60); assert.deepEqual(f.scene.state.events, ['wrong-order']); assert.equal(f.scene.state.evening.incident?.event, 'wrong-order');
+    assert.equal(f.scene.state.evening.main.status, 'served', 'Eli never clears a plate nobody has agreed to');
     assert.throws(() => f.action('return-order')); f.action('inspect-ticket'); f.action('keep-order'); assert.equal(f.scene.state.evening.incident, null); f.advance(1 / 60); assert.equal(f.scene.state.evening.incident, null, 'one story second cannot dump old timed events');
+    assert.equal(f.scene.state.evening.main.status, 'finished', 'once the plate is agreed on, Eli clears the long-overdue course');
     f.advance(26 / 60); assert.equal(f.scene.snapshot().evening.incident?.event, 'spilled-drink', 'a later interruption waits for a real calm interval');
     const malformed = { utterances: [{ speaker: 'date', text: 'Hello', emotion: 'neutral' }], emotion: 'neutral', action: 'none', memory: '', social: { signal: 'admin', reason: '', wantsToLeave: false } }; assert.throws(() => validateTurn(malformed));
   } finally { f.scene.free(); }
 });
 
 test('friendly, reserved and explicit early departures are complete distinct outcomes', async () => {
-  for (const [choice, expected] of [['friendly', 'new-friend'], ['goodbye', 'quiet-goodbye'], ['again', 'new-friend']] as const) { const f = await setup(); try { f.main(); f.spill(); f.dessert(); f.action('request-bill'); f.action('settle-bill', { choice: 'separate' }); f.entrance(); f.action('farewell', { choice }); assert.equal(f.scene.state.evening.farewell.ending?.kind, expected); } finally { f.scene.free(); } }
-  for (const choice of ['friendly', 'again'] as const) { const f = await setup(); try { f.social('pressure'); f.main(); f.spill(); f.dessert(); f.action('request-bill'); f.action('settle-bill', { choice: 'split' }); assert.equal(f.scene.state.evening.stance, 'guarded'); f.entrance(); f.action('farewell', { choice }); assert.equal(f.scene.state.evening.farewell.ending?.kind, 'quiet-goodbye', 'an uncomfortable date can decline friendship as well as another date'); } finally { f.scene.free(); } }
+  for (const [choice, expected] of [['friendly', 'new-friend'], ['goodbye', 'quiet-goodbye'], ['again', 'new-friend']] as const) { const f = await setup(); try { f.main(); f.spill(); f.dessert(); f.check(); f.action('settle-bill', { choice: 'separate' }); f.entrance(); f.action('farewell', { choice }); assert.equal(f.scene.state.evening.farewell.ending?.kind, expected); } finally { f.scene.free(); } }
+  for (const choice of ['friendly', 'again'] as const) { const f = await setup(); try { f.social('pressure'); f.main(); f.spill(); f.dessert(); f.check(); f.action('settle-bill', { choice: 'split' }); assert.equal(f.scene.state.evening.stance, 'guarded'); f.entrance(); f.action('farewell', { choice }); assert.equal(f.scene.state.evening.farewell.ending?.kind, 'quiet-goodbye', 'an uncomfortable date can decline friendship as well as another date'); } finally { f.scene.free(); } }
   const f = await setup(); try { f.command({ type: 'pause', paused: true }); f.command({ type: 'finish' }); assert.equal(f.scene.state.phase, 'ended'); assert.equal(f.scene.state.evening.farewell.ending?.kind, 'early-exit'); } finally { f.scene.free(); }
 });
 

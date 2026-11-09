@@ -59,8 +59,6 @@ export class DinnerScene {
     }
     if (command.type === 'scenario') { this.director.scenario(command.choice); this.syncDiningArea(); this.syncPositions(); return; }
     if (command.type === 'evening') { this.director.action(command, now); return; }
-    if (command.type === 'coaster-shot') { this.director.shot(command.angle, command.power); return; }
-    if (command.type === 'napkin') { this.director.napkin(command.points, command.complete); return; }
     if (command.type === 'tabletop') { this.director.tabletop.action(command.action); return; }
     const { target, choice } = command;
     const offset = diningOffsetZ(this.state);
@@ -76,12 +74,11 @@ export class DinnerScene {
       if (this.state.order) throw new Error('Your order is already with the kitchen.');
       this.state.order = choice; this.state.stage = 'ordered'; this.seatedClock = this.state.elapsed; this.director.ordered();
     } else if (target === 'glass') { if (!this.state.seated) throw new Error('Your glass is at the table.'); if (this.state.evening.incident?.event === 'spilled-drink') this.director.action({ type: 'evening', action: 'steady-glass' }, now); else { this.director.tabletop.cancelSip(); this.state.glassRaised = !this.state.glassRaised; } }
-    else if (target === 'meal') this.director.action({ type: 'evening', action: this.state.evening.main.bites < 3 ? 'taste' : 'finish-main' }, now);
-    else if (target === 'bill') this.director.action({ type: 'evening', action: 'request-bill' }, now);
-    else if (target === 'coasters') this.director.action({ type: 'evening', action: 'start-coasters' }, now);
+    else if (target === 'meal' || target === 'dessert') this.director.action({ type: 'evening', action: 'taste' }, now);
+    else if (target === 'bill') { if (!this.state.seated) throw new Error('Take your seat at the table first.'); }
     else if (target === 'ticket') this.director.action({ type: 'evening', action: 'inspect-ticket' }, now);
     else if (target === 'napkin') { if (!this.state.seated) throw new Error('Take your seat at the table first.'); if (this.state.evening.incident?.event === 'spilled-drink') this.director.action({ type: 'evening', action: 'wipe' }, now); }
-    else if (['dessert', 'service-bell', 'carafe', 'bread', 'salt', 'pepper', 'cutlery', 'lamp', 'vase', 'plate'].includes(target)) { if (!this.state.seated) throw new Error('Take your seat at the table first.'); }
+    else if (['service-bell', 'carafe', 'bread', 'salt', 'pepper', 'cutlery', 'lamp', 'vase', 'plate'].includes(target)) { if (!this.state.seated) throw new Error('Take your seat at the table first.'); }
     else if (target === 'window') { if (!this.near(-5.5, -1, 3)) throw new Error('Walk to the window to look outside.'); this.director.window(); }
     else if (target === 'date') { const p = this.date.translation(); if (!this.near(p.x, p.z, 3)) throw new Error('Move closer to your date.'); }
     else throw new Error('Unknown interaction.');

@@ -9,6 +9,7 @@ import { setActorSeated } from '../restaurant/actor-controller';
 import { createSharedTabletopState, createTabletopState } from '../../src/restaurant/tabletop';
 import { diningOffsetZ } from '../../src/restaurant/dining-space';
 import { ensureScenarioCare } from '../restaurant/scenario-effects';
+import { EVENING_PACE } from '../../src/restaurant/evening';
 
 const ids: DoubleHumanId[] = ['h1', 'h2'];
 const recovery = new Set(['inspect-ticket', 'return-order', 'keep-order', 'wipe', 'steady-glass', 'ask-quiet', 'let-it-go', 'apologize']);
@@ -97,7 +98,7 @@ export class DoubleTableScene {
     }
     if (this.state.phase !== 'playing' || member.viewingEnding) throw new Error('Return to the table or resume the evening before interacting.');
     const wingman = view.phase === 'ended';
-    if (this.state.scenario?.phase === 'active' && command.type === 'evening' && ['finish-main', 'order-dessert', 'skip-dessert', 'finish-dessert', 'request-bill', 'settle-bill'].includes(command.action)) throw new Error('Respond to the moment at the table before moving dinner along.');
+    if (this.state.scenario?.phase === 'active' && command.type === 'evening' && ['order-dessert', 'skip-dessert', 'settle-bill'].includes(command.action)) throw new Error('Respond to the moment at the table before moving dinner along.');
     if (command.type === 'move') {
       if (Math.abs(command.x) > 1 || Math.abs(command.z) > 1) throw new Error('Invalid movement.');
       const magnitude = Math.max(1, Math.hypot(command.x, command.z));
@@ -113,8 +114,6 @@ export class DoubleTableScene {
       if (ids.some(id => this.state.views[id].evening.incident)) throw new Error('Deal with the interruption first.');
       director.tabletop.action(command.action); return;
     }
-    if (command.type === 'coaster-shot') { if (wingman) throw new Error('Your own date has ended; you can watch your friend’s game.'); if (this.state.tableActivity?.owner !== human) throw new Error('Your friend is playing this round.'); director.shot(command.angle, command.power); return; }
-    if (command.type === 'napkin') { if (wingman) throw new Error('Your own keepsake is complete.'); director.napkin(command.points, command.complete); return; }
     const { target, choice } = command;
     if (wingman && !['seat', 'glass', 'bill', 'ticket', 'napkin', 'date', 'exit', 'window', 'service-bell'].includes(target)) throw new Error('Your own date is complete. You can keep your friend company.');
     const body = this.humans.get(human)!;
@@ -138,9 +137,8 @@ export class DoubleTableScene {
       if (!member.seated) throw new Error('Your glass is at the table.');
       if (view.evening.incident?.event === 'spilled-drink') this.eveningAction(human, { type: 'evening', action: 'steady-glass' }, now);
       else { director.tabletop.cancelSip(); view.glassRaised = !view.glassRaised; }
-    } else if (target === 'meal') this.eveningAction(human, { type: 'evening', action: view.evening.main.bites < 3 ? 'taste' : 'finish-main' }, now);
-    else if (target === 'bill') this.eveningAction(human, { type: 'evening', action: 'request-bill' }, now);
-    else if (target === 'coasters') this.eveningAction(human, { type: 'evening', action: 'start-coasters' }, now);
+    } else if (target === 'meal' || target === 'dessert') this.eveningAction(human, { type: 'evening', action: 'taste' }, now);
+    else if (target === 'bill') { if (!member.seated) throw new Error('Take your own seat first.'); }
     else if (target === 'ticket') this.eveningAction(human, { type: 'evening', action: 'inspect-ticket' }, now);
     else if (target === 'napkin' && view.evening.incident?.event === 'spilled-drink') this.eveningAction(human, { type: 'evening', action: 'wipe' }, now);
     else if (target === 'exit') {
@@ -151,7 +149,7 @@ export class DoubleTableScene {
     else if (target === 'window') { if (!near(-5.5, -1, 3)) throw new Error('Walk to the window together first.'); if (wingman) { const other = this.state.views[human === 'h1' ? 'h2' : 'h1']; if (!other.evening.moments.some(moment => moment.id === `wingman-window-${human}`)) other.evening.moments.push({ id: `wingman-window-${human}`, title: 'A little company', description: `${member.name} stayed nearby while the evening continued.` }); } else director.window(); }
     else if (target === 'service-bell') this.eveningAction(human, { type: 'evening', action: 'request-water' }, now);
     else if (['carafe', 'bread', 'salt', 'pepper', 'cutlery', 'lamp', 'vase', 'plate'].includes(target)) { if (!member.seated) throw new Error('Take your own seat first.'); }
-    else if (!['dessert', 'service-bell', 'napkin'].includes(target)) throw new Error('Unknown interaction.');
+    else if (!['service-bell', 'napkin'].includes(target)) throw new Error('Unknown interaction.');
     this.syncPositions(); this.finishIfBoth();
   }
 
@@ -159,7 +157,7 @@ export class DoubleTableScene {
     this.finishIfBoth();
     const view = this.state.views[human], wingman = view.phase === 'ended';
     const otherHuman = human === 'h1' ? 'h2' : 'h1';
-    if (wingman && !recovery.has(command.action) && !['request-water', 'check-in', 'resume-dinner', 'request-bill', 'settle-bill'].includes(command.action)) throw new Error('Your date’s outcome is settled. Help your friend or enjoy their company.');
+    if (wingman && !recovery.has(command.action) && !['request-water', 'check-in', 'resume-dinner', 'settle-bill'].includes(command.action)) throw new Error('Your date’s outcome is settled. Help your friend or enjoy their company.');
     if (wingman && recovery.has(command.action) && !this.incidentOwner) throw new Error('There is no active table interruption to help with.');
     if (wingman && !view.seated) throw new Error('Take your seat before helping at the table.');
     if (wingman && ['request-water', 'check-in', 'resume-dinner'].includes(command.action)) {
@@ -172,11 +170,6 @@ export class DoubleTableScene {
       if (!view.evening.moments.some(moment => moment.id === momentId)) view.evening.moments.push({ id: momentId, title: 'Stayed for a friend', description: `${this.state.members.find(member => member.id === human)!.name} stayed after their goodbye and ${command.action === 'request-water' ? 'asked for water for the remaining pair' : 'checked that the remaining pair wanted to continue'}.` });
       return;
     }
-    if (command.action === 'start-coasters') {
-      const activity = this.state.tableActivity;
-      if (activity && this.state.views[activity.owner].evening.coasters.phase !== 'complete') throw new Error('Finish the current table game before starting another.');
-      this.directors.get(human)!.action(command, now); this.state.tableActivity = { kind: 'coasters', owner: human }; return;
-    }
     if (this.incidentOwner && recovery.has(command.action)) {
       if (!view.seated) throw new Error('Take a seat before helping at the table.');
       const owner = this.state.views[this.incidentOwner], previousSeat = owner.seated;
@@ -185,19 +178,18 @@ export class DoubleTableScene {
       finally { owner.seated = previousSeat; }
       this.shareIncident(); return;
     }
-    if (command.action === 'request-bill' || command.action === 'settle-bill') {
+    if (command.action === 'settle-bill') {
       const active = ids.filter(id => this.state.views[id].phase !== 'ended');
       // The bill is one table action. Check every recipient before either
       // director can mutate its bill, moments or authored dialogue.
       for (const id of active) {
         const pair = this.state.views[id], evening = pair.evening;
-        if (evening.main.status !== 'finished' || !['finished', 'skipped'].includes(evening.dessert.status)) throw new Error('Finish both dinners before settling the shared bill.');
+        if (!evening.bill.requested) throw new Error('Eli brings one check for the table once both dinners are finished.');
         if (evening.scenarioCare?.kitchen.held || evening.scenarioCare && evening.scenarioCare.presence !== 'at-table') throw new Error('Let your friend return and resume dinner before settling the shared bill.');
         if (!pair.seated) throw new Error('Take your seats before settling the table’s bill.');
         if (evening.stance === 'leaving' || evening.farewell.ending) throw new Error('Let the goodbye finish before changing the table’s bill.');
         if (evening.incident || evening.scenario?.phase === 'active') throw new Error('Finish the interruption before settling the table’s bill.');
-        if (evening.coasters.phase === 'rolling') throw new Error('Let the current coaster finish its roll before moving dinner along.');
-        if (command.action === 'settle-bill' && (!evening.bill.requested || evening.bill.settlement || !['split', 'treat', 'separate'].includes(command.choice || ''))) throw new Error('Ask for the bill, then choose how to settle it.');
+        if (evening.bill.settlement || !['split', 'treat', 'separate'].includes(command.choice || '')) throw new Error('Choose how to settle the check.');
       }
       for (const id of active) this.directors.get(id)!.action(command, now);
     } else this.directors.get(human)!.action(command, now);
@@ -271,8 +263,8 @@ export class DoubleTableScene {
         previous.evening.incident = null; this.incidentOwner = next.evening.incident ? nextOwner : null;
       } else this.incidentOwner = null;
     }
-    const activity = this.state.tableActivity;
-    if (activity && (this.state.views[activity.owner].phase === 'ended' || this.state.views[activity.owner].evening.farewell.ending)) { this.state.views[activity.owner].evening.coasters.phase = 'complete'; this.state.tableActivity = undefined; }
+    // An ended view never shows a mirrored interruption; the active pair keeps the real one.
+    for (const id of ids) if (id !== this.incidentOwner && this.state.views[id].phase === 'ended') this.state.views[id].evening.incident = null;
     if (ids.every(human => this.state.views[human].phase === 'ended')) this.state.phase = 'ended';
     if (this.incidentOwner) this.state.incidentOwner = this.incidentOwner; else delete this.state.incidentOwner;
   }
@@ -281,6 +273,9 @@ export class DoubleTableScene {
     if (this.freed || this.state.phase !== 'playing') return;
     this.syncDiningArea();
     dt = Math.max(1 / 120, Math.min(1 / 20, dt));
+    // One check for the table: Eli waits until every pair still dining has finished dessert and nothing is being mopped up.
+    const dining = ids.filter(id => this.state.views[id].phase !== 'ended');
+    const holdBill = dining.some(id => { const view = this.state.views[id], dessert = view.evening.dessert; return !!view.evening.incident || !['finished', 'skipped'].includes(dessert.status) || dessert.finishedAt === undefined || view.elapsed - dessert.finishedAt < EVENING_PACE.checkDelay; });
     for (const human of ids) {
       const view = this.state.views[human], member = this.state.members.find(item => item.id === human);
       if (!member) continue;
@@ -307,9 +302,11 @@ export class DoubleTableScene {
       const dateSeated = !departing && (!away || returning) && (member.seated || returning) && Math.hypot(d.x - seat[0], d.z - seat[2] - this.tableOffset) < .14;
       setActorSeated(date, dateSeated, { x: seat[0], y: 0, z: seat[2] + this.tableOffset });
       if (!dateSeated) date.setLinvel({ x: distance ? dx / distance * speed : 0, y: 0, z: distance ? dz / distance * speed : 0 }, true);
-      if (view.phase !== 'ended') this.directors.get(human)!.step(dt, { dateReturned: Math.hypot(d.x - seat[0], d.z - seat[2] - this.tableOffset) < .14, allowScenarios: false, allowIncidents: this.state.scenario?.phase !== 'active' && !this.incidentOwner && view.elapsed - this.lastIncidentAt > 25 && ids.filter(id => this.state.views[id].phase !== 'ended').every(id => this.state.views[id].elapsed >= this.state.views[id].evening.care.quietUntil && this.state.views[id].elapsed - this.state.views[id].evening.lastInterruptionAt > 25) });
-      this.captureIncident(human); this.shareIncident();
+      if (view.phase !== 'ended') this.directors.get(human)!.step(dt, { holdBill, dateReturned: Math.hypot(d.x - seat[0], d.z - seat[2] - this.tableOffset) < .14, allowScenarios: false, allowIncidents: this.state.scenario?.phase !== 'active' && !this.incidentOwner && view.elapsed - this.lastIncidentAt > 25 && ids.filter(id => this.state.views[id].phase !== 'ended').every(id => this.state.views[id].elapsed >= this.state.views[id].evening.care.quietUntil && this.state.views[id].elapsed - this.state.views[id].evening.lastInterruptionAt > 25) });
+      this.captureIncident(human);
     }
+    // Eli serves the table in one trip: a wrong plate for one pair reaches the other pair's view only after both directors have stepped, so the second plate still arrives.
+    this.shareIncident();
     this.world.timestep = dt; this.world.step(); this.syncPositions(); this.finishIfBoth();
   }
 

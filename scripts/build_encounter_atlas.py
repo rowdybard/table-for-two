@@ -145,7 +145,7 @@ def internal_link(paragraph, text, anchor):
 
 # Scope and inventory
 DOC.add_paragraph('Restaurant Encounter Atlas', 'Title')
-DOC.add_paragraph('Table for Two  |  Design reference  |  8 November 2026', 'Subtitle')
+DOC.add_paragraph('Table for Two  |  Design reference  |  9 November 2026', 'Subtitle')
 p('The restaurant currently contains 11 seeded two-beat stories, plus three separately scheduled physical interruptions. Across the story catalogue there are 58 complete two-choice histories. Most routes rejoin the same follow-through beat, so 58 histories should not be read as 58 different plots or 58 events in one evening.', size=12, after=12)
 table(['Content layer','Verified amount','What a player can meet'],[
     ['Seeded stories','11 alternatives','One selected story per Solo or Blind evening; one shared story per Double room.'],
@@ -184,20 +184,20 @@ table(['Mode','People and ownership','Selection and consequences'],[
 ],[1.3,3.25,5.17],small=10)
 heading('Dinner flow',2)
 tree('Arrive and sit','The human walks to the table. Seating and movement are authoritative game state.')
-tree('Choose one of three main courses','Food takes 45 active kitchen seconds. A care hold preserves the remaining cooking time. Try three bites; separate bites require at least 500 ms.')
-tree('Spend time together','Conversation, a seeded story, conditional physical interruptions, small gestures and optional activities can happen here.')
-tree('Dessert decision','Choose lemon, chocolate or berries and wait 20 scene seconds; serve four portions between two plates. Or skip dessert.')
+tree('Choose one of three main courses','Eli nudges an unopened menu after 40 scene seconds. Food takes 45 active kitchen seconds; a care hold preserves the remaining cooking time. Try three bites (at least 500 ms apart). Eli clears the plates 200 seconds after service, 60 seconds after the cutlery is rested across the plate, or 90 seconds after the third bite.')
+tree('Spend time together','Conversation, a seeded story, conditional physical interruptions and small gestures happen here. The date breaks a long silence with an authored line of their own, at most four per evening, without a model call.')
+tree('Dessert decision','Eli offers dessert as the plates go. Choose lemon, chocolate or berries, or skip it; after 40 scene seconds the date suggests their favourite, or declines when guarded or hurt. Dessert takes 20 kitchen seconds and is shared from one plate; it finishes 75 seconds after service or 40 seconds after two spoonfuls. Eli brings one check 12 seconds after dessert ends or is declined.')
 tree('Settle dinner and say goodbye','Three settlement options; then stand and walk to the entrance for one of three farewell requests.',last=True)
 heading('Shared story arrival gate',2)
-p('Solo and Blind: seated, date present, no requested bill, active incident, rolling coaster or departure; calm and quiet windows must have expired. Most stories need a served or finished main and four minutes elapsed OR four completed dialogue turns. The unwell story is an exception: it can interrupt a waiting order after 12 scene seconds, or a served plate before three bites after 90 seconds OR two dialogue turns.')
-p('Double: the target pair must meet the same physical eligibility and story-specific gate. The active table must be clear of incidents, rolling coasters and farewells, with 25-second spacing and quiet windows respected. Ordinary shared stories also need four minutes on the minimum active-pair clock OR four dialogue turns across active pairs. A dormant story retargets if its pair has left; an active story closes if its subject leaves.')
+p('Solo and Blind: seated, date present, no requested bill, active incident or departure; calm and quiet windows must have expired. Most stories need a served or finished main and four minutes elapsed OR four completed dialogue turns. The unwell story is an exception: it can interrupt a waiting order after 12 scene seconds, or a served plate before three bites after 90 seconds OR two dialogue turns.')
+p('Double: the target pair must meet the same physical eligibility and story-specific gate. The active table must be clear of incidents and farewells, with 25-second spacing and quiet windows respected. Ordinary shared stories also need four minutes on the minimum active-pair clock OR four dialogue turns across active pairs. A dormant story retargets if its pair has left; an active story closes if its subject leaves.')
 source('server/restaurant/evening.ts EveningDirector.step; server/double-date/scenarios.ts initializeScenario, tickScenario and resolveScenario; server/double-date/scene.ts.')
 
 page('Implementation review','review')
 heading('Food mistakes now arrive with service',2)
 p('The earlier late replacement has been removed. A wrong order can be introduced when the main is delivered, before any bite. An eaten plate cannot be replaced by a provider redirect. The kept replacement is labelled on the receipt at the original ordered price. Recovery remains a ticket comparison followed by return or acceptance.')
 heading('Later interruptions are independent opportunities',2)
-p('The water spill no longer needs a resolved wrong order, and the noisy diner no longer needs a resolved spill or the dessert chapter. Each still has course, timing, calm and presence gates. They are conditional opportunities, not three guaranteed events per evening. Moving to the quieter table prevents the later noisy-diner interruption.')
+p('The water spill belongs to the main course: a minute after service, or the next calm moment before dessert reaches the table. The noisy diner belongs to dessert: half a minute after it is served. Neither needs a previous incident to have occurred, and interruptions land before a course moves on. They are conditional opportunities, not three guaranteed events per evening: a skipped dessert has no neighbor to deal with, and moving to the quieter table prevents the noisy-diner interruption.')
 heading('Medical departures finalize the affected pair',2)
 p('The Double care exit now finalizes the departing pair’s agenda goal and reflection, locks chemistry and settles that pair once. The friend’s agenda, food and bill remain independent and playable. The deterministic comparison covers both human seats and all three care-departure stories without a provider request.')
 heading('Many choices change the account of the evening rather than the destination',2)
@@ -300,14 +300,14 @@ for s in DATA['scenarios']:
 page('Physical interruptions','physical')
 p('These three incidents are separate from the single seeded story. Each can resolve once. They are independent checks against scene time and course state, spaced by calm gaps. A fast dinner, care hold or early departure may prevent later eligibility.',size=11)
 tree('Wrong order','Checked at main delivery, before bites; requires a clear table and no previous wrong-order incident or resolution.')
-tree('Spilled water','At least eight scene minutes elapsed; main served or finished. A resolved wrong order is not required.')
-tree('Disruptive diner','At least fifteen scene minutes elapsed; any main order exists and the table has not moved to the quieter location. A resolved spill is not required.',last=True)
+tree('Spilled water','Sixty scene seconds after the main is served, or the next calm moment after that, as long as dessert has not reached the table. A resolved wrong order is not required.')
+tree('Disruptive diner','Thirty scene seconds after dessert is served, while it is still on the table and the table has not moved to the quieter location. A resolved spill is not required.',last=True)
 heading('Shared physical gates',2)
-p('Seated; date present; kitchen not held; no requested or settled bill; no farewell, departure, active story or current incident; no rolling coaster. Quiet periods must have expired and more than 25 scene seconds must separate interruptions. Double Date also keeps the active table clear and respects active pairs’ quiet windows.')
+p('Seated; date present; kitchen not held; no requested or settled bill; no farewell, departure, active story or current incident. Quiet periods must have expired and more than 25 scene seconds must separate interruptions. Double Date also keeps the active table clear and respects active pairs’ quiet windows.')
 heading('What can happen in one evening',2)
 tree('Delivery while the table is clear','The wrong dish can be noticed immediately and recovered before eating.')
 tree('Keep the evening active through later timers','Water and noise each remain eligible independently once their own gates are met.')
-tree('Move to the quieter table or finish early','The quiet location suppresses the later noise; requesting the bill or departing closes interruption eligibility.',last=True)
+tree('Move to the quieter table or finish early','The quiet location suppresses the later noise; the check arriving or a departure closes interruption eligibility.',last=True)
 p('A provider-content redirect may introduce a wrong order only on a served, untouched plate with no earlier wrong-order resolution and a clear table. Otherwise it uses a brief waiter check-in. A provider refusal is not itself a personal-boundary strike.')
 source('server/restaurant/evening.ts startIncident, redirectConversation and step; server/double-date/scene.ts captureIncident, shareIncident and step.')
 
@@ -320,8 +320,8 @@ heading('Consequences and callbacks',2)
 p('Two meaningful terminal responses. Both clear the incident, start a new 25-second calm interval, and keep a factual resolution and shared moment. The date and waiter have authored returned/kept callbacks. Neither choice grants agenda points or purchases affection.')
 p('In Double Date one pair owns the physical meal mistake while both clients see the shared incident. Either seated friend can perform recovery. If the owning date leaves, the remaining diner’s meal is left unchanged: Eli clears the departed pair’s unexpected plate and records that fact instead of making the remaining player return food they never received.')
 heading('Recovery and timing',2)
-p('Course progression is blocked until the incident is resolved. The drawer defers certain requested course actions and retries after recovery. There is no authored failure timeout. The mistake is revealed before eating, and an eaten dish cannot be replaced by a redirect. Keeping the replacement preserves the original ordered price and shows the actual dish on the receipt.')
-source('server/restaurant/evening.ts inspect-ticket, return-order, keep-order and startIncident; src/restaurant/EveningInterface.ts deferred action; server/double-date/scene.ts incident ownership transfer.')
+p('Eli does not clear or serve while the incident stands, and the prompt line shows only its handling until it is resolved. There is no authored failure timeout. The mistake is revealed before eating, and an eaten dish cannot be replaced by a redirect. Keeping the replacement preserves the original ordered price and shows the actual dish on the receipt.')
+source('server/restaurant/evening.ts inspect-ticket, return-order, keep-order and startIncident; src/restaurant/EveningInterface.ts prompt line; server/double-date/scene.ts incident ownership transfer.')
 
 page('Spilled water')
 p('A passing tray clips a water glass. This is a physical recovery sequence, not the separate seeded wine-on-a-sleeve story.')
@@ -341,23 +341,21 @@ tree('Ask the waiter for a little quiet','Eli intervenes; the diner takes the ca
 tree('Let it pass. Back to us.','Return attention to your own evening. Record that choice and clear the interruption.')
 tree('Acknowledge the awkward moment','The underlying apologize action can also resolve this incident with a cooling-down account and run the ordinary repair controller.',last=True)
 heading('Reachability matters',2)
-p('The primary incident drawer exposes the first two choices. The apologize resolution exists in the server action set, but the current incident drawer does not present it as a third primary button. Treat this as two normally presented endings plus one accepted recovery action, rather than three equal visible choices.')
+p('The prompt line exposes the first two choices. The apologize resolution exists in the server action set, but the prompt line does not present it as a third chip. Treat this as two normally presented endings plus one accepted recovery action, rather than three equal visible choices.')
 heading('Consequences and callbacks',2)
 p('All accepted resolutions clear the incident and retain a factual moment. Asking for quiet and letting it pass have different authored date/diner responses. Apology records the calmer account and can repair a prior social state; it does not override a leaving decision or instantly earn agenda confidence. There is no timed failure or automatic romantic reward.')
-source('server/restaurant/evening.ts ask-quiet, let-it-go and apologize; src/restaurant/EveningInterface.ts incident drawer; src/restaurant/story.ts diner callbacks.')
+source('server/restaurant/evening.ts ask-quiet, let-it-go and apologize; src/restaurant/EveningInterface.ts prompt line; src/restaurant/story.ts diner callbacks.')
 
 page('Activities and small gestures','activities')
 heading('Shared activities',2)
-tree('Coaster curl','After ordering and before the bill: three rounds, alternating human/date shots. Each shot scores 0–3 from distance thresholds .27, .16 and .08. Human win, date win or draw selects one of three authored callbacks. Angles and power are continuous; there is no finite authored route count for shot sequences.')
-tree('Keep a napkin drawing','Seated and clear of interruptions: draw within the napkin, with 8–600 points for completion. Saving records a keepsake and authored response once. The drawing’s subject is never inferred as a factual claim by the script.')
-tree('Share dessert','Choose one of three desserts or skip it. A served dessert has four distinct pieces, each assigned to your plate or the date’s. There are 16 final piece assignments, or five portion-count splits; the named final response mainly distinguishes keeping all, giving all, and sharing. All four pieces must be served before finishing.',last=True)
-p('Double Date allows one pair to own the coaster board at a time; the other friend can watch. Napkin drawings and dessert decisions remain per pair.',size=10,after=4)
+tree('Share dessert','Eli offers dessert as he clears the main. Choose one of three desserts or skip it; if nobody chooses within 40 scene seconds the date picks their favourite, or declines when guarded or hurt. One plate, two spoons: the first spoonful (or 25 seconds together) records the shared moment, and the plate finishes 75 seconds after service or 40 seconds after two spoonfuls.',last=True)
+p('Dessert decisions remain per pair in Double Date; Eli brings one check once every active pair has finished or declined dessert and nothing is being mopped up.',size=10,after=4)
 heading('Care choices',2)
 tree('Offer a taste','Once, while the meal is served. Acceptance requires an unguarded/unhurt stance and either the date’s preferred main or sufficient openness. Presets other than Jules can accept a nonpreferred dish; Blind uses openness at least 50. Acceptance records tasting; a refusal stands without a penalty.')
 tree('Make a toast','One choice among “To tonight”, “To honesty”, “To friendship” and “To a little mischief”. Requires an order and no requested bill. Records a shared toast and raises the glass; no romance score is awarded.')
 tree('Check in','Once after ordering and before the bill. Guarded/hurt dates, Jules, or a Blind date with sociability below 40 choose a slower pace and 45 quiet seconds. Otherwise they continue; earned confidence changes the wording.')
 tree('Ask for fresh water','First request or a refill when the served carafe is empty and your glass is below full. Delivery after 12 scene seconds restores the glass and shared carafe.',last=True)
-source('server/restaurant/coasters.ts; server/restaurant/evening.ts care and activity actions; server/double-date/scene.ts table activity ownership. Winning, gifts and payment never determine attraction.')
+source('server/restaurant/evening.ts care actions and dessert pacing; src/restaurant/evening.ts EVENING_PACE; server/double-date/scene.ts shared check. Gifts and payment never determine attraction.')
 
 page('Table objects and their state')
 p('The new tabletop layer contains ten deterministic actions. It changes physical state without issuing a model request, writing an invented memory, or awarding relationship points. Only relevant food and water facts enter future conversation context.')
@@ -426,17 +424,17 @@ p('Explicit Dolphin selection remains chemistry-gated. A deliberate Horde choice
 source('server/restaurant/chemistry.ts; server/restaurant/skepticism.ts; server/restaurant/index.ts modelFor; server/double-date/conversation.ts effectiveModel selection.')
 
 page('Farewell and endings','endings')
-p('For the ordinary farewell, finish the main, choose or skip dessert, request the bill, and settle it by splitting, treating or paying separately. Then stand and walk within the entrance radius. The player can ask to meet again, offer friendship, or say goodbye.')
+p('For the ordinary farewell, let Eli clear the main, choose or skip dessert (or let the date decide), wait for Eli to leave the check, and settle it by splitting, treating or paying separately. Then stand and walk within the entrance radius. The player can ask to meet again, offer friendship, or say goodbye.')
 tree('Player says goodbye OR the date remains guarded or hurt','Quiet goodbye. This takes precedence over the warmer branches below.')
 tree('Romance was closed OR the player chooses friendship','New friend, unless the earlier quiet-goodbye condition applied.')
 tree('Ask to meet again after an honestly repaired hurt','Earned confidence plus repaired=true and wasHurt=true → second chance.')
-tree('Ask to meet again with earned confidence and comfortable stance','At least one dialogue turn OR a recorded napkin/coaster activity → another evening.')
+tree('Ask to meet again with earned confidence and comfortable stance','At least one dialogue turn OR a shared toast, taste or dessert → another evening.')
 tree('Any other ordinary farewell','New friend. An optimistic request alone does not manufacture romantic interest.',last=True)
 heading('Other ways to finish',2)
 tree('Choose End date or a valid early exit','Early exit. If food was ordered, settle separately rather than silently avoiding the check.')
 tree('A seeded story chooses an early finish','Early-exit kind with a story-specific title and facts. Medical/unwell paths end immediately with assisted care; other mismatch paths begin a departure.')
 tree('Repeated delivered boundary disregard and a request to leave','Walked away. No subsequent kindness, payment, conversation or table action reverses the departure.',last=True)
-p('After the farewell is heard or 30 scene seconds pass, the evening can finish when the character reaches the doorway. After 45 seconds, the departure ends through a fallback. Double pairs can finish independently; one human may remain as a wingman while the other date continues. The shared Double bill checks every active pair is seated, finished with dinner and clear of interruptions before applying its request or settlement.')
+p('After the farewell is heard or 30 scene seconds pass, the evening can finish when the character reaches the doorway. After 45 seconds, the departure ends through a fallback. Double pairs can finish independently; one human may remain as a wingman while the other date continues. The shared Double bill checks every active pair is seated, finished with dinner and clear of interruptions before applying a settlement.')
 source('server/restaurant/evening.ts farewell, beginEnding, earlyExit and step; server/restaurant/scenario.ts assisted exits; server/double-date/scene.ts wingman and room completion.')
 
 page('Characters and Blind Date variation','characters')
@@ -456,18 +454,18 @@ p('Seeded story delivery uses directness above 65 for direct, otherwise sociabil
 source('src/restaurant/blind-date.ts createBlindDate; server/restaurant/scenario.ts scenarioStyle; server/restaurant/agendas.ts seed selection.')
 
 page('Source coverage','sources')
-p('The atlas was derived from the repository on 8 November 2026. Every one of the 58 story histories was executed through the actual scenario choice functions in all three delivery styles, for 174 deterministic checks. Those checks made no provider calls. The medical-versus-boundary comparison used the real DoubleTableScene controller.')
+p('The atlas was derived from the repository on 9 November 2026. Every one of the 58 story histories was executed through the actual scenario choice functions in all three delivery styles, for 174 deterministic checks. Those checks made no provider calls. The medical-versus-boundary comparison used the real DoubleTableScene controller.')
 table(['Source','Coverage'],[
     ['src/restaurant/scenarios.ts','All eleven seeded stories, exact player choice text, reactions, follow-through overrides, state effects and complete histories.'],
     ['src/restaurant/scenario-types.ts','Story phases, decisions, effects and care state.'],
     ['src/restaurant/scenario-care.ts; server/restaurant/scenario-effects.ts','Kitchen hold and resume, physical return, clean-up, quiet-table choice, extra-food statuses, cooking deadline and itemized charges.'],
     ['server/restaurant/evening.ts and scenario.ts','Course gates, care gestures, three physical incidents, timing, memory facts, scoring interactions and endings.'],
-    ['server/double-date/scenarios.ts and scene.ts','Shared target, either-friend choices, activity ownership, incident recovery and independent pair endings.'],
+    ['server/double-date/scenarios.ts and scene.ts','Shared target, either-friend choices, one check for the table, incident recovery and independent pair endings.'],
     ['server/restaurant/agendas.ts and skepticism.ts','Sixteen private goals, exact evidence criteria, heard-clue readiness, milestones and confidence.'],
     ['server/restaurant/boundaries.ts and chemistry.ts','Delivery-dependent refusals, disregard, repair, reciprocal flirt receipts and eligibility.'],
     ['server/double-date/conversation.ts and server/restaurant/index.ts','Friend-only attention, shared turn ownership and earned provider routing.'],
     ['src/restaurant/content.ts, story.ts and blind-date.ts','Adult biographies, preset preferences, thirty-eight authored cue keys and seeded personality ingredients.'],
-    ['server/restaurant/coasters.ts; src/restaurant/tabletop.ts; server/restaurant/tabletop.ts','Physics scoring, continuous activity limits and ten deterministic prop actions.'],
+    ['src/restaurant/evening.ts; src/restaurant/tabletop.ts; server/restaurant/tabletop.ts','Evening pacing clocks, finite table supplies and ten deterministic prop actions.'],
 ],[4.5,5.22],small=9.5)
 heading('Editable structure',2)
 p('The trees, tables, labels and results are native Word content. Heading styles provide navigation; the encounter index links to each story. Per-history data records opening, first-choice and completed mechanical state, plus the oversized-order late-cooking variation. Reproducible helpers support later updates. No source code is embedded as an image.')

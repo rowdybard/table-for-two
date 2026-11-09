@@ -14,8 +14,9 @@ let http: Server, app: Awaited<ReturnType<typeof attachRestaurantServer>>, base 
 const sessions: { id: string; token: string }[] = [];
 const claude: ClaudeAdapter = { async *stream() { providerCalls++; throw new Error('Tabletop input must never invoke the conversation provider.'); } };
 const readState = (page: Page) => page.evaluate(() => (window as unknown as Window & { __restaurantState: DinnerState }).__restaurantState);
-const targets: Partial<Record<InspectionTarget, [number, number, number]>> = {
-  glass: [.49, .88, -.77],
+const targets: Partial<Record<InspectionTarget | 'seat', [number, number, number]>> = {
+  // Looking down at the chair itself is how a seated guest stands up.
+  seat: [0, .61, .1], glass: [.49, .88, -.77],
   // Aim above the lamp's proxy to reach the taller carafe behind it.
   carafe: [-.60, 1.065, -1.50], bread: [.34, .85, -1.28], salt: [.66, .84, -.91], pepper: [.745, .84, -.91],
   // The fork's near end is clear of the menu lying beside it.
@@ -123,7 +124,7 @@ class TableView {
     expect(point.y).toBeGreaterThan(58); expect(point.y).toBeLessThan(viewport.height - 30);
     return point;
   }
-  async aim(target: InspectionTarget) {
+  async aim(target: InspectionTarget | 'seat') {
     const camera = await this.camera(); camera.lookAt(new Vector3(...targets[target]!));
     const rotation = new Euler().setFromQuaternion(camera.quaternion, 'YXZ');
     const desiredYaw = .245 - rotation.y, desiredPitch = rotation.x;
@@ -196,16 +197,17 @@ test('actual game: inspect and use the seated table with mouse, R and E while pr
   await expect(page.locator('[data-order]').first()).toBeVisible();
   await page.locator('#menu-close').click(); await expect.poll(async () => (await readState(page)).phase).toBe('playing');
   await page.waitForTimeout(650); // Existing menu camera returns to the chair.
-  await view.inspect('napkin'); await page.locator('#tabletop-use').click();
-  await expect(page.locator('#tabletop-inspector')).toBeHidden(); await expect(page.locator('#activities-panel')).toHaveAttribute('data-activity', 'napkin');
-  await expect(page.locator('#activities-panel h3')).toHaveText('Doodle duet');
-  await page.keyboard.press('Escape'); await expect(page.locator('#activities-panel')).not.toHaveAttribute('data-activity', 'napkin');
-  await expect(page.locator('#pause-dialog')).toBeHidden();
-  await page.keyboard.press('g'); await page.locator('#table-stand').click();
+  // The napkin is an ordinary folded prop now; the only drawing left at the table is on the receipt.
+  await view.inspect('napkin'); await expect(page.locator('#tabletop-use')).toHaveText('Fold your napkin'); await page.locator('#tabletop-use').click();
+  await expect.poll(async () => (await readState(page)).evening.tabletop!.napkinFolded).toBe(true);
+  await expect(page.locator('#tabletop-use')).toHaveText('Unfold your napkin');
+  await page.keyboard.press('Escape'); await expect(page.locator('#tabletop-inspector')).toBeHidden();
+  await expect(page.locator('#pause-dialog')).toBeHidden(); await page.waitForTimeout(650);
+  await view.aim('seat'); await expect(page.locator('#interaction-label')).toHaveText('Stand up'); await page.keyboard.press('e');
   await expect.poll(async () => (await readState(page)).seated).toBe(false);
   await expect(page.locator('#inspect-table-object')).toBeHidden(); await page.keyboard.press('r');
   await expect(page.locator('#tabletop-inspector')).toBeHidden();
-  expect(commands.filter(command => command.type === 'tabletop')).toHaveLength(10);
+  expect(commands.filter(command => command.type === 'tabletop')).toHaveLength(11);
   expect((await readState(page)).usage.claudeRequests).toBe(0); expect(providerCalls).toBe(0); expect(errors).toEqual([]);
 });
 

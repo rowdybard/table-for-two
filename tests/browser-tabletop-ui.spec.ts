@@ -30,7 +30,7 @@ test('long captions stay separate from inspection controls on desktop and phone'
       const f = (window as unknown as TabletopWindow).__tabletopFixture;
       const parent = document.getElementById('restaurant-app')!;
       parent.dataset.mobile = String(mobile);
-      f.state.seated = true; f.aim('napkin', 'Draw on napkin'); f.ui.open('napkin');
+      f.state.seated = true; f.aim('napkin', 'Fold napkin'); f.ui.open('napkin');
       const caption = document.createElement('aside'); caption.className = 'caption'; caption.id = 'caption';
       const text = document.createElement('p'); text.textContent = 'I was about to tell you why that mattered to me. '.repeat(7);
       caption.append(text); parent.append(caption);
@@ -141,7 +141,7 @@ test('inspection follows seating and session state and keeps focus during update
 test('napkin folding is a separate action and Escape returns without pausing', async ({ page }) => {
   await page.goto(base);
   await page.waitForFunction(() => (window as unknown as TabletopWindow).__tabletopFixture);
-  await page.evaluate(() => { const f = (window as unknown as TabletopWindow).__tabletopFixture; f.state.seated = true; f.aim('napkin', 'Draw on napkin'); });
+  await page.evaluate(() => { const f = (window as unknown as TabletopWindow).__tabletopFixture; f.state.seated = true; f.aim('napkin', 'Fold napkin'); });
   await page.locator('#inspect-table-object').click();
   await expect(page.locator('#tabletop-fold')).toHaveText('Fold your napkin');
   await page.locator('#tabletop-fold').click();

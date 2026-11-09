@@ -10,7 +10,6 @@ interface ConsequenceWindow extends Window {
     ui: EveningInterface;
     commands: DinnerCommand[];
     notices: string[];
-    injectIncident: boolean;
     update(): void;
     hold(presence: 'privacy-break' | 'cleanup-break' | 'at-table'): void;
     receipt(double?: boolean): void;
@@ -39,15 +38,14 @@ test.beforeAll(async () => {
           const state={id,generation:1,mode:'ai-date',phase:'playing',dateId,stage:'dining',elapsed:300,participants:[{id:'p1',kind:'human',name:'You',position:[0,0,0]}],events:[],emotion:'neutral',seated:true,order:'Roasted tomato rigatoni',glassRaised:false,memory:'',usage:{},sessionLimit:2,evening:createEvening(dateId)};
           state.evening.scenarioCare=createScenarioCareState();state.evening.main={status:'served',bites:3,dateDish:'Lemon & herb chicken',servedDish:state.order};return state;
         }
-        const fixture={state:fresh(),commands:[],notices:[],injectIncident:false,update(){ui.update(fixture.state);},
+        const fixture={state:fresh(),commands:[],notices:[],update(){ui.update(fixture.state);},
           hold(presence){const state=fixture.state;state.evening.scenario={...createRestaurantScenario('ui','feeling-unwell'),phase:'resolved',beat:'follow-through',choices:[]};const care=state.evening.scenarioCare;care.kitchen.held=true;care.kitchen.heldAt=state.elapsed;care.presence=presence;care.returnAt=presence==='at-table'?null:state.elapsed+8;fixture.update();},
           receipt(double=false){const state=fixture.state;state.evening.scenarioCare.extraOrder.items=[{id:'cancelled-extra',dish:'Lemon & herb chicken',quantity:1,unitPriceCents:2200,status:'cancelled'},{id:'boxed-extra',dish:'Wild mushroom risotto',quantity:1,unitPriceCents:2000,status:'boxed'},{id:'shared-extra',dish:'Roasted tomato rigatoni',quantity:1,unitPriceCents:1800,status:'shared'}];state.evening.main.status='finished';state.evening.dessert.status='skipped';state.evening.chapter='bill';Object.assign(state.evening.bill,{requested:true,...buildDinnerBill(state)});
             if(double){const other=fresh('friend-pair','jules');other.evening.main.status='finished';other.order='Wild mushroom risotto';other.evening.main.servedDish=other.order;other.evening.dessert.status='skipped';Object.assign(other.evening.bill,{requested:true,settlement:'separate',...buildDinnerBill(other)});state.mode='double-date';state.doubleDate={role:'dating',roomId:state.id,localHumanId:'h1',members:[{id:'h1',name:'Alex'},{id:'h2',name:'Sam'}],dates:[{id:'d1',humanId:'h1',dateId:'mira'},{id:'d2',humanId:'h2',dateId:'jules'}],speakingActor:null,otherView:other};}fixture.update();
           },replace(){fixture.state=fresh('replacement-session');fixture.update();}
         };
-        const ui=new EveningInterface({async command(body){fixture.commands.push(body);if(body.type==='evening'&&body.action==='resume-dinner'){const view=fixture.state.doubleDate?.role==='wingman'?fixture.state.doubleDate.otherView:fixture.state;view.evening.scenarioCare.kitchen.held=false;view.evening.scenarioCare.kitchen.heldAt=null;fixture.update();}if(body.type==='evening'&&body.action==='request-bill'&&fixture.injectIncident){fixture.state.evening.incident={event:'wrong-order',progress:0,startedAt:fixture.state.elapsed};fixture.update();}},openActivity(){},releasePointer(){},modalChanged(){},notice(message){fixture.notices.push(message);}});
+        const ui=new EveningInterface({async command(body){fixture.commands.push(body);if(body.type==='evening'&&body.action==='resume-dinner'){const view=fixture.state.doubleDate?.role==='wingman'?fixture.state.doubleDate.otherView:fixture.state;view.evening.scenarioCare.kitchen.held=false;view.evening.scenarioCare.kitchen.heldAt=null;fixture.update();}},releasePointer(){},modalChanged(){},notice(message){fixture.notices.push(message);}});
         fixture.ui=ui;window.__consequenceFixture=fixture;fixture.update();
-        document.querySelector('#evening-panel>.action-drawer').open=true;
       </script>`);
       return;
     }
@@ -63,15 +61,14 @@ test('held dinner explains absence, blocks course use and resumes only after the
   await page.goto(base);
   await page.waitForFunction(() => (window as unknown as ConsequenceWindow).__consequenceFixture);
   await page.evaluate(() => (window as unknown as ConsequenceWindow).__consequenceFixture.hold('privacy-break'));
-  await expect(page.locator('#evening-action-title')).toHaveText('A private minute');
-  await expect(page.locator('#evening-action-copy')).toContainText('Mira is taking a private minute.');
+  await expect(page.locator('#prompt-copy')).toContainText('Mira is taking a private minute.');
+  await expect(page.locator('#prompt-copy')).toContainText('Dinner is held until they return.');
   const resume = page.locator('[data-evening="resume-dinner"]');
   await expect(resume).toBeDisabled();
-  await expect(page.locator('[data-evening="finish-main"]')).toHaveCount(0);
-  await expect(page.locator('#table-play')).toBeHidden();
-  await page.evaluate(() => { const f = (window as unknown as ConsequenceWindow).__consequenceFixture; f.ui.handleTarget('meal'); f.ui.openDessert(); });
-  await expect(page.locator('#dessert-dialog')).toBeHidden();
+  await expect(page.locator('#prompt-chips button')).toHaveCount(1);
+  await page.evaluate(() => { const f = (window as unknown as ConsequenceWindow).__consequenceFixture; f.ui.handleTarget('meal'); f.ui.handleTarget('dessert'); });
   expect(await page.evaluate(() => (window as unknown as ConsequenceWindow).__consequenceFixture.commands)).toEqual([]);
+  expect(await page.evaluate(() => (window as unknown as ConsequenceWindow).__consequenceFixture.notices)).toEqual(['Give your date time to return.', 'Give your date time to return.']);
   await page.evaluate(() => { const f = (window as unknown as ConsequenceWindow).__consequenceFixture; f.state.evening.scenarioCare!.presence = 'at-table'; f.state.evening.scenarioCare!.returnAt = null; f.update(); });
   await expect(resume).toBeEnabled();
   await resume.focus();
@@ -79,7 +76,10 @@ test('held dinner explains absence, blocks course use and resumes only after the
   await expect(resume).toBeFocused();
   await resume.click();
   expect(await page.evaluate(() => (window as unknown as ConsequenceWindow).__consequenceFixture.commands)).toEqual([{ type: 'evening', action: 'resume-dinner' }]);
-  await expect(page.locator('[data-evening="finish-main"]')).toBeVisible();
+  // Dinner is back on: the prompt returns to the table's small gestures, never to a course button.
+  await expect(page.locator('[data-evening="offer-taste"]')).toBeVisible();
+  await expect(page.locator('[data-evening="resume-dinner"]')).toHaveCount(0);
+  await expect(page.locator('#prompt-chips [data-evening="taste"], #prompt-chips [data-evening="skip-dessert"]')).toHaveCount(0);
 });
 
 test('privacy follow-through waits for the actor, while staff medical choices stay available', async ({ page }) => {
@@ -92,14 +92,14 @@ test('privacy follow-through waits for the actor, while staff medical choices st
     f.update();
   });
   await expect(page.locator('[data-scenario="slow-dinner"]')).toBeDisabled();
-  await expect(page.locator('#evening-action-copy')).toContainText('They’re returning shortly.');
-  await expect(page.locator('#evening-action-copy')).not.toContainText('returns looking embarrassed');
+  await expect(page.locator('#prompt-copy')).toContainText('They’re returning shortly.');
+  await expect(page.locator('#prompt-copy')).not.toContainText('returns looking embarrassed');
   await page.evaluate(() => {
     const f = (window as unknown as ConsequenceWindow).__consequenceFixture;
     f.state.evening.scenarioCare!.presence = 'at-table'; f.update();
   });
   await expect(page.locator('[data-scenario="slow-dinner"]')).toBeEnabled();
-  await expect(page.locator('#evening-action-copy')).toContainText('Your date returns looking embarrassed.');
+  await expect(page.locator('#prompt-copy')).toContainText('Your date returns looking embarrassed.');
   await page.evaluate(() => {
     const f = (window as unknown as ConsequenceWindow).__consequenceFixture;
     f.state.evening.scenario!.id = 'allergic-reaction';
@@ -172,14 +172,20 @@ test('a seated wingman can resume the other pair after their date returns', asyn
   await expect(resume).toHaveCount(0);
 });
 
-test('a replacement evening cannot replay an old deferred course action or keep its bill open', async ({ page }) => {
+test('a replacement evening closes the old check and asks for nothing the kitchen has not offered', async ({ page }) => {
   await page.goto(base);
   await page.waitForFunction(() => (window as unknown as ConsequenceWindow).__consequenceFixture);
-  await page.evaluate(async () => { const f = (window as unknown as ConsequenceWindow).__consequenceFixture; f.injectIncident = true; await f.ui.openBill(); f.replace(); });
-  await page.waitForTimeout(50);
-  expect(await page.evaluate(() => (window as unknown as ConsequenceWindow).__consequenceFixture.commands)).toEqual([{ type: 'evening', action: 'request-bill' }]);
+  // Before Eli brings the check there is nothing to open; the request is Eli's to make, not a button.
+  await page.evaluate(() => { const f = (window as unknown as ConsequenceWindow).__consequenceFixture; f.ui.openBill(); });
   await expect(page.locator('#bill-dialog')).toBeHidden();
-  await expect(page.locator('#evening-action-title')).toHaveText('Dinner');
+  expect(await page.evaluate(() => (window as unknown as ConsequenceWindow).__consequenceFixture.notices)).toEqual(['Eli brings the check once dessert is done.']);
+  await page.evaluate(async () => { const f = (window as unknown as ConsequenceWindow).__consequenceFixture; f.receipt(); await f.ui.openBill(); });
+  await expect(page.locator('#bill-dialog')).toBeVisible();
+  await page.evaluate(() => { const f = (window as unknown as ConsequenceWindow).__consequenceFixture; f.replace(); });
+  await expect(page.locator('#bill-dialog')).toBeHidden();
+  expect(await page.evaluate(() => (window as unknown as ConsequenceWindow).__consequenceFixture.commands)).toEqual([]);
+  await expect(page.locator('[data-evening="offer-taste"]')).toBeVisible();
+  await expect(page.locator('#prompt-chips [data-evening="settle-bill"]')).toHaveCount(0);
 });
 
 for (const viewport of [{ width: 1280, height: 800 }, { width: 844, height: 390 }]) {
@@ -197,8 +203,10 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 844, height: 390 
     expect(await receipt.evaluate(node => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(1);
     await page.locator('#bill-close').click();
     await page.evaluate(() => { const f = (window as unknown as ConsequenceWindow).__consequenceFixture; f.state.evening.bill.requested = false; f.state.evening.scenarioCare!.table = 'quiet'; f.hold('cleanup-break'); });
-    await expect(page.locator('#evening-action-copy')).toContainText('You are at the quieter table.');
-    await expect(page.locator('#evening-action-copy')).toContainText('packed to take home');
-    expect(await page.locator('#evening-panel').evaluate(node => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(1);
+    await expect(page.locator('#prompt-copy')).toContainText('You are at the quieter table.');
+    await expect(page.locator('#prompt-copy')).toContainText('packed to take home');
+    const prompt = await page.locator('#prompt-line').boundingBox();
+    expect(prompt!.x).toBeGreaterThanOrEqual(0); expect(prompt!.x + prompt!.width).toBeLessThanOrEqual(viewport.width);
+    expect(await page.locator('#prompt-line').evaluate(node => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(1);
   });
 }

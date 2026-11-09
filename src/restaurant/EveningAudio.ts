@@ -48,7 +48,6 @@ export class EveningAudio {
   cue(key: string) {
     if (/spill/.test(key)) { this.tone(320, .18, .08); this.tone(710, .13, .05, .06); }
     else if (/served|ordered|bill/.test(key)) { this.tone(1850, .12, .06); this.tone(2670, .08, .025, .025); }
-    else if (/coaster|napkin/.test(key)) this.tone(460, .07, .06);
     else if (/glass|toast/.test(key)) { this.tone(2100, .3, .08); this.tone(2870, .22, .035); }
     else if (/ending|farewell/.test(key)) { this.note(60, 1.4, .04); this.note(64, 1.1, .025, .1); this.note(67, 1, .02, .22); }
   }

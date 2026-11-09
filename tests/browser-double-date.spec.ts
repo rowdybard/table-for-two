@@ -232,34 +232,40 @@ async function modelCommand(page: Page, text: string) {
   await expect(page.locator('#conversation-input')).toHaveValue('');
 }
 async function closeComposer(page: Page) { if (await page.locator('#conversation-form').isVisible()) { await page.bringToFront(); await page.keyboard.press('Escape'); } }
-async function tableActions(page: Page) {
+/** Chips sit on the prompt line. Looking around here is a drag, so the pointer is never captured away from them. */
+async function prompt(page: Page) {
   await page.bringToFront();
   await closeComposer(page);
-  const drawer = page.locator('#evening-panel > .action-drawer');
-  if (!await drawer.evaluate((element: HTMLDetailsElement) => element.open)) await page.keyboard.press('g');
-  await expect(drawer).toHaveAttribute('open', '');
+  expect(await page.evaluate(() => !!document.pointerLockElement)).toBe(false);
+  if (await page.locator('#bill-dialog').isVisible()) await page.locator('#bill-close').click();
+  if (await page.locator('#tabletop-inspector').isVisible()) await page.keyboard.press('Escape');
+}
+async function chip(page: Page, selector: string, timeout = 5000) {
+  await prompt(page);
+  const control = page.locator(`#prompt-chips ${selector}`);
+  await expect(control).toBeVisible({ timeout }); await expect(control).toBeEnabled({ timeout });
+  await control.click({ timeout });
 }
 async function resolveInterruption(page: Page): Promise<boolean> {
   const snapshot = await state(page);
-  if (await resolveRestaurantScenario(page, () => state(page), () => tableActions(page))) return true;
+  if (await resolveRestaurantScenario(page, () => state(page), () => prompt(page))) return true;
   const incident = restaurantEvening(snapshot).incident;
   if (!incident) return false;
-  await tableActions(page);
   if (incident.event === 'wrong-order') {
-    if (!incident.progress) { await page.locator('[data-evening="inspect-ticket"]').click(); await expect.poll(async () => restaurantEvening(await state(page)).incident?.progress).toBe(1); }
-    await page.locator('[data-evening="return-order"]').click();
+    if (!incident.progress) { await chip(page, '[data-evening="inspect-ticket"]'); await expect.poll(async () => restaurantEvening(await state(page)).incident?.progress).toBe(1); }
+    await chip(page, '[data-evening="return-order"]');
   } else if (incident.event === 'spilled-drink') {
     for (let progress = incident.progress; progress < 3; progress++) {
-      await page.locator('[data-evening="wipe"]').click(); await expect.poll(async () => restaurantEvening(await state(page)).incident?.progress).toBe(progress + 1);
+      await chip(page, '[data-evening="wipe"]'); await expect.poll(async () => restaurantEvening(await state(page)).incident?.progress).toBe(progress + 1);
       if (progress < 2) await page.waitForTimeout(120);
     }
-    await page.locator('[data-evening="steady-glass"]').click();
-  } else await page.locator('[data-evening="ask-quiet"]').click();
+    await chip(page, '[data-evening="steady-glass"]');
+  } else await chip(page, '[data-evening="ask-quiet"]');
   await expect.poll(async () => !!restaurantEvening(await state(page)).resolutions[incident.event]).toBe(true);
   return true;
 }
-async function course(page: Page, predicate: (snapshot: DinnerState) => boolean) {
-  const deadline = Date.now() + 15000;
+async function course(page: Page, predicate: (snapshot: DinnerState) => boolean, timeout = 15000) {
+  const deadline = Date.now() + timeout;
   while (!predicate(await state(page)) && Date.now() < deadline) if (!await resolveInterruption(page)) await page.waitForTimeout(100);
   await expect.poll(async () => predicate(await state(page))).toBe(true);
 }
@@ -268,8 +274,8 @@ async function eveningAction(page: Page, name: string, predicate?: (snapshot: Di
   while (Date.now() < deadline) {
     if (predicate?.(await state(page))) return;
     if (await resolveInterruption(page)) continue;
-    await tableActions(page);
-    const button = page.locator(`[data-evening="${name}"]`);
+    await prompt(page);
+    const button = page.locator(`#prompt-chips [data-evening="${name}"]`);
     if (await button.isVisible() && await button.isEnabled()) {
       try { await button.click({ timeout: 5000 }); if (!predicate) return; }
       catch (error) {
@@ -283,22 +289,48 @@ async function eveningAction(page: Page, name: string, predicate?: (snapshot: Di
   }
   throw new Error(`The ${name} action did not complete through the visible table controls.`);
 }
-async function openActivity(page: Page, kind: 'coasters' | 'napkin' | 'dessert') {
-  const deadline = Date.now() + 15000;
-  while (Date.now() < deadline) {
+/** Eating is a physical table action (aim at the plate, E); it reaches the same room command route here. */
+async function eat(page: Page, target: 'meal' | 'dessert', bites: number) {
+  const read = async () => (await state(page)).evening[target === 'meal' ? 'main' : 'dessert'].bites;
+  const deadline = Date.now() + 20000;
+  while (await read() < bites && Date.now() < deadline) {
     if (await resolveInterruption(page)) continue;
-    if (await page.locator(`#activities-panel[data-activity="${kind}"] .ta-panel`).isVisible()) return;
-    await tableActions(page);
-    try {
-      if (kind === 'dessert') await page.getByRole('button', { name: 'Share dessert', exact: true }).click({ timeout: 5000 });
-      else {
-        const games = page.locator('#table-play');
-        if (!await games.evaluate((element: HTMLDetailsElement) => element.open)) await games.locator(':scope > summary').click({ timeout: 5000 });
-        await page.locator(kind === 'coasters' ? '#play-coasters' : '#play-napkin').click({ timeout: 5000 });
-      }
-    } catch (error) { const snapshot = await state(page); if (restaurantInterrupted(snapshot)) continue; throw error; }
+    const result = await api(page, 'command', { type: 'scene', command: { type: 'interact', target } });
+    if (result.status !== 200 && !/first\.$/.test(result.body?.error ?? '') && !restaurantInterrupted(await state(page))) throw new Error(`Eating was refused: ${result.status} ${JSON.stringify(result.body)}`);
+    await page.waitForTimeout(520);
   }
-  throw new Error('The ' + kind + ' activity did not open.');
+  expect(await read()).toBeGreaterThanOrEqual(bites);
+}
+/** The offer stays open for forty scene seconds, then the date picks; either way the pair ends up with a decision. */
+async function chooseDessert(page: Page, choice: string | 'skip') {
+  await course(page, snapshot => snapshot.evening.main.status === 'finished');
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const snapshot = await state(page);
+    if (snapshot.evening.dessert.status !== 'none') break;
+    if (await resolveInterruption(page)) continue;
+    await prompt(page);
+    try {
+      await expect(page.locator('#prompt-copy')).toHaveText('Eli offers dessert to share.', { timeout: 2000 });
+      await page.locator(`#prompt-chips ${choice === 'skip' ? '[data-evening="skip-dessert"]' : `[data-evening="order-dessert"][data-choice="${choice}"]`}`).click({ timeout: 2000 });
+    } catch (error) { const current = await state(page); if (current.evening.dessert.status === 'none' && !restaurantInterrupted(current)) throw error; }
+    break;
+  }
+  await expect.poll(async () => (await state(page)).evening.dessert.status).not.toBe('none');
+}
+/** Looking down at the chair stands a guest up; the door is a short walk behind the table. */
+async function walkToTheDoor(page: Page) {
+  await prompt(page);
+  const viewport = page.viewportSize()!;
+  for (let drag = 0; drag < 2; drag++) {
+    await page.mouse.move(viewport.width / 2, viewport.height * .2); await page.mouse.down();
+    await page.mouse.move(viewport.width / 2, viewport.height * .95, { steps: 10 }); await page.mouse.up();
+  }
+  await expect(page.locator('#interaction-label')).toHaveText('Stand up');
+  await page.keyboard.press('e');
+  await expect.poll(async () => (await state(page)).seated).toBe(false);
+  await waitForRestaurantScene(page);
+  for (let i = 0; i < 25 && (await state(page)).participants[0].position[2] < 4.2; i++) { await page.keyboard.down('s'); await page.waitForTimeout(160); await page.keyboard.up('s'); }
+  await expect.poll(async () => (await state(page)).participants[0].position[2]).toBeGreaterThanOrEqual(4.2);
 }
 
 test('private double date: distinct choices, readiness, independent first-person seats, pause and reconnect', async () => {
@@ -490,11 +522,7 @@ test('friend voice uses one opted-in microphone per browser and exchanges native
 });
 
 async function pauseFromRestaurant(page: Page) {
-  await page.bringToFront(); await closeComposer(page);
-  const activity = page.getByRole('button', { name: 'Close table activity' });
-  if (await activity.isVisible()) await activity.click();
-  const drawer = page.locator('#evening-panel > .action-drawer');
-  if (await drawer.evaluate((node: HTMLDetailsElement) => node.open)) await page.keyboard.press('g');
+  await prompt(page);
   await page.keyboard.press('Escape'); await expect(page.locator('#pause-dialog')).toBeVisible();
   await expect(page.locator('#finish-date')).toBeEnabled();
 }
@@ -504,7 +532,7 @@ test('a finished date can stay as a wingman, help the active pair and return fro
   const p = await pair();
   try {
     await start(p); await seat(p.a); await seat(p.b);
-    await tableActions(p.b); await p.b.locator('#table-menu').click();
+    await chip(p.b, 'button:has-text("Open the menu")');
     await p.b.locator('[data-order="Wild mushroom risotto"]').click();
     await course(p.b, snapshot => snapshot.evening.main.status === 'served');
     await pauseFromRestaurant(p.a); await p.a.locator('#finish-date').click();
@@ -514,7 +542,7 @@ test('a finished date can stay as a wingman, help the active pair and return fro
     await expect(p.a.locator('#ending-screen')).toBeHidden(); await expect(p.a.locator('#dinner-hud')).toBeVisible();
     expect((await room(p.a)).views.h1.order).toBeNull();
     const departedMemory = (await room(p.a)).views.h1.memory;
-    await tableActions(p.a); await p.a.locator('#view-own-ending').click();
+    await chip(p.a, '#view-own-ending');
     await expect(p.a.locator('#ending-screen')).toBeVisible();
     const earlyHistory = await p.a.evaluate(() => JSON.parse(localStorage.getItem('table-for-two-evenings') || '[]'));
     expect(earlyHistory).toHaveLength(1);
@@ -530,15 +558,21 @@ test('a finished date can stay as a wingman, help the active pair and return fro
     expect(helped.views.h1.order).toBeNull(); expect(helped.views.h1.memory).toBe(departedMemory);
     expect(helped.views.h2.evening.moments.some(moment => moment.description.includes('Alex') && /water/i.test(moment.description))).toBe(true);
     expect(helped.views.h1.evening.moments.some(moment => moment.description.includes('Alex') && /water/i.test(moment.description))).toBe(true);
-    await expect(p.a.locator('#play-coasters')).toBeHidden();
-    await tableActions(p.a); await p.a.locator('#view-own-ending').click();
+    // A wingman keeps their friend company; no course, dessert or check of their own is on offer.
+    await expect(p.a.locator('#prompt-copy')).toHaveText('Here for your friend.');
+    await expect(p.a.locator('#prompt-chips [data-evening="skip-dessert"], #prompt-chips [data-evening="order-dessert"], #prompt-chips [data-evening="settle-bill"]')).toHaveCount(0);
+    await chip(p.a, '#view-own-ending');
     await expect(p.a.locator('#ending-screen')).toBeVisible(); expect((await room(p.b)).phase).toBe('playing');
     const updatedHistory = await p.a.evaluate(() => JSON.parse(localStorage.getItem('table-for-two-evenings') || '[]') as { moments: { description: string }[] }[]);
     expect(updatedHistory).toHaveLength(1);
     expect(updatedHistory[0].moments.some(moment => moment.description.includes('Alex') && /water/i.test(moment.description))).toBe(true);
     await p.a.locator('#back-to-table').click(); await expect(p.a.locator('#ending-screen')).toBeHidden();
-    await tableActions(p.a); await p.a.locator('#table-stand').click();
+    await prompt(p.a);
+    const viewport = p.a.viewportSize()!;
+    for (let drag = 0; drag < 2; drag++) { await p.a.mouse.move(viewport.width / 2, viewport.height * .2); await p.a.mouse.down(); await p.a.mouse.move(viewport.width / 2, viewport.height * .95, { steps: 10 }); await p.a.mouse.up(); }
+    await expect(p.a.locator('#interaction-label')).toHaveText('Stand up'); await p.a.keyboard.press('e');
     await expect.poll(async () => (await state(p.a)).seated).toBe(false);
+    await expect(p.a.locator('#prompt-copy')).toHaveText('Take your seat to keep your friend company.');
     const before = (await state(p.a)).participants[0].position[2];
     await p.a.keyboard.down('s');
     try { await expect.poll(async () => (await state(p.a)).participants[0].position[2]).toBeGreaterThan(before + .2); }
@@ -561,7 +595,7 @@ test('a finished date can stay as a wingman, help the active pair and return fro
   finally { await p.close(); }
 });
 
-test('complete double evening: shared coaster board, both dinners, drawing, dessert, shared bill and independent farewells', async () => {
+test('complete double evening: both dinners, a shared dessert, one check for the table and independent farewells', async () => {
   test.setTimeout(240000);
   const p = await pair();
   try {
@@ -569,7 +603,7 @@ test('complete double evening: shared coaster board, both dinners, drawing, dess
     for (const page of [p.a,p.b]) {
       for (let attempt = 0; attempt < 5 && (await state(page)).order !== 'Wild mushroom risotto'; attempt++) {
         if (await resolveInterruption(page)) continue;
-        await tableActions(page); await page.locator('#table-menu').click();
+        await chip(page, 'button:has-text("Open the menu")');
         try { await page.locator('[data-order="Wild mushroom risotto"]').click({ timeout: 5000 }); }
         catch (error) { if (!restaurantInterrupted(await state(page))) throw error; }
         await expect.poll(async () => (await state(page)).order === 'Wild mushroom risotto' || restaurantInterrupted(await state(page))).toBe(true);
@@ -577,102 +611,29 @@ test('complete double evening: shared coaster board, both dinners, drawing, dess
       expect((await state(page)).order).toBe('Wild mushroom risotto');
       await course(page, snapshot => snapshot.evening.main.status === 'served');
     }
-    for (let attempt = 0; attempt < 3; attempt++) {
-      await openActivity(p.a, 'coasters');
-      try { await p.a.locator('#activities-panel').getByRole('button', { name: 'Play', exact: true }).click({ timeout: 5000 }); }
-      catch (error) { if (!restaurantInterrupted(await state(p.a))) throw error; }
-      await expect.poll(async () => (await room(p.b)).tableActivity?.owner === 'h1' || restaurantInterrupted(await state(p.a))).toBe(true);
-      if ((await room(p.b)).tableActivity?.owner === 'h1') break;
-      // A story may arrive after the activity opened but before Play reached the server.
-      if (await p.a.getByRole('button', { name: 'Close table activity' }).isVisible()) await p.a.getByRole('button', { name: 'Close table activity' }).click();
-      await resolveInterruption(p.a);
-    }
-    await expect.poll(async () => (await room(p.b)).tableActivity?.owner).toBe('h1');
-    await openActivity(p.b, 'coasters');
-    await expect(p.b.locator('#activities-panel .ta-row button').nth(1)).toBeDisabled();
-    await expect(p.b.locator('#activities-panel .ta-row button').nth(1)).toBeHidden();
-    await expect(p.b.locator('.ta-copy')).toContainText('Alex and Mira are playing.');
-    await p.b.getByRole('button', { name: 'Close table activity' }).click();
-    let stableControlsVerified = false;
-    const deadline = Date.now() + 65000;
-    while ((await state(p.a)).evening.coasters.phase !== 'complete' && Date.now() < deadline) {
-      if (await resolveInterruption(p.a)) continue;
-      await openActivity(p.a, 'coasters');
-      const game = (await state(p.a)).evening.coasters;
-      const shoot = p.a.locator('#activities-panel .ta-row button').nth(1);
-      if (game.phase === 'aiming' && game.turn === 'human' && await shoot.isVisible() && await shoot.isEnabled()) {
-        let focusedControl = null;
-        if (!stableControlsVerified) {
-          await tableActions(p.b);
-          if (await resolveInterruption(p.b)) continue;
-          const taste = p.b.locator('[data-evening="taste"]');
-          try { await taste.focus({ timeout: 1500 }); focusedControl = await taste.elementHandle(); }
-          catch (error) { if (restaurantInterrupted(await state(p.b))) continue; throw error; }
-        }
-        try { await shoot.click({ timeout: 5000 }); }
-        catch (error) { const current = await state(p.a); if (restaurantInterrupted(current) || current.evening.coasters.phase !== 'aiming') { await focusedControl?.dispose(); continue; } throw error; }
-        if (focusedControl) {
-          let previousDisc = '';
-          for (let update = 0; update < 3; update++) {
-            await expect.poll(async () => {
-              const board = (await state(p.b)).doubleDate!.otherView!.evening.coasters;
-              const disc = JSON.stringify(board.disc);
-              if (board.phase !== 'rolling' || disc === previousDisc) return false;
-              previousDisc = disc; return true;
-            }, { timeout: 3000, intervals: [30, 60, 100] }).toBe(true);
-            expect(await focusedControl.evaluate(node => node.isConnected && document.activeElement === node)).toBe(true);
-          }
-          await focusedControl.dispose(); stableControlsVerified = true;
-        }
-      }
-      await p.a.waitForTimeout(180);
-    }
-    expect((await state(p.a)).evening.coasters.shots).toBe(6);
-    expect((await state(p.a)).evening.coasters.phase).toBe('complete');
-    expect(stableControlsVerified).toBe(true);
-    await expect.poll(async () => (await state(p.b)).doubleDate?.otherView?.evening.coasters.shots).toBe(6);
-    await expect.poll(async () => (await state(p.b)).doubleDate?.otherView?.evening.coasters.phase).toBe('complete');
-    const resultDeadline = Date.now() + 15000;
-    for (;;) {
-      if (Date.now() >= resultDeadline) throw new Error('The completed shared board did not reopen after interruptions.');
-      if (await resolveInterruption(p.b)) continue;
-      await openActivity(p.b, 'coasters');
-      try {
-        await expect(p.b.locator('#activities-panel .ta-panel')).toBeVisible({ timeout: 1000 });
-        await expect(p.b.locator('.ta-copy')).toContainText('Alex and Mira finished their game.', { timeout: 1000 });
-        break;
-      } catch (error) { const snapshot = await state(p.b); if (restaurantInterrupted(snapshot)) continue; throw error; }
-    }
-    await expect(p.b.locator('.ta-score')).toContainText('Alex'); await expect(p.b.locator('.ta-score')).toContainText('Mira');
-    await expect(p.b.getByRole('button', { name: 'Play again', exact: true })).toBeEnabled();
-    await captureRestaurantScene(p.b, '.qa/double-date/shared-coasters-1000.png');
-    for (const page of [p.a,p.b]) if (await page.getByRole('button', { name: 'Close table activity' }).isVisible()) await page.getByRole('button', { name: 'Close table activity' }).click();
-    for (const page of [p.a,p.b]) {
-      for (let bite = (await state(page)).evening.main.bites; bite < 3; bite++) { await eveningAction(page, 'taste', snapshot => snapshot.evening.main.bites >= bite + 1); await page.waitForTimeout(520); }
-      await eveningAction(page, 'finish-main', snapshot => snapshot.evening.main.status === 'finished');
-    }
-    await openActivity(p.a, 'napkin');
-    const canvas = p.a.locator('#activities-panel canvas'), box = (await canvas.boundingBox())!;
-    await p.a.mouse.move(box.x + box.width * .3, box.y + box.height * .4); await p.a.mouse.down();
-    await p.a.mouse.move(box.x + box.width * .7, box.y + box.height * .6, { steps: 18 }); await p.a.mouse.up();
-    await p.a.getByRole('button', { name: 'Save our napkin', exact: true }).click();
-    await expect.poll(async () => (await state(p.a)).evening.napkin.complete).toBe(true);
-    await p.a.getByRole('button', { name: 'Close table activity' }).click();
-    await tableActions(p.a); await p.a.getByRole('button', { name: 'Look at the dessert menu', exact: true }).click();
-    await p.a.locator('[data-dessert="lemon"]').click();
-    await eveningAction(p.b, 'skip-dessert', snapshot => snapshot.evening.dessert.status === 'skipped');
-    await course(p.a, snapshot => snapshot.evening.dessert.status === 'served');
-    await openActivity(p.a, 'dessert'); await p.a.locator('#activities-panel .ta-serving > summary').click();
-    for (let piece = 0; piece < 4; piece++) {
-      await p.a.locator('.ta-piece-row').nth(piece).getByRole('button', { name: piece % 2 ? /Mira|date/i : /you|me/i }).click();
-      await expect.poll(async () => (await state(p.a)).evening.dessert.portions.length).toBe(piece + 1);
-    }
-    await p.a.getByRole('button', { name: 'Close table activity' }).click();
-    await eveningAction(p.a, 'finish-dessert', snapshot => snapshot.evening.dessert.status === 'finished');
-    await tableActions(p.a); await p.a.getByRole('button', { name: 'Ask for the bill', exact: true }).click();
+    // One wrong plate reaches the table at service; whoever sees it can send it back for the pair it belongs to.
+    await course(p.b, snapshot => !!restaurantEvening(snapshot).resolutions['wrong-order'] || !!snapshot.doubleDate?.otherView?.evening.resolutions['wrong-order']);
+    for (const page of [p.a,p.b]) await expect(page.locator('#prompt-chips [data-evening="taste"], #prompt-chips [data-evening="finish-main"]')).toHaveCount(0);
+    // Two dinners, each eaten from its own plate; Eli clears both on his own clock.
+    for (let bite = 1; bite <= 3; bite++) for (const page of [p.a,p.b]) await eat(page, 'meal', bite);
+    for (const page of [p.a,p.b]) await course(page, snapshot => snapshot.evening.main.status === 'finished', 20000);
+    expect((await room(p.a)).views.h1.evening.cues.some(cue => cue.key === 'main-finished' && cue.utterances[0]!.speaker === 'waiter')).toBe(true);
+    await captureRestaurantScene(p.a, '.qa/double-date/plates-cleared-1280.png');
+    // One pair shares a dessert while the other declines; the table's check waits for both.
+    await chooseDessert(p.a, 'lemon');
+    await chooseDessert(p.b, 'skip');
+    await course(p.a, snapshot => snapshot.evening.dessert.status === 'served', 20000);
+    expect((await state(p.b)).evening.bill.requested).toBe(false);
+    await eat(p.a, 'dessert', 2);
+    await captureRestaurantScene(p.a, '.qa/double-date/shared-dessert-1280.png');
+    await course(p.a, snapshot => snapshot.evening.dessert.status === 'finished', 30000);
+    for (const page of [p.a,p.b]) await course(page, snapshot => snapshot.evening.bill.requested, 30000);
+    const billed = await room(p.a), money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+    expect(billed.views.h1.evening.bill.arrivedAt).toBe(billed.views.h2.evening.bill.arrivedAt);
+    await prompt(p.a); await expect(p.a.locator('#prompt-copy')).toHaveText('Eli left the check.');
+    await chip(p.a, 'button:has-text("See the check")');
     await expect(p.a.locator('#bill-dialog')).toBeVisible();
     const receipt = await p.a.locator('#bill-items').innerText();
-    const billed = await room(p.a), money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
     expect(receipt).toContain('You and Mira'); expect(receipt).toContain('Sam and Jules');
     for (const [human, player, date] of [['h1','You','Mira'],['h2','Sam','Jules']] as const) {
       const bill = billed.views[human].evening.bill;
@@ -683,34 +644,28 @@ test('complete double evening: shared coaster board, both dinners, drawing, dess
       for (const item of bill.items!) expect(receipt).toContain(`${item.owner === 'you' ? player : date} · ${item.label} · ${money(item.chargedCents)}`);
       expect(receipt).toContain(`Pair total · ${money(bill.totalCents!)}`);
     }
+    const desserts = (['h1', 'h2'] as const).filter(human => billed.views[human].evening.dessert.choice);
     expect(billed.views.h1.evening.bill.items!.find(item => item.id === 'dessert-shared')).toMatchObject({ chargedCents: 900, status: 'served' });
-    expect(billed.views.h2.evening.bill.items!.some(item => item.id === 'dessert-shared')).toBe(false);
-    expect(receipt.split('\n').filter(line => /^(You|Mira|Sam|Jules) · /.test(line))).toHaveLength(5);
+    expect(billed.views.h2.evening.bill.items!.some(item => item.id === 'dessert-shared')).toBe(desserts.includes('h2'));
+    expect(receipt.split('\n').filter(line => /^(You|Mira|Sam|Jules) · /.test(line))).toHaveLength(4 + desserts.length);
     expect(receipt).not.toContain('Not charged'); expect(receipt).not.toContain('Already settled');
     await expect(p.a.locator('#bill-total')).toHaveText(`Amount due · ${money(billed.views.h1.evening.bill.totalCents! + billed.views.h2.evening.bill.totalCents!)}`);
     await captureRestaurantScene(p.a, '.qa/double-date/shared-bill-1280.png');
     await p.a.locator('[data-settlement="split"]').click();
     await expect.poll(async () => (await state(p.b)).evening.bill.settlement).toBe('split');
     expect(Object.values((await room(p.a)).views).map(view => view.evening.bill.settlement)).toEqual(['split', 'split']);
+    for (const page of [p.a,p.b]) await expect(page.locator('#prompt-copy')).toHaveText('Dinner is settled. Walk to the door together.');
     for (const [page, farewell] of [[p.a,'again'], [p.b,'friendly']] as const) {
-      if (await page.locator('#bill-dialog').isVisible()) await page.locator('#bill-close').click();
-      await tableActions(page); await page.locator('#table-stand').click();
-      await expect.poll(async () => (await state(page)).seated).toBe(false);
-      await waitForRestaurantScene(page);
-      for (let i = 0; i < 25 && (await state(page)).participants[0].position[2] < 4.2; i++) { await page.keyboard.down('s'); await page.waitForTimeout(160); await page.keyboard.up('s'); }
-      await expect.poll(async () => (await state(page)).participants[0].position[2]).toBeGreaterThanOrEqual(4.2);
-      await tableActions(page); await page.getByRole('button', { name: 'Say goodnight at the door', exact: true }).click();
-      await page.locator(`[data-farewell="${farewell}"]`).click();
+      await walkToTheDoor(page);
+      await expect(page.locator('#prompt-copy')).toHaveText('One last thing, at the door.');
+      await chip(page, `[data-evening="farewell"][data-choice="${farewell}"]`);
       const human = (await credentials(page)).memberId;
       await expect.poll(async () => (await room(page)).views[human].phase, { timeout: 15000 }).toBe('ended');
       if (human === 'h1') {
         await expect.poll(async () => (await state(p.a)).doubleDate?.role).toBe('wingman');
         await expect(p.a.locator('#dinner-hud')).toBeVisible(); await expect(p.a.locator('#ending-screen')).toBeHidden();
-        await tableActions(p.a); await p.a.locator('#view-own-ending').click();
-        await expect(p.a.locator('#ending-screen')).toBeVisible(); expect((await room(p.b)).phase).toBe('playing');
-        await p.a.locator('#back-to-table').click(); await expect(p.a.locator('#ending-screen')).toBeHidden();
-        await expect(p.a.locator('#dinner-hud')).toBeVisible();
-        if (await p.a.locator('#evening-panel > .action-drawer').evaluate((node: HTMLDetailsElement) => node.open)) await p.a.keyboard.press('g');
+        await expect(p.a.locator('#prompt-copy')).toHaveText('Take your seat to keep your friend company.');
+        await expect(p.a.locator('#view-own-ending')).toHaveCount(0);
         const z = (await state(p.a)).participants[0].position[2];
         await p.a.keyboard.down('w');
         try { await expect.poll(async () => (await state(p.a)).participants[0].position[2]).toBeLessThan(z - .2); }
@@ -727,11 +682,12 @@ test('complete double evening: shared coaster board, both dinners, drawing, dess
     await expect.poll(async () => (await room(p.a)).phase).toBe('ended');
     for (const page of [p.a,p.b]) await expect(page.locator('#ending-screen')).toBeVisible({ timeout: 15000 });
     const completed = await room(p.a);
-    expect(completed.views.h1.evening.sharedActivities).toEqual(expect.arrayContaining(['coasters','napkin','dessert']));
+    expect(completed.views.h1.evening.sharedActivities).toEqual(['dessert']);
     expect(completed.views.h2.evening.farewell.ending?.kind).toBe('new-friend');
     expect(restaurantScenario(await state(p.a))?.phase).toBe('resolved');
     expect(completed.scenario?.id).toBe('family-visit'); expect(completed.scenario?.decisions).toHaveLength(2);
     for (const view of Object.values(completed.views)) expect(view.evening.moments.some(moment => moment.id === 'scenario-family-visit')).toBe(true);
+    expect(completed.usage.claudeRequests).toBe(1);
     await captureRestaurantScene(p.a, '.qa/double-date/ending-mira-1280.png'); await captureRestaurantScene(p.b, '.qa/double-date/ending-jules-1000.png');
     await p.a.locator('#new-date').click();
     await expect(p.a.locator('#title-start')).toBeVisible({ timeout: 15000 });
