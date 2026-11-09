@@ -75,25 +75,48 @@ export function anthropicAdapter(env: NodeJS.ProcessEnv = process.env, fetcher: 
       }
       throw new DateApiError(response.status === 429 ? 429 : 502, 'claude_provider', response.status === 401 || response.status === 403 ? 'Claude rejected the server API key or model access. Check your Anthropic API account.' : response.status === 429 ? 'Claude is rate limited or out of API credits. Try again shortly.' : `Claude is unavailable (HTTP ${response.status}). Your date is still here.`);
     }
-    const reader = response.body.getReader(), decoder = new TextDecoder(); let buffer = '';
+    const reader = response.body.getReader(), decoder = new TextDecoder();
+    let buffer = '', stopReason: string | undefined, stopped = false;
+    const cancel = () => { void reader.cancel().catch(() => {}); };
+    signal.addEventListener('abort', cancel, { once: true });
+    function* consume(raw: string): Generator<ClaudeChunk> {
+      const line = raw.trimEnd();
+      if (!line.startsWith('data:')) return;
+      let parsed: unknown;
+      try { parsed = JSON.parse(line.slice(5).trimStart()); } catch { throw new DateApiError(502, 'claude_stream', 'Claude returned an unreadable stream. Please try another turn.'); }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new DateApiError(502, 'claude_stream', 'Claude returned an unreadable stream. Please try another turn.');
+      const data = parsed as Record<string, any>;
+      if (data.type === 'error') throw new DateApiError(502, 'claude_provider', 'Claude interrupted the response. Please try another turn.');
+      if (data.type === 'message_start' && data.message?.usage) yield { type: 'usage', usage: usage(data.message.usage) };
+      if (data.type === 'message_delta' && data.usage) yield { type: 'usage', usage: usage(data.usage) };
+      if (data.type === 'message_delta' && data.delta?.stop_reason != null) {
+        const reason = data.delta.stop_reason;
+        if (reason === 'refusal') throw new DateApiError(422, 'conversation_refusal', 'This conversation needs a different direction.');
+        if (reason === 'max_tokens' || reason === 'model_context_window_exceeded') throw new DateApiError(502, 'claude_truncated', 'Claude could not finish this response within its limits. Please try another turn.');
+        if (reason !== 'end_turn' && reason !== 'stop_sequence') throw new DateApiError(502, 'claude_stream', 'Claude could not complete this response. Please try another turn.');
+        stopReason = reason;
+      }
+      if (data.type === 'content_block_delta' && data.delta?.type === 'text_delta' && typeof data.delta.text === 'string') yield { type: 'text', text: data.delta.text };
+      if (data.type === 'message_stop') stopped = true;
+    }
     try {
       for (;;) {
-        const next = await reader.read(); buffer += decoder.decode(next.value, { stream: !next.done });
+        signal.throwIfAborted();
+        const next = await reader.read(); signal.throwIfAborted();
+        buffer += decoder.decode(next.value, { stream: !next.done });
         let end: number;
         while ((end = buffer.indexOf('\n')) >= 0) {
-          const line = buffer.slice(0, end).trimEnd(); buffer = buffer.slice(end + 1);
-          if (!line.startsWith('data: ')) continue;
-          let data: Record<string, any>; try { data = JSON.parse(line.slice(6)); } catch { throw new DateApiError(502, 'claude_stream', 'Claude returned an unreadable stream. Please try another turn.'); }
-          if (data.type === 'error') throw new DateApiError(502, 'claude_provider', 'Claude interrupted the response. Please try another turn.');
-          if (data.type === 'message_start' && data.message?.usage) yield { type: 'usage', usage: usage(data.message.usage) };
-          if (data.type === 'message_delta' && data.usage) yield { type: 'usage', usage: usage(data.usage) };
-          if (data.type === 'message_delta' && data.delta?.stop_reason === 'refusal') throw new DateApiError(422, 'conversation_refusal', 'This conversation needs a different direction.');
-          if (data.type === 'content_block_delta' && data.delta?.type === 'text_delta' && typeof data.delta.text === 'string') yield { type: 'text', text: data.delta.text };
+          signal.throwIfAborted();
+          const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
+          yield* consume(line);
+          if (stopped) break;
         }
+        if (stopped) break;
         if (buffer.length > 64 * 1024) throw new DateApiError(502, 'claude_stream', 'Claude returned an oversized stream frame.');
-        if (next.done) break;
+        if (next.done) { if (buffer.trim()) yield* consume(buffer); break; }
       }
-    } finally { await reader.cancel().catch(() => {}); }
+      if (!stopped || !stopReason) throw new DateApiError(502, 'claude_stream', 'Claude returned an incomplete stream. Please try another turn.');
+    } finally { signal.removeEventListener('abort', cancel); cancel(); reader.releaseLock(); }
   } };
 }
 

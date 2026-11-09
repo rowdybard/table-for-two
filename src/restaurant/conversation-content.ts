@@ -128,7 +128,7 @@ const hasPhrase = (text: string, phrase: string) => (` ${text} `).includes(` ${n
 const toldThem = (memory: string) => memory.match(/\bTOLD THEM:\s*([\s\S]*?)(?=\b(?:HUMAN|OPEN):|$)/i)?.[1] ?? '';
 const bounded = (value: number | undefined, maximum: number) => value === undefined ? maximum : Number.isFinite(value) ? Math.max(0, Math.min(maximum, Math.floor(value))) : 0;
 /** Explicitly retiring a topic is different from “don't you like music?” or a story about a bus stop. */
-export const isTopicStopRequest = (text: string): boolean => /\b(?:(?:stop|quit)\s+(?:talking|bringing|mentioning|repeating|joking|teasing|calling|with|that|this)|(?:dont|do not)\s+(?:keep\s+)?(?:talk|bring|mention|repeat|joke|tease|call)|(?:dont want to|rather not)\s+(?:talk|discuss)|no more|enough (?:of|about|with)|change the (?:subject|topic)|move on|leave (?:it|that) (?:there|alone)|(?:isnt|not) funny|getting old)\b|\b(?:please )?stop[.! ]*$/i.test(normalized(text));
+export const isTopicStopRequest = (text: string): boolean => /(?<!\bdont )(?<!\bdo not )\b(?:stop|quit)\s+(?:talking|bringing|mentioning|repeating|joking|teasing|calling|with|that|this)\b|\b(?:(?:dont|do not)\s+(?:keep\s+)?(?:talk|bring|mention|repeat|joke|tease|call)|(?:dont want to|rather not)\s+(?:talk|discuss)|no more|enough (?:of|about|with)|change the (?:subject|topic)|move on|leave (?:it|that) (?:there|alone)|(?:isnt|not) funny|getting old)\b|(?<!\bdont )(?<!\bdo not )\bdrop (?:(?:the|this|that) (?:joke|bit|topic|subject)\b|(?:it|that|this)(?: please)?(?: and (?:move on|change the (?:topic|subject)))?$)|(?<!\bdont )(?<!\bdo not )\bstop$/i.test(normalized(text));
 
 /** Rank only actual topical matches. No random lore dump to rescue a greeting or an awkward gap. */
 export function selectConversationSeeds(input: ConversationContentInput): ConversationSeed[] {
@@ -164,7 +164,8 @@ export function conversationContentNote(input: ConversationContentInput): string
   const budget = bounded(input.maxEstimatedTokens, CONVERSATION_CONTENT_TOKEN_LIMIT);
   if (!budget) return '';
   const selected = selectConversationSeeds(input);
-  const kind = exchangeKind(normalized(input.latestHumanText));
+  // A request to drop a joke is a repair, not an invitation to tease again.
+  const kind = isTopicStopRequest(input.latestHumanText) ? 'repair' : exchangeKind(normalized(input.latestHumanText));
   const example = input.includeVoiceExample === false || (kind === 'vulnerability' && !input.personalDisclosureAllowed) ? undefined : VOICE_EXCHANGES[input.dateId].find(item => item.kind === kind);
   if (!selected.length && !example) return '';
   const heading = 'Possible material, only if it answers their actual words. Use at most one naturally; leave it unused rather than change the subject. Never retell it. If shared, keep its short factual anchor in TOLD THEM.';

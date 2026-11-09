@@ -96,6 +96,30 @@ test('outage, damaged JSON and timeout produce visible failures and leave scene 
   const snapshot = (await (await api.request(path, token)).json()).state; assert.equal(snapshot.phase, 'playing'); assert.equal(snapshot.usage.claudeRequests, 3);
 });
 
+test('an Anthropic EOF after complete JSON cannot commit memory, and the next turn succeeds', async t => {
+  let calls = 0;
+  const frame = (value: unknown) => 'data: ' + encode(value) + '\n\n';
+  const claude = anthropicAdapter({ ANTHROPIC_API_KEY: 'fixture' }, (async () => {
+    calls++;
+    const wire = frame({ type: 'message_start', message: { usage: { input_tokens: 10 } } })
+      + frame({ type: 'content_block_delta', delta: { type: 'text_delta', text: encode(turn) } })
+      + frame({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 20 } })
+      + (calls === 1 ? '' : frame({ type: 'message_stop' }));
+    return new Response(wire);
+  }) as typeof fetch);
+  const api = await boot({ claude }); t.after(() => api.close());
+  const { state, token } = await api.create(), path = `/api/date/sessions/${state.id}`;
+  const failed = decode(await (await api.request(path + '/turn', token, { turnId: 'missing-provider-stop', text: 'Hello', model: 'claude-haiku-5-5' })).text());
+  assert.ok(failed.some(event => event.type === 'error' && event.code === 'claude_stream'));
+  assert.equal(failed.at(-1)?.type, 'done');
+  let snapshot = (await (await api.request(path, token)).json()).state;
+  assert.equal(snapshot.memory, state.memory); assert.equal(snapshot.phase, 'playing');
+  const recovered = decode(await (await api.request(path + '/turn', token, { turnId: 'valid-provider-stop', text: 'Hello again', model: 'claude-haiku-5-5' })).text());
+  assert.ok(!recovered.some(event => event.type === 'error')); assert.equal(recovered.at(-1)?.type, 'done');
+  snapshot = (await (await api.request(path, token)).json()).state;
+  assert.equal(snapshot.memory, turn.memory); assert.equal(calls, 2);
+});
+
 test('interrupt cancels Claude and stale speech, while retaining received usage', async t => {
   let aborted = false;
   const claude: ClaudeAdapter = { async *stream(_request, signal) { yield { type: 'usage', usage: { inputTokens: 45 } }; yield { type: 'text', text: '{"utterances":[' + encode(turn.utterances[0]) }; await new Promise<void>(resolve => signal.addEventListener('abort', () => { aborted = true; resolve(); }, { once: true })); } };
@@ -160,7 +184,7 @@ test('playback receipts preserve heard and interrupted lines in the next single 
 test('Anthropic adapter sends fast model-specific thinking and structured output, parses split SSE usage without exposing provider secrets', async () => {
   for (const model of ['claude-haiku-5-5', 'claude-sonnet-5-5'] as const) {
     let captured: any;
-    const payload = 'data: ' + encode({ type: 'message_start', message: { usage: { input_tokens: 41, output_tokens: 1, cache_read_input_tokens: 22, cache_creation_input_tokens: 3 } } }) + '\r\n\r\n' + 'data: ' + encode({ type: 'content_block_delta', delta: { type: 'text_delta', text: '{"text":"quoted \\\"yes\\\""}' } }) + '\n\n' + 'data: ' + encode({ type: 'message_delta', usage: { output_tokens: 12 } }) + '\n\n';
+    const payload = 'data: ' + encode({ type: 'message_start', message: { usage: { input_tokens: 41, output_tokens: 1, cache_read_input_tokens: 22, cache_creation_input_tokens: 3 } } }) + '\r\n\r\n' + 'data: ' + encode({ type: 'content_block_delta', delta: { type: 'text_delta', text: '{"text":"quoted \\\"yes\\\""}' } }) + '\n\n' + 'data: ' + encode({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 12 } }) + '\n\n' + 'data: ' + encode({ type: 'message_stop' }) + '\n\n';
     const fetcher = (async (_url: unknown, init: RequestInit) => { captured = JSON.parse(init.body as string); return new Response(new ReadableStream({ start(controller) { for (let i = 0; i < payload.length; i += 7) controller.enqueue(new TextEncoder().encode(payload.slice(i, i + 7))); controller.close(); } }), { status: 200 }); }) as typeof fetch;
     const result = []; for await (const event of anthropicAdapter({ ANTHROPIC_API_KEY: 'secret-never-returned' }, fetcher).stream({ model, system: 'system', messages: [{ role: 'user', content: 'hello' }], maxTokens: 700 }, new AbortController().signal)) result.push(event);
     assert.equal(captured.model, model); assert.equal(captured.output_config.effort, 'low'); assert.equal(captured.output_config.format.type, 'json_schema'); assert.equal(captured.thinking.type, model === 'claude-haiku-5-5' ? 'disabled' : 'between_tools'); assert.equal(captured.temperature, undefined);

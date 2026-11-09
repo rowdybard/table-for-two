@@ -25,6 +25,18 @@ test('a stopped premise is retired without erasing disclosures, corrections or g
   assert.equal(isTopicStopRequest('I stop for coffee on the way to work.'), false);
 });
 
+test('drop requests retire a shared bit while ordinary physical drops do not', () => {
+  const memory = 'HUMAN: sister is Nia, not Mia; works nights\nTOLD THEM: six prints\nOPEN: promised a film title; shared premise: the wedding joke';
+  const expected = 'HUMAN: sister is Nia, not Mia; works nights\nTOLD THEM: six prints\nOPEN: promised a film title';
+  for (const text of ['Please drop the joke.', 'Drop it.', 'Drop that, please.', 'Please drop this and move on.', 'Drop the bit.', 'Drop this topic.', 'Drop that subject.', "Please stop talking about it; don't drop that glass."]) {
+    assert.equal(retireSharedPremise(memory, text), expected, text);
+    assert.equal(clampMemory('', memory, text), expected, text);
+  }
+  for (const text of ['I will drop a friend off after dinner.', 'Please drop it off at the shop.', 'I dropped salt on the table.', 'Drop that photo in the album.', 'Drop it and pick it up.', "Please don't drop the joke; I like it.", "Don't drop the subject; I'm interested.", "Don't stop joking."]) {
+    assert.equal(retireSharedPremise(memory, text), memory, text);
+  }
+});
+
 test('OPEN retains one premise after real obligations and sacrifices it first under notebook pressure', () => {
   const compact = clampMemory('HUMAN: likes trains\nTOLD THEM: nothing\nOPEN: shared premise: both miss trains; promised a film title; shared premise: secret agents');
   assert.equal(compact, 'HUMAN: likes trains\nTOLD THEM: nothing\nOPEN: promised a film title; shared premise: both miss trains');
@@ -41,4 +53,32 @@ test('a corrected next notebook replaces old facts and a stale premise without r
   const settled = 'HUMAN: sister Nia; works nights\nTOLD THEM: chose six prints; named the film\nOPEN: nothing pending';
   assert.equal(clampMemory(settled, corrected), settled, 'a settled promise and retired premise stay out of OPEN on later turns');
   assert.match(clampMemory('', settled), /sister Nia; works nights/, 'a blank provider notebook still preserves the latest corrected facts');
+});
+
+test('the retained notebook never exceeds 700 and preserves labeled corrections and promises ahead of an optional premise', () => {
+  for (const length of [701, 800, 900]) {
+    assert.ok(clampMemory('x'.repeat(length)).length <= 700, `valid ${length}-character unlabelled reply`);
+    assert.ok(clampMemory('', 'x'.repeat(length)).length <= 700, `blank reply with ${length}-character previous notebook`);
+  }
+  const long = `HUMAN: sister is Nia, not Mia; works nights; ${'likes pasta; '.repeat(65)}\nTOLD THEM: ${'grew up in Leeds; '.repeat(30)}\nOPEN: ${'asked about work; '.repeat(15)}promised a film title; shared premise: the wedding joke`;
+  for (const kept of [clampMemory(long), clampMemory('', long)]) {
+    assert.ok(kept.length <= 700);
+    const [human, told, open] = kept.split('\n');
+    assert.match(human, /^HUMAN: sister is Nia, not Mia; works nights/);
+    assert.match(told, /^TOLD THEM:/);
+    assert.match(open, /^OPEN: promised a film title/);
+    assert.doesNotMatch(open, /shared premise/);
+  }
+  const duplicated = `HUMAN: old detail; ${'old; '.repeat(150)}\nHUMAN: corrected name is Nia\nTOLD THEM: ${'Leeds; '.repeat(100)}\nOPEN: promised a film title`;
+  const kept = clampMemory(duplicated);
+  assert.ok(kept.length <= 700); assert.match(kept, /^HUMAN: corrected name is Nia/);
+  assert.match(kept, /\nOPEN: promised a film title/); assert.doesNotMatch(kept, /old detail/);
+  const repeatedOpen = `HUMAN: ${'important; '.repeat(65)}\nOPEN: shared premise: old joke\nOPEN: shared premise: another joke; promised a film title; shared premise: yet another joke`;
+  const afterStop = clampMemory(repeatedOpen, '', 'Please drop the joke.');
+  assert.ok(afterStop.length <= 700); assert.match(afterStop, /\nOPEN: promised a film title/);
+  assert.doesNotMatch(afterStop, /shared premise/);
+  const shortRepeated = 'HUMAN: old name Mia\nHUMAN: corrected name is Nia\nOPEN: shared premise: old joke\nOPEN: shared premise: another joke; promised a film';
+  const newest = clampMemory(shortRepeated);
+  assert.equal(newest, 'HUMAN: corrected name is Nia\nOPEN: promised a film; shared premise: another joke');
+  assert.equal(clampMemory(shortRepeated, '', 'Please drop the joke.'), 'HUMAN: corrected name is Nia\nOPEN: promised a film');
 });

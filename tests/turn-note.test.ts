@@ -123,7 +123,7 @@ test('the check is reported with its total', () => {
 /* ------------------------------------------------------------------ the notebook */
 
 test('the notebook contract: under the hard cap it is kept as written, a blank answer keeps the previous one', () => {
-  assert.ok(MEMORY_TARGET < MEMORY_HARD && MEMORY_HARD < MEMORY_REJECT);
+  assert.equal(MEMORY_TARGET, 700); assert.equal(MEMORY_HARD, 700); assert.ok(MEMORY_HARD < MEMORY_REJECT);
   const written = 'HUMAN: teaches primary school; allergic to nuts.\nTOLD THEM: grew up in Leeds.\nOPEN: asked about their sister.';
   assert.equal(clampMemory(written, 'old'), written);
   assert.equal(clampMemory('  \n \r\n', 'HUMAN: kept.'), 'HUMAN: kept.');
@@ -137,7 +137,7 @@ test('an over-long notebook is trimmed instead of rejected, and the human’s fa
   assert.ok(labelled.length <= MEMORY_HARD);
   const [human, told, open] = labelled.split('\n');
   assert.ok(human.startsWith('HUMAN: ') && told.startsWith('TOLD THEM: ') && open.startsWith('OPEN: '), 'all three parts survive');
-  assert.ok(human.length <= 400 && told.length <= 220 && open.length <= 140);
+  assert.ok(human.length <= 400 && told.length <= 158 && open.length <= 140);
   assert.ok(human.length > told.length && told.length > open.length, 'what the human said keeps the most room');
   assert.ok(!/[,;]$/.test(human) && !/[,;]$/.test(told) && !/[,;]$/.test(open), 'cuts land on a clause boundary');
 });
@@ -441,7 +441,7 @@ async function boot(claude: ClaudeAdapter, options: RestaurantOptions = {}) {
 
 test('a notebook over the hard cap completes the turn with a trimmed notebook', async t => {
   const long = `HUMAN: ${'likes long walks and quiet bars, '.repeat(40)}`.slice(0, 1001);
-  assert.equal(long.length, 1001, 'one character over what the model was asked to keep');
+  assert.equal(long.length, 1001, 'valid oversize memory must be trimmed without rejecting the reply');
   const { claude, requests } = recorder(call => reply({ memory: call === 1 ? long : 'HUMAN: short again.' }));
   const server = await boot(claude); t.after(() => server.close()); const api = await server.start();
   const first = await api.turn('I walk a lot.');

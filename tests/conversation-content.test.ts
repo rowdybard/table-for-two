@@ -23,6 +23,16 @@ test('material follows the latest topic without retelling, overriding a stop or 
   assert.equal(conversationContentNote({ ...input, latestHumanText: 'What is seven plus four?' }), '');
 });
 
+test('an explicit dropped topic suppresses topical seeds without suppressing ordinary drop-off conversation', () => {
+  const input = { dateId: 'mira' as const, latestHumanText: 'Please drop the joke about the wedding photo.' };
+  assert.deepEqual(selectConversationSeeds(input), []);
+  const note = conversationContentNote(input);
+  assert.doesNotMatch(note, /^(?:anecdote|opinion|contradiction|desire):/m);
+  assert.match(note, /sorry/i); assert.doesNotMatch(note, /act surprised/i);
+  assert.ok(selectConversationSeeds({ ...input, latestHumanText: 'I will drop a friend off after the wedding photo.' }).length > 0);
+  assert.ok(selectConversationSeeds({ ...input, latestHumanText: 'Drop that photo in the wedding album.' }).length > 0);
+});
+
 test('selected material and voice fit the bounded prompt budget; Blind never borrows the rig biography', () => {
   const note = conversationContentNote({ dateId: 'mira', latestHumanText: 'I am worried about work, music, your show and the wedding photos. Tell me your dream.', personalDisclosureAllowed: true });
   assert.ok(estimatedConversationContentTokens(note) <= 600);
