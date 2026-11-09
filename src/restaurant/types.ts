@@ -68,7 +68,9 @@ export type DinnerCommand =
   | { type: 'scenario'; choice: string }
   | { type: 'pause'; paused: boolean }
   | { type: 'finish' };
-export interface TurnRequest { turnId: string; text: string; model: ClaudeModel }
+/** `via` says how the words reached the date: an on-device speech transcript or typed text. */
+export type TurnVia = 'voice' | 'typed';
+export interface TurnRequest { turnId: string; text: string; model: ClaudeModel; via?: TurnVia }
 export type TurnEvent =
   | { type: 'start'; generation: number }
   | { type: 'utterance'; generation: number; index: number; utterance: SceneUtterance }
