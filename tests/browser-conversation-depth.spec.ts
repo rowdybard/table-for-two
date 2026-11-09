@@ -95,6 +95,41 @@ test('a provider failure releases controls and the next ordinary reply succeeds'
   expect(calls.length).toBe(before + 2); expect((await state(page)).id).toBe(id);
 });
 
+test('an incomplete reply cancels its queued caption and permits another turn in the same evening', async ({ page }) => {
+  test.setTimeout(45000);
+  const receipts: { generation: number; completed: boolean }[] = [];
+  let failedGeneration = -1, intercept = true;
+  page.on('request', request => {
+    if (request.method() === 'POST' && request.url().endsWith('/playback')) {
+      const body = request.postDataJSON();
+      if (body.text === REPLY) receipts.push({ generation: body.generation, completed: body.completed });
+    }
+  });
+  await begin(page); const id = (await state(page)).id;
+  await page.route('**/api/date/sessions/*/turn', async route => {
+    if (!intercept) { await route.continue(); return; }
+    intercept = false;
+    // The upstream is the local mock adapter. Simulate a broken connection after
+    // a valid streamed line, before the terminal snapshot and done arrive.
+    const response = await route.fetch();
+    const events = (await response.text()).trim().split('\n').map(line => JSON.parse(line));
+    failedGeneration = events.find(event => event.type === 'start').generation;
+    const partial = events.filter(event => event.type === 'start' || event.type === 'utterance');
+    await route.fulfill({ response, body: partial.map(event => JSON.stringify(event)).join('\n') + '\n' });
+  });
+  await send(page, 'Hello before a broken reply.');
+  await expect(page.locator('#conversation-log')).toContainText(REPLY);
+  await expect(page.locator('#toast')).toContainText('reply was interrupted');
+  await expect(page.locator('#send-turn')).toBeEnabled();
+  await expect(page.locator('#caption')).toBeHidden();
+  expect(failedGeneration).toBeGreaterThanOrEqual(0);
+  await page.waitForTimeout(captionReadingMs(REPLY) + 250);
+  expect(receipts.some(receipt => receipt.generation === failedGeneration && receipt.completed)).toBe(false);
+  await send(page, 'Another greeting after the broken reply.');
+  await expect.poll(() => receipts.some(receipt => receipt.generation !== failedGeneration && receipt.completed), { timeout: 12000 }).toBe(true);
+  expect((await state(page))).toMatchObject({ id, phase: 'playing' });
+});
+
 test('unavailable voice uses readable captions and completes only after visible reading', async ({ page }) => {
   const receipts: boolean[] = [];
   await page.route('**/api/date/status', async route => {

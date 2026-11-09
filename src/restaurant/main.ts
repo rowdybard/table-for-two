@@ -451,7 +451,7 @@ async function sendTurn(raw: string, explicitTarget?: ConversationTarget, via: T
   busy = true; updateTypedSubmit();
   log('You', text); el('turn-status').textContent = `${getDate(state.dateId)!.name} is listening…`;
   turnStartedAt = performance.now(); firstAudioMs = null;
-  let accepted = false, deadlineExpired = false, streamComplete = false;
+  let accepted = false, serverFailed = false, deadlineExpired = false, streamComplete = false;
   let deadline: ReturnType<typeof setTimeout> | undefined;
   const armDeadline = (model?: ClaudeModel) => {
     clearTimeout(deadline);
@@ -474,6 +474,9 @@ async function sendTurn(raw: string, explicitTarget?: ConversationTarget, via: T
       }
       else if (event.type === 'utterance') { clearTimeout(waitingNotice); activeGeneration = event.generation; queueUtterance(event.utterance, event.generation, epoch); }
       else if (event.type === 'state') applyState(event.state);
+      // Keep consuming the terminal snapshot and done after a provider failure.
+      // The stream helper reports its recorded error once those events are applied.
+      else if (event.type === 'error') serverFailed = true;
     });
     streamComplete = true;
     if (epoch === generationEpoch) el('turn-status').textContent = '';
@@ -483,10 +486,16 @@ async function sendTurn(raw: string, explicitTarget?: ConversationTarget, via: T
       void interrupt();
       const message = 'The reply took too long. You can keep playing and try another turn.';
       toast(message, 10000); el('turn-status').textContent = 'Reply timed out · you can try again'; log('Connection', message, true);
-      return accepted;
+      return !serverFailed && accepted;
     }
-    if ((error as Error).name !== 'AbortError' && epoch === generationEpoch) { toast((error as Error).message, 10000); el('turn-status').textContent = 'Conversation paused · you can try again'; log('Connection', (error as Error).message, true); }
-    return (error as Error).name === 'AbortError' || epoch !== generationEpoch ? accepted : false;
+    if ((error as Error).name !== 'AbortError' && epoch === generationEpoch) {
+      // A failed or incomplete reply no longer owns delivery. Stop both queued
+      // captions and audio, including device fallback, without resetting dinner.
+      cancelLocalPlayback();
+      toast((error as Error).message, 10000); el('turn-status').textContent = 'Conversation paused · you can try again'; log('Connection', (error as Error).message, true);
+      return false;
+    }
+    return !serverFailed && ((error as Error).name === 'AbortError' || epoch !== generationEpoch) ? accepted : false;
   } finally {
     clearTimeout(deadline); clearTimeout(waitingNotice);
     if (!streamComplete) controller.abort();

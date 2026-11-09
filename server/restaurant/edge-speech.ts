@@ -20,7 +20,23 @@ export function edgeSettings(emotion: SceneUtterance['emotion']): SpeechSettings
 }
 
 export function edgeSpeechAdapter(createSocket: (url: URL, options: ClientOptions) => WebSocket = (url, options) => new WebSocket(url, options), timeoutMs = 12_000): SpeechAdapter {
+  const once = edgeAttempt(createSocket, timeoutMs);
+  // The consumer service drops the odd connection. It is free, so a failure before any audio
+  // gets one quick second try instead of sending the player to the robotic device voice.
+  // A timeout is not retried: the request has already waited long enough.
   return { async *stream(request: SpeechRequest, signal: AbortSignal) {
+    for (let attempt = 0; ; attempt++) {
+      let heard = false;
+      try { for await (const chunk of once(request, signal)) { heard = true; yield chunk; } return; }
+      catch (error) {
+        if (heard || attempt > 0 || signal.aborted || !(error instanceof DateApiError) || error.code !== 'edge_speech' || /timed out/.test(error.message)) throw error;
+      }
+    }
+  } };
+}
+
+function edgeAttempt(createSocket: (url: URL, options: ClientOptions) => WebSocket, timeoutMs: number) {
+  return async function* (request: SpeechRequest, signal: AbortSignal) {
     const interrupted = () => new DateApiError(499, 'interrupted', 'Speech interrupted.');
     if (signal.aborted) throw interrupted();
     if (!/^[a-z]{2,3}-[A-Z]{2}-[A-Za-z0-9]+Neural$/.test(request.voiceId)) throw new DateApiError(503, 'edge_voice', 'The configured free character voice is unavailable. Device voices and captions remain available.');
@@ -65,7 +81,10 @@ export function edgeSpeechAdapter(createSocket: (url: URL, options: ClientOption
     } catch (error) {
       if (signal.aborted) throw interrupted();
       if (error instanceof DateApiError) throw error;
+      // The pinned client reports its stream deadline as an ordinary Error.
+      // Preserve that distinction so the outer quick retry cannot double it.
+      if (error instanceof Error && error.message === 'Timed out waiting for Edge TTS') throw new DateApiError(503, 'edge_speech', 'The free voice service timed out. Device voices and captions remain available.');
       throw new DateApiError(503, 'edge_speech', 'The free voice service is unavailable. Device voices and captions remain available.');
     } finally { signal.removeEventListener('abort', abort); if (socket && socket.readyState !== WebSocket.CLOSED) socket.terminate(); }
-  } };
+  };
 }

@@ -56,6 +56,7 @@ Implement the user's approved “Make Table for Two's conversations worth sharin
 - User expanded the scope to stronger GPU reductions and a non-framerate WASD latency fix. Two GPT-6.1 Terra agents at ultra now handle movement and low-tier assets/materials alongside the lighting owner; Fast mode is enabled in Codex configuration. Their changes remain under integration and remote verification.
 - Low-tier shader lights are reduced from twelve to four, software canvas budget from 1,000,000 to 320,000 pixels, and low-tier PMREM/shadow/reflection/glow work and roughly 279,000 detailed plant triangles are avoided. Draw-only pacing preserves independent input updates; high-tier antialiasing and lighting remain.
 - Walking now uses bounded visual prediction, immediate ordered direction/stop sends, and a queued focus-loss stop that does not depend on a later render frame. Authoritative positions and collisions remain server-owned. Focused integrated rendering, movement, caption and ending checks pass; actual remote performance is not yet claimed.
+- Integrated canonical `main` through `2b1ee14894abb48d8196fd41297aa597c0929efb`, retaining Claude's newer seated dialogue and real-voice recovery. The combined path keeps bounded streaming/audio waits, consumes failed replies' terminal state, cancels incomplete playback, and never retries an Edge stream timeout. Guarded merge checks pass; the frozen conversation benchmark remains pinned to its documented original baseline.
 
 ## Remaining release gates
 

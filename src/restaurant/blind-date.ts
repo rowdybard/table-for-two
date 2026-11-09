@@ -193,7 +193,8 @@ export function getBlindDateCue(identity: BlindDateIdentity, key: string, contex
   const dish = identity.biography.preferredMain.toLowerCase(), dessertName = DESSERTS.find(item => item.id === identity.biography.preferredDessert)?.name.toLowerCase() ?? 'dessert';
   const lines: Record<string, [string, Emotion?]> = {
     welcome: [identity.opening, 'warm'],
-    seated: [dry ? 'Good, we can actually hear each other here.' : 'Good table, good company. Let’s see what happens.', 'warm'],
+    seated: [(dry ? ['Good, we can actually hear each other here.', 'Quiet enough to talk. That helps.', 'Fine table. I half expected the one by the kitchen.']
+      : ['Good table, good company. Let’s see what happens.', 'Okay, this is nice. I’m glad we’re finally sitting down.', 'This is a good spot. I’m in no hurry tonight.'])[Math.abs(context.variation ?? 0) % 3], 'warm'],
     ordered: [context.humanDish && context.humanDish === identity.biography.preferredMain ? `Same as you, then: the ${dish}. We can compare notes.` : `${context.humanDish ? `Nice, ${spokenDish(context.humanDish)}. ` : ''}I’m having the ${dish}. That was the easiest decision I made today.`, 'amused'],
     'main-served': ['That smells good. I’m ready to stop looking at the menu and start eating.', 'warm'],
     taste: [dry ? 'Mm. Good choice.' : 'Okay, that was worth waiting for.', 'warm'],

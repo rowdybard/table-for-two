@@ -285,7 +285,7 @@ const alternatives = (dateId: DateId, key: FrequentCueKey, second: string, third
 export const STORY_CUE_ALTERNATIVES: Record<DateId, Record<FrequentCueKey, readonly [SceneUtterance, SceneUtterance, SceneUtterance]>> = {
   mira: {
     welcome: alternatives('mira', 'welcome', 'Hi! I’m glad you came. I got here early and immediately forgot the clever thing I was going to say.', 'Oh, hi. I was trying to look relaxed when you walked in. Let’s say that worked.'),
-    seated: alternatives('mira', 'seated', 'Okay. An evening where I just get to turn up. I could get used to that.', 'I nearly offered to help Eli with the chairs. I’m going to stay sitting down instead.'),
+    seated: alternatives('mira', 'seated', 'Okay. Phone away, shoulders down. I’m officially off the clock.', 'This is a good chair. I can see the whole room without feeling like part of it.'),
     ordered: alternatives('mira', 'ordered', 'Tomato rigatoni for me. I kept looking at the rest of the menu, but I knew.', 'I’m having the rigatoni. I don’t want to spend dinner wishing I’d ordered it.'),
     'main-served': alternatives('mira', 'main-served', 'Oh, lovely. I was getting very ready for that.', 'That smells good. Wait, hot plate. I heard him, I just got excited.'),
     'beat-cold': alternatives('mira', 'beat-cold', 'Okay, tiny starting point. Tell me one thing about your day. It doesn’t have to be a good story.', 'I’m curious about you. We don’t have to do the polished introduction; start wherever you like.'),
@@ -299,7 +299,7 @@ export const STORY_CUE_ALTERNATIVES: Record<DateId, Record<FrequentCueKey, reado
   },
   jules: {
     welcome: alternatives('jules', 'welcome', 'Hi. Good to see you. I wasn’t sure whether to wave; then you were already here.', 'Hello. I’m glad you found it. I’ve been deciding what to eat.'),
-    seated: alternatives('jules', 'seated', 'Good. We can hear each other.', 'This is comfortable. That helps.'),
+    seated: alternatives('jules', 'seated', 'Right. Napkin, water, menu. I think that’s everything the evening requires.', 'Good. I was braced for the table by the kitchen door.'),
     ordered: alternatives('jules', 'ordered', 'The mushroom risotto for me. I’ve stopped pretending to consider anything else.', 'I’ll have the risotto. I know what I like tonight.'),
     'main-served': alternatives('jules', 'main-served', 'That looks good. Thank you.', 'Mm. I’m ready for that.'),
     'beat-cold': alternatives('jules', 'beat-cold', 'We can start with something ordinary. How was your day?', 'I’m not in a hurry. Tell me something when you’re ready.'),
@@ -313,7 +313,7 @@ export const STORY_CUE_ALTERNATIVES: Record<DateId, Record<FrequentCueKey, reado
   },
   dev: {
     welcome: alternatives('dev', 'welcome', 'Hey. Glad you made it. I’ve decided not to start with three opinions in a row. That’s growth.', 'Hi. I was early. Tried to look casual about it. Not sure I pulled that off.'),
-    seated: alternatives('dev', 'seated', 'Right. I’m sitting down, someone else is cooking. Strong start.', 'Okay. Tell me if I start organizing the evening. I’m trying to just have one.'),
+    seated: alternatives('dev', 'seated', 'Okay, we made it to the table. That’s the hard part done.', 'Good seats. I’d say we’re ahead of schedule, which never happens to me.'),
     ordered: alternatives('dev', 'ordered', 'Lemon chicken for me. I’ve made my decision; no late campaign for the risotto.', 'I’m getting the lemon and herb chicken. Looking forward to eating something I didn’t have to cook.'),
     'main-served': alternatives('dev', 'main-served', 'Oh, yes. Let’s get into that.', 'Nice. I was about thirty seconds from getting impatient. Good timing.'),
     'beat-cold': alternatives('dev', 'beat-cold', 'All right, easy start. What did you do today before this?', 'I can do an introduction without listing my achievements. Mechanic, plays basketball, not as good at it as he thinks. Your turn.'),
@@ -389,7 +389,9 @@ export function getStoryCue(key: string, dateId: DateId, context: StoryCueContex
   const staffOnly = WAITER_ONLY_CUES[cue];
   if (staffOnly) return [{ ...staffOnly }];
   const varied = STORY_CUE_ALTERNATIVES[dateId][cue as FrequentCueKey];
-  const base = varied ? varied[Math.abs(Math.trunc(context.variation ?? 0)) % varied.length] : CUES[dateId][cue as Exclude<StoryCueKey, 'order-nudge'>];
+  // A guarded sit-down keeps the original, plain fallback across evenings.
+  const variation = cue === 'seated' && isGuardedStance(context.resolution) ? 0 : Math.abs(Math.trunc(context.variation ?? 0));
+  const base = varied ? varied[variation % varied.length] : CUES[dateId][cue as Exclude<StoryCueKey, 'order-nudge'>];
   if (!base) return [];
   // A hurt date still hears Eli's lines; only the date's own remark turns plain.
   const quiet = isGuardedStance(context.resolution) ? GUARDED[dateId][cue] : undefined;
