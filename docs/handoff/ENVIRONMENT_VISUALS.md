@@ -24,6 +24,11 @@ Daniel asked for an AAA pass on the restaurant environment (lighting, shaders, t
 - Until workstream B lands, `ensureVenueShadowLayers` in `RestaurantLighting.ts` assigns the baked `restaurant-*` batches to the static layer and the dining furniture to the spotlight layer. B should put those layers on its batches directly.
 - The table pendant fixture now lives in `diningRoot` (its own builder, casting nothing), so it travels with the quiet table. P1 to P4 are still baked into the room batches.
 
+- `barWash` (a point light over the bar in `RestaurantScene.ts`) is still there alongside the new bar spotlight, so the low tier has 12 lights against main's 13 rather than the planned 10. Delete it with workstream B and re-check the bar on both tiers, because the bar spot (4.5) was tuned with it present.
+- Tabletop props now cast into the table spotlight's shadow (about 25 extra shadow draws in solo, 33 in Double). If the low tier is tight on a phone, keep spotlight shadows for plates, basket, vase and lamp and leave cutlery, shaker tops and the bell to the contact blobs.
+- Found during review, not caused by this pass: while a main is served the meal target box also covers the crossed-cutlery target, so rested cutlery cannot be picked back up; and the bill target is hit before the bread when the check is on the table.
+- `browser-tabletop-art.spec.ts` still passes, but the lemon posset sits only 1 mm above its lower height limit. Comparing against the plate top (.794) would make that check less brittle.
+
 ## Picking up workstream B
 
 Owner files: `ProceduralMaterials.ts`, `EnvironmentAssets.ts`, `RestaurantScene.ts` (CRLF), `NightExterior.ts`, `RestaurantPropKit.ts`, and a new `tests/venue-surfaces.test.ts`. The full list of changes is under "Workstream B: surfaces" in the reviewed plan. Points that are easy to get wrong:

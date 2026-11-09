@@ -236,8 +236,8 @@ export interface RestaurantLightingOptions {
 
 export interface RestaurantLighting {
   readonly rig: LightRig;
-  /** Per frame, before any early return: time, tier cadence inputs and adaptive pixel ratio. */
-  update(state: DinnerState, dt: number, time: number, reducedMotion: boolean): void;
+  /** Per frame, before any early return: time, tier cadence inputs and adaptive pixel ratio. `gameplay` is false on the title and date-selection screens, where the pixel ratio is never judged. */
+  update(state: DinnerState, dt: number, time: number, reducedMotion: boolean, gameplay?: boolean): void;
   dispose(): void;
 }
 
@@ -328,10 +328,12 @@ export function createRestaurantLighting({ renderer, scene, quality, roomLights,
   let sampleCount = 0, windowFrames = 0, windowTime = 0, playingSince: number | null = null, glowTime = 0;
   const governor = createPixelRatioGovernor(renderer.getPixelRatio(), quality.pixelRatioFloor);
   const resetWindow = () => { sampleCount = 0; windowFrames = 0; windowTime = 0; };
-  const adapt = (state: DinnerState, dt: number, time: number) => {
+  const adapt = (state: DinnerState, dt: number, time: number, gameplay: boolean) => {
     const rendered = renderedSinceUpdate;
     renderedSinceUpdate = false;
     if (!quality.adaptive || governor.idle) return;
+    // The selection preview also reports phase 'playing'; only the dinner itself counts.
+    if (!gameplay) { playingSince = null; resetWindow(); return; }
     if (typeof document !== 'undefined' && document.visibilityState !== 'visible') { resetWindow(); return; }
     if (playingSince === null) { if (state.phase === 'playing') playingSince = time; return; }
     if (time - playingSince < ADAPTIVE_PIXEL_RATIO.delay || !rendered || dt <= 0) return;
@@ -349,7 +351,7 @@ export function createRestaurantLighting({ renderer, scene, quality, roomLights,
 
   return {
     rig,
-    update(state, dt, time, reducedMotion) {
+    update(state, dt, time, reducedMotion, gameplay = true) {
       if (disposed) return;
       double = !!state.doubleDate;
       rig.setDoubleLayout(double);
@@ -357,7 +359,7 @@ export function createRestaurantLighting({ renderer, scene, quality, roomLights,
       // Candle flicker holds still under reduced motion.
       if (!reducedMotion) glowTime += Math.max(0, dt);
       glow.setTime(glowTime);
-      adapt(state, dt, time);
+      adapt(state, dt, time, gameplay);
     },
     dispose() {
       if (disposed) return;

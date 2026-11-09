@@ -440,7 +440,7 @@ export class RestaurantRenderer {
     this.time += dt;
     if (state.phase !== 'playing') this.listeningPreview = null;
     this.set.update(this.time, this.reducedMotion.matches);
-    this.lighting.update(state, dt, this.time, this.reducedMotion.matches);
+    this.lighting.update(state, dt, this.time, this.reducedMotion.matches, this.presentation === 'gameplay');
     if (state.dateId !== this.dateId) this.setDate(state.dateId);
     this.syncDoubleActors(state);
     if (!this.compiled) return;
