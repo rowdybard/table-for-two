@@ -246,7 +246,7 @@ export class RestaurantRenderer {
     this.parallelCompile = this.renderer.extensions.has('KHR_parallel_shader_compile');
     // Software WebGL (hardware acceleration off) gets the phone tier: fewer lights, no shadow map, lower resolution.
     this.gpuName = readGpuName(this.renderer.getContext());
-    this.quality = detectRenderQuality({ ...readRenderQualityEnvironment(), softwareRenderer: isSoftwareRenderer(this.gpuName) });
+    this.quality = detectRenderQuality({ ...readRenderQualityEnvironment(), gpuName: this.gpuName, softwareRenderer: isSoftwareRenderer(this.gpuName) });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.10;

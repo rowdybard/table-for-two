@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { RENDER_TIERS, SOFTWARE_RENDER_BUDGET, detectRenderQuality, isSoftwareRenderer, parseQualityOverride, readGpuName, readRenderQualityEnvironment, renderPixelRatio } from '../src/restaurant/render/RenderQuality';
+import { RENDER_TIERS, SOFTWARE_RENDER_BUDGET, detectRenderQuality, isConstrainedIntegratedGpu, isSoftwareRenderer, parseQualityOverride, readGpuName, readRenderQualityEnvironment, renderPixelRatio } from '../src/restaurant/render/RenderQuality';
 
 const desktop = { search: '', coarsePointer: false, maxTouchPoints: 0, innerWidth: 1280, deviceMemory: 8, webdriver: false };
 
@@ -67,6 +67,34 @@ test('software WebGL (hardware acceleration off) drops to the low tier unless a 
   assert.ok(software.pixelBudget < RENDER_TIERS.low.pixelBudget);
   assert.equal(detectRenderQuality(desktop).software, false);
   assert.equal(detectRenderQuality({ ...desktop, softwareRenderer: true, search: '?quality=high' }).tier, 'high', 'an explicit tier still wins');
+});
+
+test('named older integrated GPUs select low, while discrete and unknown GPUs retain high', () => {
+  for (const name of [
+    'ANGLE (AMD, AMD Radeon(TM) Vega 8 Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)',
+    'AMD Radeon Vega 3 Graphics', 'Radeon Vega 6 Graphics', 'Radeon Vega 7 Graphics',
+    'AMD Radeon Vega 10 Graphics', 'AMD Radeon Vega 11 Graphics',
+    'ANGLE (Intel, Intel(R) HD Graphics 620 Direct3D11 vs_5_0 ps_5_0, D3D11)',
+    'Mesa Intel(R) UHD Graphics 620 (KBL GT2)', 'Intel UHD Graphics 630',
+  ]) {
+    assert.equal(isConstrainedIntegratedGpu(name), true, name);
+    const quality = detectRenderQuality({ ...desktop, gpuName: name });
+    assert.equal(quality.tier, 'low', name);
+    assert.equal(quality.software, false, 'integrated hardware is not a CPU rasterizer');
+    assert.equal(quality.pixelBudget, RENDER_TIERS.low.pixelBudget);
+  }
+  for (const name of [
+    'ANGLE (AMD, AMD Radeon RX 560X Series Direct3D11 vs_5_0 ps_5_0, D3D11)',
+    'AMD Radeon RX Vega 8', 'AMD Radeon RX 6700 XT', 'Intel(R) Arc(TM) A770 Graphics',
+    'Intel(R) Iris(R) Xe Graphics', 'AMD Radeon Vega 80', 'Apple GPU', 'WebKit WebGL', '',
+  ]) {
+    assert.equal(isConstrainedIntegratedGpu(name), false, name);
+    assert.equal(detectRenderQuality({ ...desktop, gpuName: name }).tier, 'high', name);
+  }
+  const vega = { ...desktop, gpuName: 'AMD Radeon(TM) Vega 8 Graphics' };
+  assert.equal(detectRenderQuality({ ...vega, search: '?quality=high' }).tier, 'high');
+  assert.equal(detectRenderQuality({ ...vega, search: '?quality=high' }).forced, true);
+  assert.equal(detectRenderQuality({ ...vega, search: '?quality=low' }).tier, 'low');
 });
 
 test('the GPU name prefers the unmasked renderer and never throws', () => {
