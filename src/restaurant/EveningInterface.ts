@@ -4,43 +4,37 @@ import { DESSERTS } from './evening';
 import { getDate, RESTAURANT } from './content';
 import { buildDinnerBill, scenarioCareSnapshot, scenarioResumeAvailability } from './scenario-care';
 import type { DateAgendaProgress } from './agenda-types';
-import type { DinnerCommand, DinnerState, EveningAction, EveningMoment } from './types';
+import type { DinnerCommand, DinnerState, EveningAction, EveningMoment, InteractionTarget } from './types';
 
-type Actions = { command(command: DinnerCommand): Promise<void>; scenario?(choice: string): Promise<void> | void; viewEnding?(): Promise<void> | void; openActivity(kind: 'coasters' | 'napkin' | 'dessert'): void; releasePointer(): void; modalChanged(): void; notice(message: string): void };
-type Button = { label: string; action?: EveningAction; choice?: string; disabled?: boolean; run?: () => void };
+type Actions = { command(command: DinnerCommand): Promise<void>; scenario?(choice: string): Promise<void> | void; viewEnding?(): Promise<void> | void; openMenu?(): Promise<void> | void; releasePointer(): void; modalChanged(): void; notice(message: string): void };
+type Chip = { label: string; action?: EveningAction; choice?: string; scenario?: string; disabled?: boolean; id?: string; run?: () => void };
+type Prompt = { copy: string; chips: Chip[]; farewell?: boolean };
 const el = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
-const dialogIds = ['dessert-dialog', 'bill-dialog', 'farewell-dialog', 'history-dialog'];
+const dialogIds = ['bill-dialog', 'history-dialog'];
 
-/** Course choices, incident recovery, and the night’s factual notebook. No model calls. */
+/**
+ * One compact prompt line for the evening’s real choices, the receipt on demand, and the
+ * night’s factual notebook. Eli and the date carry the pacing; nothing here makes a model call.
+ */
 export class EveningInterface {
   private state?: DinnerState;
-  private renderKey = '';
+  private promptKey = '';
   private momentsKey = '';
   private cluesKey = '';
   private keptEndingSignature = '';
-  private deferred: DinnerCommand | null = null;
   private shownScenario = '';
   private sessionKey = '';
   private billKey = '';
+  private toastOpen = false;
+  private chips: Chip[] = [];
+  private farewellShowing = false;
   private readonly billTotal: HTMLElement;
   constructor(private readonly actions: Actions) {
     this.billTotal = document.getElementById('bill-total') ?? document.createElement('p');
     this.billTotal.id = 'bill-total';
     if (!this.billTotal.isConnected) el('bill-items').insertAdjacentElement('afterend', this.billTotal);
-    const options = el('dessert-options');
-    for (const dessert of DESSERTS) {
-      const button = document.createElement('button'); button.dataset.gameItem = ''; button.dataset.dessert = dessert.id;
-      const copy = document.createElement('span'); copy.className = 'dessert-choice-copy'; copy.textContent = dessert.name;
-      button.append(copy); button.addEventListener('click', async () => { this.closeDialogs(); await this.perform({ type: 'evening', action: 'order-dessert', choice: dessert.id }); }); options.append(button);
-    }
-    el('dessert-close').addEventListener('click', () => this.closeDialogs());
-    el('dessert-skip').addEventListener('click', async () => { this.closeDialogs(); await this.perform({ type: 'evening', action: 'skip-dessert' }); });
     el('bill-close').addEventListener('click', () => this.closeDialogs());
-    el('farewell-close').addEventListener('click', () => this.closeDialogs());
     document.querySelectorAll<HTMLButtonElement>('[data-settlement]').forEach(button => button.addEventListener('click', async () => { this.closeDialogs(); await actions.command({ type: 'evening', action: 'settle-bill', choice: button.dataset.settlement }); }));
-    document.querySelectorAll<HTMLButtonElement>('[data-farewell]').forEach(button => button.addEventListener('click', async () => { this.closeDialogs(); await actions.command({ type: 'evening', action: 'farewell', choice: button.dataset.farewell }); }));
-    el('play-coasters').addEventListener('click', () => actions.openActivity('coasters'));
-    el('play-napkin').addEventListener('click', () => actions.openActivity('napkin'));
     for (const tab of ['chat', 'moments']) el('journal-' + tab).addEventListener('click', () => {
       el('conversation-log').hidden = tab !== 'chat'; el('moments-log').hidden = tab !== 'moments';
       el('journal-chat').classList.toggle('selected', tab === 'chat'); el('journal-moments').classList.toggle('selected', tab === 'moments');
@@ -51,21 +45,30 @@ export class EveningInterface {
     try { el('past-evenings').hidden = !JSON.parse(localStorage.getItem('table-for-two-evenings') || '[]').length; } catch {}
   }
   get isDialogOpen() { return dialogIds.some(id => !el(id).hidden); }
+  /** The goodbye chips are showing at the door, so the camera can hold the two-shot. */
+  get farewellReady() { return this.farewellShowing; }
+  get promptVisible() { return !el('prompt-line').hidden; }
   closeDialogs() { dialogIds.forEach(id => { el(id).hidden = true; }); this.actions.modalChanged(); }
+  /** Escape steps back out of a sub-choice before it pauses the evening. */
+  dismissPrompt() { if (!this.toastOpen) return false; this.toastOpen = false; this.refreshPrompt(); return true; }
   private open(id: string) { this.actions.releasePointer(); this.closeDialogs(); el(id).hidden = false; this.actions.modalChanged(); }
-  openDessert() {
-    if (!this.state?.seated) return this.actions.notice('Take a seat to look at dessert together.');
-    const care = scenarioCareSnapshot(this.state.evening.scenarioCare);
-    if (care.kitchen.held || care.presence !== 'at-table') return this.actions.notice(care.presence === 'at-table' ? 'Resume dinner before choosing dessert.' : 'Give your date time to return.');
-    this.open('dessert-dialog');
+  /** Press the numbered chip, as the 1–4 keys do. */
+  chip(index: number) {
+    const chip = this.chips[index - 1];
+    if (!chip || chip.disabled || el('prompt-line').hidden) return false;
+    this.activate(chip); return true;
   }
-  async openBill() {
+  private activate(chip: Chip) {
+    if (chip.run) chip.run();
+    else if (chip.scenario) void this.actions.scenario?.(chip.scenario);
+    else if (chip.action) void this.perform({ type: 'evening', action: chip.action, ...(chip.choice ? { choice: chip.choice } : {}) });
+  }
+  private billFor(state: DinnerState) { return state.doubleDate?.role === 'wingman' ? state.doubleDate.otherView?.evening.bill : state.evening.bill; }
+  openBill() {
     if (!this.state) return;
-    const session = this.state.id;
-    const billState = () => this.state?.doubleDate?.role === 'wingman' ? this.state.doubleDate.otherView?.evening.bill : this.state?.evening.bill;
-    if (!billState()?.requested) await this.perform({ type: 'evening', action: 'request-bill' });
-    if (this.state.id !== session || this.state.phase !== 'playing' || !this.state.seated) return;
-    if (!billState()?.requested || billState()?.settlement) return;
+    const bill = this.billFor(this.state);
+    if (!bill?.requested) return this.actions.notice('Eli brings the check once dessert is done.');
+    if (!this.state.seated) return this.actions.notice('The check is on the table.');
     this.renderBill(this.state);
     this.open('bill-dialog');
   }
@@ -76,6 +79,8 @@ export class EveningInterface {
       date: getDate(pair.view.dateId)!.name,
       ledger: pair.view.evening.bill.items ? { items: pair.view.evening.bill.items, totalCents: pair.view.evening.bill.totalCents ?? pair.view.evening.bill.items.reduce((total, item) => total + item.chargedCents, 0) } : buildDinnerBill(pair.view),
     }));
+    const settled = !!this.billFor(state)?.settlement;
+    document.querySelectorAll<HTMLButtonElement>('[data-settlement]').forEach(button => { button.hidden = settled; });
     const key = JSON.stringify(pairs.map(pair => [pair.human, pair.date, pair.view.evening.bill.settlement, pair.ledger]));
     if (key === this.billKey) return;
     this.billKey = key;
@@ -83,8 +88,8 @@ export class EveningInterface {
     const rows: string[] = [];
     let due = 0;
     for (const pair of pairs) {
-      const settled = !!pair.view.evening.bill.settlement;
-      if (pairs.length > 1) rows.push(`${pair.human} and ${pair.date}${settled ? ' · Already settled' : ''}`);
+      const paid = !!pair.view.evening.bill.settlement;
+      if (pairs.length > 1) rows.push(`${pair.human} and ${pair.date}${paid ? ' · Already settled' : ''}`);
       for (const item of pair.ledger.items) {
         const owner = item.owner === 'you' ? pair.human : pair.date;
         const quantity = item.quantity > 1 ? ` × ${item.quantity}` : '';
@@ -92,39 +97,33 @@ export class EveningInterface {
         const charge = ['cancelled', 'pending'].includes(item.status) ? 'Not charged' : money(item.chargedCents);
         rows.push(`${status}${owner} · ${item.label}${quantity} · ${charge}`);
       }
-      if (pairs.length > 1 || settled) rows.push(`${settled ? 'Paid' : 'Pair total'} · ${money(pair.ledger.totalCents)}`);
-      if (!settled) due += pair.ledger.totalCents;
+      if (pairs.length > 1 || paid) rows.push(`${paid ? 'Paid' : 'Pair total'} · ${money(pair.ledger.totalCents)}`);
+      if (!paid) due += pair.ledger.totalCents;
       if (pairs.length > 1) rows.push('');
     }
     el('bill-items').textContent = rows.join('\n').trim();
-    this.billTotal.textContent = `${pairs.length > 1 ? 'Amount due' : 'Total'} · ${money(due)}`;
+    this.billTotal.textContent = settled && pairs.length === 1 ? `Paid · ${money(pairs[0]!.ledger.totalCents)}` : `${pairs.length > 1 ? 'Amount due' : 'Total'} · ${money(due)}`;
   }
-  openFarewell() {
-    if (!this.state || this.state.evening.chapter !== 'farewell') return;
-    const human = this.state.participants[0].position;
-    if (this.state.seated || Math.hypot(human[0] - RESTAURANT.entrance[0], human[2] - RESTAURANT.entrance[2]) > RESTAURANT.entranceRadius) return this.actions.notice('Walk to the entrance together before saying goodnight.');
-    el('farewell-copy').textContent = 'What would you like to say?';
-    this.open('farewell-dialog');
+  private atDoor(state: DinnerState) {
+    const human = state.participants[0].position;
+    return !state.seated && Math.hypot(human[0] - RESTAURANT.entrance[0], human[2] - RESTAURANT.entrance[2]) <= RESTAURANT.entranceRadius;
   }
-  handleTarget(target: Extract<DinnerCommand, { type: 'interact' }>['target']): boolean {
+  handleTarget(target: InteractionTarget): boolean {
     const wingman = this.state?.doubleDate?.role === 'wingman';
     const double = this.state?.doubleDate;
     const remoteIncident = double?.incidentOwner && double.incidentOwner !== double.localHumanId;
     const evening = wingman || remoteIncident ? double?.otherView?.evening : this.state?.evening;
     if (target === 'napkin' && evening?.incident?.event === 'spilled-drink') { void this.actions.command({ type: 'evening', action: 'wipe' }); return true; }
     if (!wingman && target === 'glass' && evening?.incident?.event === 'spilled-drink') { void this.actions.command({ type: 'evening', action: 'steady-glass' }); return true; }
-    const watchingFriend = !!this.state?.doubleDate?.tableActivity && this.state.doubleDate.tableActivity.owner !== this.state.doubleDate.localHumanId;
-    if (wingman && ['meal', 'coasters', 'napkin', 'dessert'].includes(target) && !(target === 'coasters' && watchingFriend)) { this.actions.notice('Your date is complete. You can stay and help your friend.'); return true; }
-    if (target === 'meal') {
+    if (wingman && ['meal', 'dessert'].includes(target)) { this.actions.notice('Your date is complete. You can stay and help your friend.'); return true; }
+    if (target === 'meal' || target === 'dessert') {
       if (this.state) {
         const care = scenarioCareSnapshot(this.state.evening.scenarioCare);
         if (care.kitchen.held || care.presence !== 'at-table') this.actions.notice(care.presence === 'at-table' ? 'Dinner is held. Resume when you are ready.' : 'Give your date time to return.');
-        else void this.perform({ type: 'evening', action: this.state.evening.main.bites < 3 ? 'taste' : 'finish-main' });
+        else void this.perform({ type: 'evening', action: 'taste' });
       }
       return true;
     }
-    if (target === 'coasters' || target === 'napkin') { this.actions.openActivity(target); return true; }
-    if (target === 'dessert') { if (this.state?.evening.dessert.status === 'served') this.actions.openActivity('dessert'); else this.openDessert(); return true; }
     if (target === 'ticket') { void this.actions.command({ type: 'evening', action: 'inspect-ticket' }); return true; }
     if (target === 'service-bell') {
       const incident = evening?.incident?.event;
@@ -134,56 +133,30 @@ export class EveningInterface {
       else this.actions.notice(evening?.care.water.status === 'requested' ? 'Water is on the way.' : 'The water has arrived.');
       return true;
     }
-    if (target === 'bill') { void this.openBill(); return true; }
-    if (target === 'exit' && this.state?.evening.chapter === 'farewell') { this.openFarewell(); return true; }
+    if (target === 'bill') { this.openBill(); return true; }
+    if (target === 'exit' && this.state?.evening.chapter === 'farewell' && this.state.evening.bill.settlement && !this.state.evening.farewell.ending) { if (!this.farewellShowing) this.actions.notice('Walk to the door together before saying goodnight.'); return true; }
     return false;
   }
   update(state: DinnerState) {
     const sessionKey = `${state.id}/${state.doubleDate?.localHumanId ?? 'solo'}/${state.dateId}`;
     if (this.sessionKey && this.sessionKey !== sessionKey) {
-      this.deferred = null; this.shownScenario = ''; this.renderKey = ''; this.momentsKey = ''; this.cluesKey = ''; this.billKey = '';
+      this.shownScenario = ''; this.promptKey = ''; this.momentsKey = ''; this.cluesKey = ''; this.billKey = ''; this.toastOpen = false;
       this.closeDialogs();
-    } else if (this.state?.doubleDate?.role !== state.doubleDate?.role) this.deferred = null;
+    }
     this.sessionKey = sessionKey;
     this.state = state;
-    if (state.phase !== 'playing' && ['dessert-dialog', 'bill-dialog', 'farewell-dialog'].some(id => !el(id).hidden)) {
-      for (const id of ['dessert-dialog', 'bill-dialog', 'farewell-dialog']) el(id).hidden = true;
-      this.actions.modalChanged();
-    }
+    if (state.phase !== 'playing' && !el('bill-dialog').hidden) { el('bill-dialog').hidden = true; this.actions.modalChanged(); }
     if (!el('bill-dialog').hidden) {
-      const bill = state.doubleDate?.role === 'wingman' ? state.doubleDate.otherView?.evening.bill : state.evening.bill;
-      if (!state.seated || bill?.settlement) { el('bill-dialog').hidden = true; this.actions.modalChanged(); }
+      if (!state.seated) { el('bill-dialog').hidden = true; this.actions.modalChanged(); }
       else this.renderBill(state);
     }
     const e = state.evening;
     const scenario = state.doubleDate?.scenario ?? e.scenario;
-    const double = state.doubleDate;
-    const actionEvening = double?.role === 'wingman' ? double.otherView?.evening ?? e : e;
-    const targetDate = double?.dates.find(date => date.humanId === double.scenario?.target)?.dateId;
-    // Only key the fields that change the drawer. Coaster coordinates, cues and
-    // napkin strokes update independently and must not replace focused controls.
-    const key = JSON.stringify([
-      state.id, state.dateId, state.phase, state.seated, state.order, double?.role, double?.localHumanId,
-      double?.role === 'wingman' ? double.otherView?.order : undefined,
-      double?.role === 'wingman' ? double.tableActivity?.owner : undefined,
-      actionEvening.chapter, actionEvening.main.status, actionEvening.main.bites,
-      actionEvening.dessert.status, actionEvening.dessert.portions.length,
-      actionEvening.incident?.event, actionEvening.incident?.progress,
-      actionEvening.bill.requested, actionEvening.stance, !!actionEvening.farewell.ending,
-      !!actionEvening.care.tasteOffer, !!actionEvening.care.toast,
-      actionEvening.care.water.status, actionEvening.tabletop?.shared.carafeFill === 0 && (actionEvening.tabletop?.glassFill ?? 4) < 4, !!actionEvening.care.checkIn,
-      scenario?.id, scenario?.phase, scenario?.title, scenario?.description,
-      scenario?.choices, double?.scenario?.target, targetDate,
-      actionEvening.scenarioCare,
-      double?.scenario?.target !== double?.localHumanId ? double?.otherView?.evening.scenarioCare : undefined,
-    ]);
-    if (key !== this.renderKey) { this.renderKey = key; this.renderActions(state); }
+    this.refreshPrompt();
     const scenarioBeat = scenario ? `${scenario.id}:${scenario.beat}` : '';
     if (scenario?.phase === 'active' && scenarioBeat !== this.shownScenario && state.phase === 'playing') {
       this.shownScenario = scenarioBeat;
       this.actions.releasePointer();
-      el('evening-panel').querySelector<HTMLDetailsElement>('.action-drawer')!.open = true;
-      this.actions.modalChanged();
     }
     if (scenario?.phase !== 'active') this.shownScenario = '';
     const moments = JSON.stringify(e.moments);
@@ -197,141 +170,115 @@ export class EveningInterface {
       const container = el('agenda-clues-lines'); container.replaceChildren();
       for (const clue of clues) { const quote = document.createElement('blockquote'); quote.textContent = `“${clue}”`; container.append(quote); }
     }
-    const activeEvening = state.doubleDate?.role === 'wingman' ? state.doubleDate.otherView?.evening ?? e : e;
-    const care = scenarioCareSnapshot(activeEvening.scenarioCare);
-    if (this.deferred && !activeEvening.incident && activeEvening.scenario?.phase !== 'active' && !care.kitchen.held && care.presence === 'at-table' && state.phase === 'playing' && state.seated) {
-      const command = this.deferred; this.deferred = null;
-      queueMicrotask(() => { void this.perform(command).then(() => {
-        const bill = this.state?.doubleDate?.role === 'wingman' ? this.state.doubleDate.otherView?.evening.bill : this.state?.evening.bill;
-        if (command.type === 'evening' && command.action === 'request-bill' && bill?.requested) void this.openBill();
-      }); });
-    }
   }
-  private async perform(command: DinnerCommand) {
-    const session = this.sessionKey;
-    await this.actions.command(command);
-    if (this.sessionKey !== session) return;
-    const activeEvening = this.state?.doubleDate?.role === 'wingman' ? this.state.doubleDate.otherView?.evening : this.state?.evening;
-    if (activeEvening?.incident && command.type === 'evening' && ['finish-main', 'order-dessert', 'skip-dessert', 'finish-dessert', 'request-bill'].includes(command.action)) this.deferred = command;
+  private async perform(command: DinnerCommand) { await this.actions.command(command); }
+  private refreshPrompt() {
+    const state = this.state; if (!state) return;
+    const prompt = this.buildPrompt(state);
+    const key = JSON.stringify([prompt?.copy, prompt?.farewell, prompt?.chips.map(chip => [chip.label, chip.action, chip.choice, chip.scenario, chip.disabled, chip.id])]);
+    if (key === this.promptKey) return;
+    this.promptKey = key;
+    this.chips = prompt?.chips ?? [];
+    this.farewellShowing = !!prompt?.farewell;
+    const line = el('prompt-line');
+    line.hidden = !prompt || (!prompt.copy && !prompt.chips.length);
+    line.classList.toggle('prompt-farewell', !!prompt?.farewell);
+    el('prompt-copy').textContent = prompt?.copy ?? '';
+    el('prompt-copy').hidden = !prompt?.copy;
+    const parent = el('prompt-chips'); parent.replaceChildren();
+    prompt?.chips.forEach((chip, index) => {
+      const button = document.createElement('button'); button.type = 'button'; button.dataset.gameItem = ''; button.disabled = !!chip.disabled;
+      if (chip.action) button.dataset.evening = chip.action;
+      if (chip.choice) button.dataset.choice = chip.choice;
+      if (chip.scenario) button.dataset.scenario = chip.scenario;
+      if (chip.id) button.id = chip.id;
+      const key = document.createElement('kbd'); key.textContent = String(index + 1);
+      const label = document.createElement('span'); label.textContent = chip.label;
+      button.append(key, label);
+      button.addEventListener('click', () => this.activate(chip));
+      parent.append(button);
+    });
   }
-  private renderActions(state: DinnerState) {
-    const ownEvening = state.evening, wingman = state.doubleDate?.role === 'wingman';
-    const e = wingman ? state.doubleDate?.otherView?.evening ?? ownEvening : ownEvening, panel = el('evening-panel');
-    const scenario = state.doubleDate?.scenario ?? ownEvening.scenario;
-    const activeView = wingman ? state.doubleDate?.otherView ?? state : state;
+  private buildPrompt(state: DinnerState): Prompt | null {
+    if (state.phase !== 'playing') return null;
+    const own = state.evening, double = state.doubleDate, wingman = double?.role === 'wingman';
+    const e = wingman ? double?.otherView?.evening ?? own : own;
+    const activeView = wingman ? double?.otherView ?? state : state;
+    const scenario = double?.scenario ?? own.scenario;
     const care = scenarioCareSnapshot(e.scenarioCare);
     const courseHeld = care.kitchen.held || care.presence !== 'at-table';
-    panel.hidden = state.phase !== 'playing' || (!state.seated && !wingman && e.chapter !== 'farewell' && scenario?.phase !== 'active');
-    const labels = { welcome: 'FIRST IMPRESSIONS', mains: 'DINNER DATE', 'shared-moment': 'BONUS ROUND', dessert: 'SWEET THINGS', bill: 'THE BILL', farewell: 'THE FINAL SCENE' };
-    el('evening-chapter').textContent = labels[e.chapter];
-    let title = 'At the table', copy = '';
-    let buttons: Button[] = [];
     if (scenario?.phase === 'active') {
-      const targetDate = state.doubleDate?.dates.find(date => date.humanId === state.doubleDate?.scenario?.target);
+      const targetDate = double?.dates.find(date => date.humanId === double?.scenario?.target);
       const targetName = targetDate ? getDate(targetDate.dateId)?.name : undefined;
       const nameTarget = (text: string) => targetName ? text.replace(/\byour date\b/gi, targetName) : text;
-      title = scenario.title; copy = nameTarget(scenario.description) + (state.seated ? '' : ' Take your seat to respond.');
-      const targetView = state.doubleDate?.scenario?.target && state.doubleDate.scenario.target !== state.doubleDate.localHumanId ? state.doubleDate.otherView ?? state : state;
+      const targetView = double?.scenario?.target && double.scenario.target !== double.localHumanId ? double.otherView ?? state : state;
       const consequence = this.consequenceCopy(targetView);
-      if (consequence) copy += ` ${consequence}`;
       const presence = scenarioCareSnapshot(targetView.evening.scenarioCare).presence;
       const returning = scenario.beat === 'follow-through' && ['privacy-break', 'cleanup-break'].includes(presence);
+      let copy = nameTarget(scenario.description) + (state.seated ? '' : ' Take your seat to respond.');
+      if (consequence) copy += ` ${consequence}`;
       if (returning) copy = ['They’re returning shortly. Choose together when they are back.', consequence].filter(Boolean).join(' ');
-      buttons = scenario.choices.map(choice => ({ label: nameTarget(choice.label), choice: choice.id, disabled: !state.seated || returning, run: () => { void this.actions.scenario?.(choice.id); } }));
-    } else if (wingman && !state.seated) {
-      title = 'Stay for your friend'; copy = 'Take your seat to help at the table.';
-    } else if (wingman && !e.incident) {
-      title = 'Here for your friend'; copy = this.consequenceCopy(activeView);
-      if (care.kitchen.held) {
-        const resume = scenarioResumeAvailability({ ...activeView, seated: state.seated });
-        buttons.push({ label: 'Resume your friend’s dinner', action: 'resume-dinner', disabled: !resume.enabled });
+      return { copy, chips: scenario.choices.map(choice => ({ label: nameTarget(choice.label), scenario: choice.id, disabled: !state.seated || returning })) };
+    }
+    if (e.stance === 'leaving' || e.farewell.ending) return null;
+    if (wingman) {
+      if (!state.seated) return { copy: 'Take your seat to keep your friend company.', chips: [] };
+      if (!e.incident) {
+        const chips: Chip[] = [];
+        if (care.kitchen.held) { const resume = scenarioResumeAvailability({ ...activeView, seated: state.seated }); chips.push({ label: 'Resume your friend’s dinner', action: 'resume-dinner', disabled: !resume.enabled }); }
+        if ((e.care.water.status === 'none' || e.care.water.status === 'served' && e.tabletop?.shared.carafeFill === 0 && e.tabletop.glassFill < 4) && !e.bill.requested) chips.push({ label: 'Water for the table', action: 'request-water' });
+        if (care.presence === 'at-table' && double?.otherView?.order && !e.care.checkIn && !e.bill.requested) chips.push({ label: 'Check in with their date', action: 'check-in' });
+        if (e.bill.requested) chips.push({ label: 'See the check', run: () => this.openBill() });
+        chips.push({ label: 'Show my ending', id: 'view-own-ending', run: () => { void this.actions.viewEnding?.(); } });
+        return { copy: this.consequenceCopy(activeView) || (e.care.water.status === 'requested' ? 'Water is on the way.' : 'Here for your friend.'), chips: chips.slice(0, 4) };
       }
-      if ((e.care.water.status === 'none' || e.care.water.status === 'served' && e.tabletop?.shared.carafeFill === 0 && e.tabletop.glassFill < 4) && !e.bill.requested) buttons.push({ label: 'Ask for water for your friend', action: 'request-water' });
-      if (care.presence === 'at-table' && state.doubleDate?.otherView?.order && !e.care.checkIn && !e.bill.requested) buttons.push({ label: 'Check in with their date', action: 'check-in' });
-      if (state.doubleDate?.tableActivity && state.doubleDate.tableActivity.owner !== state.doubleDate.localHumanId) buttons.push({ label: 'Watch their coaster game', run: () => this.actions.openActivity('coasters') });
-      if (e.bill.requested || (e.main.status === 'finished' && ['finished', 'skipped'].includes(e.dessert.status))) buttons.push({ label: 'Look at the shared bill', run: () => { void this.openBill(); } });
-      if (!buttons.length && e.care.water.status === 'requested') copy = 'Water is on the way.';
-    } else if (e.stance === 'leaving' || e.farewell.ending) {
-      title = 'At the door'; copy = ''; buttons = [];
-    } else if (e.incident?.event === 'wrong-order') {
-      title = 'The wrong order?'; copy = e.incident.progress ? '' : 'Check the order ticket.';
-      buttons = [{ label: e.incident.progress ? 'Ticket checked ✓' : 'Compare the order ticket', action: 'inspect-ticket', disabled: e.incident.progress > 0 }, { label: 'Ask for the right dish', action: 'return-order', disabled: !e.incident.progress }, { label: 'Keep the surprise', action: 'keep-order', disabled: !e.incident.progress }];
-    } else if (e.incident?.event === 'spilled-drink') {
-      title = 'Spilled drink'; copy = e.incident.progress < 3 ? 'Wipe the table.' : 'Set the glass upright.';
-      buttons = [{ label: e.incident.progress < 3 ? 'Wipe with the napkin' : 'Table wiped ✓', action: 'wipe', disabled: e.incident.progress >= 3 }, { label: 'Set the glass upright', action: 'steady-glass', disabled: e.incident.progress < 3 }];
-    } else if (e.incident?.event === 'disruptive-diner') {
-      title = 'A noisy neighbor'; copy = '';
-      buttons = [{ label: 'Ask the waiter for a little quiet', action: 'ask-quiet' }, { label: 'Let it pass. Back to us.', action: 'let-it-go' }];
-    } else if (courseHeld) {
-      title = care.presence === 'privacy-break' ? 'A private minute' : care.presence === 'cleanup-break' ? 'A moment to clean up' : care.presence === 'staff-care' ? 'Dinner can wait' : 'Dinner is held';
-      copy = this.consequenceCopy(activeView);
+    }
+    if (!state.seated) {
+      if (own.chapter === 'farewell' && own.bill.settlement && !wingman) {
+        if (this.atDoor(state)) return { farewell: true, copy: 'One last thing, at the door.', chips: [
+          { label: 'I’d like to see you again', action: 'farewell', choice: 'again' },
+          { label: 'Let’s stay friends', action: 'farewell', choice: 'friendly' },
+          { label: 'Thank you for tonight. Goodnight.', action: 'farewell', choice: 'goodbye' },
+        ] };
+        return { copy: 'Walk to the door together.', chips: [] };
+      }
+      return null;
+    }
+    if (e.incident?.event === 'wrong-order') {
+      const checked = e.incident.progress > 0;
+      return { copy: checked ? `The ticket says ${activeView.order ?? 'your order'}; the plate is ${e.main.servedDish ?? 'something else'}.` : 'That isn’t what you ordered.', chips: checked
+        ? [{ label: 'Send it back', action: 'return-order' }, { label: 'Keep the surprise', action: 'keep-order' }]
+        : [{ label: 'Check the ticket', action: 'inspect-ticket' }] };
+    }
+    if (e.incident?.event === 'spilled-drink') {
+      const wiped = e.incident.progress >= 3;
+      return { copy: wiped ? 'The table is dry again.' : 'Water everywhere.', chips: wiped ? [{ label: 'Set the glass upright', action: 'steady-glass' }] : [{ label: 'Wipe it up', action: 'wipe' }] };
+    }
+    if (e.incident?.event === 'disruptive-diner') return { copy: 'A loud phone call at the next table.', chips: [{ label: 'Ask Eli for a little quiet', action: 'ask-quiet' }, { label: 'Let it go', action: 'let-it-go' }] };
+    if (courseHeld) {
       const resume = scenarioResumeAvailability(activeView);
-      if (care.kitchen.held) buttons = [{ label: 'Resume dinner', action: 'resume-dinner', disabled: !resume.enabled }];
+      let copy = this.consequenceCopy(activeView);
       if (!resume.enabled && care.presence === 'at-table' && resume.reason) copy = [copy, resume.reason].filter(Boolean).join(' ');
-    } else if (e.chapter === 'farewell') {
-      title = 'Say goodnight'; copy = 'Meet at the entrance.';
-      buttons = [{ label: 'Say goodnight at the door', run: () => this.openFarewell() }];
-    } else if (e.chapter === 'bill') {
-      title = 'The bill'; copy = '';
-      buttons = [{ label: 'Look at the bill', run: () => { void this.openBill(); } }];
-    } else if (e.main.status === 'waiting') {
-      title = 'Dinner is on the way'; copy = '';
-      buttons = [{ label: 'Try coaster curl', run: () => this.actions.openActivity('coasters') }, { label: 'Pass the napkin', run: () => this.actions.openActivity('napkin') }];
-    } else if (e.main.status === 'served') {
-      title = 'Dinner'; copy = '';
-      buttons = [{ label: e.main.bites >= 3 ? 'That was good ✓' : 'Try a bite', action: 'taste', disabled: e.main.bites >= 3 }, { label: 'Ready for something sweet', action: 'finish-main', disabled: e.main.bites < 3 }];
-    } else if (e.dessert.status === 'none' && e.main.status === 'finished') {
-      title = 'Dessert?'; copy = '';
-      buttons = [{ label: 'Look at the dessert menu', run: () => this.openDessert() }, { label: 'Just the bill, please', action: 'skip-dessert' }];
-    } else if (e.dessert.status === 'waiting') {
-      title = 'Dessert is on the way'; copy = '';
-      buttons = [{ label: 'Finish our napkin drawing', run: () => this.actions.openActivity('napkin') }];
-    } else if (e.dessert.status === 'served') {
-      title = 'Dessert'; copy = '';
-      buttons = [{ label: 'Share dessert', run: () => this.actions.openActivity('dessert') }, { label: 'That was lovely. The bill?', action: 'finish-dessert', disabled: e.dessert.portions.length < 4 }];
-    } else if (e.dessert.status === 'finished' || e.dessert.status === 'skipped') {
-      title = 'The bill'; copy = '';
-      buttons = [{ label: 'Ask for the bill', run: () => { void this.openBill(); } }];
+      return { copy, chips: care.kitchen.held ? [{ label: 'Resume dinner', action: 'resume-dinner', disabled: !resume.enabled }] : [] };
     }
-    if (!copy && scenario?.phase !== 'active') copy = this.consequenceCopy(activeView);
-    if (!wingman && (e.stance === 'guarded' || e.stance === 'hurt') && !e.incident) buttons.push({ label: 'Acknowledge the awkward moment', action: 'apologize' });
-    if (wingman) buttons.push({ label: 'Show my ending', run: () => { void this.actions.viewEnding?.(); } });
-    el('evening-action-title').textContent = title; el('evening-action-copy').textContent = copy;
-    const parent = el('evening-action-buttons');
-    const gesturesOpen = parent.querySelector<HTMLDetailsElement>('.care-actions')?.open ?? false;
-    const toastOpen = parent.querySelector<HTMLDetailsElement>('.toast-actions')?.open ?? false;
-    parent.replaceChildren();
-    for (const specification of buttons) {
-      const button = document.createElement('button'); button.dataset.gameItem = ''; button.textContent = specification.label; button.disabled = !!specification.disabled;
-      if (specification.action) button.dataset.evening = specification.action;
-      if (scenario?.phase === 'active' && specification.choice) button.dataset.scenario = specification.choice;
-      if (wingman && specification.label === 'Show my ending') button.id = 'view-own-ending';
-      button.addEventListener('click', () => { if (specification.run) specification.run(); else if (specification.action) void this.perform({ type: 'evening', action: specification.action, ...(specification.choice ? { choice: specification.choice } : {}) }); }); parent.append(button);
-    }
-    if (!wingman && !courseHeld && state.seated && !e.incident && scenario?.phase !== 'active' && e.stance !== 'leaving' && !e.farewell.ending && !e.bill.requested) {
-      const care = e.care;
-      const gestures = document.createElement('details'); gestures.className = 'care-actions'; gestures.open = gesturesOpen;
-      const summary = document.createElement('summary'); summary.textContent = 'Little gestures'; gestures.append(summary);
-      const addAction = (label: string, action: EveningAction, choice?: string) => {
-        const button = document.createElement('button'); button.type = 'button'; button.dataset.gameItem = ''; button.dataset.evening = action; button.textContent = label;
-        button.addEventListener('click', () => { void this.perform({ type: 'evening', action, ...(choice ? { choice } : {}) }); }); gestures.append(button);
-      };
-      if (e.main.status === 'served' && !care.tasteOffer) addAction('Offer a taste', 'offer-taste');
-      if (state.order && !care.toast) {
-        const toast = document.createElement('details'); toast.className = 'toast-actions'; toast.open = toastOpen;
-        const toastSummary = document.createElement('summary'); toastSummary.textContent = 'Make a toast'; toast.append(toastSummary);
-        for (const [choice, label] of [['tonight', 'To tonight'], ['honesty', 'To honesty'], ['friends', 'To friendship'], ['mischief', 'To a little mischief']]) {
-          const button = document.createElement('button'); button.type = 'button'; button.dataset.gameItem = ''; button.dataset.evening = 'toast'; button.dataset.choice = choice; button.textContent = label;
-          button.addEventListener('click', () => { void this.perform({ type: 'evening', action: 'toast', choice }); }); toast.append(button);
-        }
-        gestures.append(toast);
-      }
-      if (care.water.status === 'none' || care.water.status === 'served' && e.tabletop?.shared.carafeFill === 0 && e.tabletop.glassFill < 4) addAction('Ask for water', 'request-water');
-      else if (care.water.status === 'requested') { const status = document.createElement('p'); status.setAttribute('role', 'status'); status.textContent = 'Water is on the way.'; gestures.append(status); }
-      if (state.order && !care.checkIn) addAction('Check in with your date', 'check-in');
-      if (gestures.children.length > 1) parent.append(gestures);
-    }
-    el('table-play').hidden = wingman || courseHeld || !!e.incident || scenario?.phase === 'active' || e.chapter === 'bill' || e.chapter === 'farewell' || !state.seated;
+    if (own.chapter === 'farewell' && own.bill.settlement) return { copy: 'Dinner is settled. Walk to the door together.', chips: [] };
+    if (e.bill.requested && !e.bill.settlement) return { copy: 'Eli left the check.', chips: [
+      { label: 'Split it', action: 'settle-bill', choice: 'split' }, { label: 'My treat', action: 'settle-bill', choice: 'treat' },
+      { label: 'Separate checks', action: 'settle-bill', choice: 'separate' }, { label: 'See the check', run: () => this.openBill() },
+    ] };
+    if (e.main.status === 'finished' && e.dessert.status === 'none') return { copy: 'Eli offers dessert to share.', chips: [
+      ...DESSERTS.map(dessert => ({ label: dessert.name, action: 'order-dessert' as const, choice: dessert.id })),
+      { label: 'Just the bill', action: 'skip-dessert' },
+    ] };
+    if (!state.order) return { copy: 'Look over the menu whenever you’re ready.', chips: [{ label: 'Open the menu', run: () => { void this.actions.openMenu?.(); } }] };
+    if (this.toastOpen && !e.care.toast) return { copy: 'Raise your glass to…', chips: [['tonight', 'Tonight'], ['honesty', 'Honesty'], ['friends', 'Friends'], ['mischief', 'A little mischief']].map(([choice, label]) => ({ label: label!, action: 'toast' as const, choice, run: () => { this.toastOpen = false; void this.perform({ type: 'evening', action: 'toast', choice }); } })) };
+    this.toastOpen = false;
+    const gestures: Chip[] = [];
+    if (e.stance === 'guarded' || e.stance === 'hurt') gestures.push({ label: 'Acknowledge the awkward moment', action: 'apologize' });
+    if (e.main.status === 'served' && !e.care.tasteOffer) gestures.push({ label: 'Offer a taste', action: 'offer-taste' });
+    if (!e.care.toast) gestures.push({ label: 'Make a toast', run: () => { this.toastOpen = true; this.refreshPrompt(); } });
+    if (!e.care.checkIn && e.main.status !== 'none') gestures.push({ label: 'Check in', action: 'check-in' });
+    return gestures.length ? { copy: '', chips: gestures.slice(0, 4) } : null;
   }
   private consequenceCopy(view: DinnerState) {
     const care = scenarioCareSnapshot(view.evening.scenarioCare);
@@ -362,12 +309,12 @@ export class EveningInterface {
       for (const milestone of agenda.milestones.slice(-2)) { const quote = document.createElement('p'); quote.textContent = `“${milestone.evidence}”`; evidence.append(quote); }
     }
     const sessionKey = JSON.stringify([state.id, state.doubleDate?.localHumanId ?? 'solo']);
-    const signature = JSON.stringify([sessionKey, ending, state.evening.moments, state.evening.napkin, agenda]);
+    const signature = JSON.stringify([sessionKey, ending, state.evening.moments, agenda]);
     if (this.keptEndingSignature !== signature) {
       try {
         const previous = JSON.parse(localStorage.getItem('table-for-two-evenings') || '[]') as Array<{ sessionKey?: string; at?: string }>;
         const existing = previous.find(entry => entry?.sessionKey === sessionKey);
-        const saved = { sessionKey, dateId: state.dateId, at: existing?.at ?? new Date().toISOString(), ending, moments: state.evening.moments.slice(-6), napkin: state.evening.napkin, ...(agenda?.goal ? { agenda } : {}) };
+        const saved = { sessionKey, dateId: state.dateId, at: existing?.at ?? new Date().toISOString(), ending, moments: state.evening.moments.slice(-6), ...(agenda?.goal ? { agenda } : {}) };
         let replaced = false;
         const entries = previous.flatMap(entry => {
           if (entry?.sessionKey !== sessionKey) return [entry];
@@ -446,8 +393,14 @@ export class EveningInterface {
       context.fillStyle = UI_THEME.muted; context.font = canvasFont(17); y = lines(agenda.goal, 85, y, 710, 25, 3) + 7;
       context.fillStyle = UI_THEME.signal; context.font = canvasFont(17, 'body', 600); context.fillText(`Understanding · ${agenda.score} / ${agenda.possible}`, 85, y); y += 25;
     }
-    const points = state.evening.napkin.points;
-    if (points.length) { context.save(); context.translate(880, 540); context.rotate(-.1); context.fillStyle = UI_THEME.board; context.fillRect(-15, -15, 220, 220); context.strokeStyle = UI_THEME.signal; context.lineWidth = 2; context.beginPath(); points.forEach(([x, y], i) => { if (i) context.lineTo(x * 190, y * 190); else context.moveTo(x * 190, y * 190); }); context.stroke(); context.restore(); }
+    // A small ticket stub keeps the card from reading as a form: date, table, the dessert if one was shared.
+    const dessert = DESSERTS.find(item => item.id === state.evening.dessert.choice);
+    context.save(); context.translate(880, 540); context.rotate(-.1); context.fillStyle = UI_THEME.board; context.fillRect(-15, -15, 220, 140);
+    context.fillStyle = UI_THEME.ink; context.font = canvasFont(18, 'display'); context.fillText('TABLE 02', 8, 22);
+    context.font = canvasFont(14); context.fillStyle = UI_THEME.muted; context.fillText(state.order ?? 'No order', 8, 52, 190);
+    if (dessert && ['served', 'finished'].includes(state.evening.dessert.status)) context.fillText(`${dessert.name}, two spoons`, 8, 76, 190);
+    if (state.evening.bill.settlement) context.fillText({ split: 'Split evenly', treat: 'Your treat', separate: 'Separate checks' }[state.evening.bill.settlement], 8, 100, 190);
+    context.restore();
     const kept = document.createElement('canvas'); kept.width = canvas.width; kept.height = Math.max(900, Math.min(canvas.height, y + 70)); kept.getContext('2d')!.drawImage(canvas, 0, 0);
     const link = document.createElement('a'); link.download = `table-for-two-${state.dateId}.png`; link.href = kept.toDataURL('image/png'); link.click();
     this.actions.notice('Your evening’s memento is ready to keep.');

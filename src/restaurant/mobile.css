@@ -9,10 +9,17 @@
 #restaurant-app[data-mobile=true] :is(#restaurant-scene,#arrival-screen,#dinner-hud,.scene-vignette,#double-date-lobby,#journal) {position:absolute;inset:0;}
 #restaurant-app[data-mobile=true] :is(button,summary) {min-height:44px;touch-action:manipulation;}
 #restaurant-app[data-mobile=true] :is(input,select,textarea) {font-size:16px;}
-#restaurant-app[data-mobile=true] .objective {left:var(--safe-left);top:var(--safe-top);width:min(250px,32vw);font-size:13px;line-height:1.4;padding:5px 8px;}
-#restaurant-app[data-mobile=true] :is(.modal-backdrop,.paper-dialog,#double-date-lobby,#journal,.evening-panel,.ta-panel) {overscroll-behavior:contain;-webkit-overflow-scrolling:touch;}
+
+#restaurant-app[data-mobile=true] :is(.modal-backdrop,.paper-dialog,#double-date-lobby,#journal) {overscroll-behavior:contain;-webkit-overflow-scrolling:touch;}
 #restaurant-app[data-mobile=true] :is(.title-key-hint,.key-hint,.capture-pointer,#interaction,.bottom-tray .tray-button) {display:none!important;}
 #restaurant-app[data-mobile=true] .bottom-tray {left:auto;right:var(--safe-right);bottom:calc(var(--safe-bottom) + 52px);max-width:38%;}
+#restaurant-app[data-mobile=true] .prompt-line {left:var(--safe-left);top:calc(var(--safe-top) + 6px);max-width:min(430px,56%);gap:5px;}
+#restaurant-app[data-mobile=true] .prompt-line p {padding:5px 10px;font-size:13px;}
+#restaurant-app[data-mobile=true] #prompt-chips {gap:5px;}
+#restaurant-app[data-mobile=true] #prompt-chips button {min-height:44px;padding:0 14px;font-size:14px;}
+#restaurant-app[data-mobile=true] #prompt-chips kbd {display:none;}
+#restaurant-app[data-mobile=true] .prompt-farewell {top:auto;bottom:calc(var(--safe-bottom) + 150px);left:50%;max-width:min(560px,72%);}
+#restaurant-app[data-mobile=true][data-mobile-typing=true] .prompt-line {visibility:hidden;}
 #restaurant-app[data-mobile=true] #friend-audio-unlock {min-height:44px;background:var(--touch-ink);font-size:12px;}
 #restaurant-app[data-mobile=true] #mobile-controls {display:block;position:absolute;inset:0;z-index:8;pointer-events:none;}
 #restaurant-app[data-mobile=true] #mobile-controls button {pointer-events:auto;min-height:44px;}
@@ -20,9 +27,7 @@
 .mobile-toolbar button {padding:0 12px;color:var(--touch-paper);font:600 13px/1 var(--body,Arial);}
 .mobile-toolbar button:is(:active,[aria-expanded=true],[aria-pressed=true]) {color:var(--touch-accent);background:#ffffff0e;}
 .mobile-toolbar #mobile-mic {display:grid;place-items:center;min-width:44px;padding:0 10px;}
-#restaurant-app[data-mobile=true]:has(#activities-panel[data-activity]) #mobile-controls {z-index:10;}
-#restaurant-app[data-mobile=true]:has(#activities-panel[data-activity]) .mobile-toolbar {left:50%;right:auto;transform:translateX(-50%);}
-#restaurant-app[data-mobile=true]:has(#activities-panel[data-activity]) .mobile-toolbar button:not(#mobile-pause) {display:none;}
+
 .mobile-toolbar svg {width:21px;height:24px;}
 .mobile-mic-slash {color:var(--touch-accent);}
 #mobile-mic[aria-pressed=true] .mobile-mic-slash {display:none;}
@@ -65,30 +70,18 @@
 #restaurant-app[data-mobile=true] .caption {left:50%;bottom:67px;width:min(620px,65%);max-height:40%;overflow:auto;pointer-events:auto;}
 #restaurant-app[data-mobile=true] .caption p {font-size:17px;line-height:1.35;}
 #restaurant-app[data-mobile=true] #caption-speaker {font-size:12px;}
-#restaurant-app[data-mobile=true] #dinner-hud:has(.action-drawer[open]) .caption {left:auto;right:var(--safe-right);width:calc(100% - 350px);transform:none;}
-#restaurant-app[data-mobile=true] .event-card {top:calc(var(--safe-top) + 52px);right:var(--safe-right);width:min(270px,42%);max-height:calc(100% - 140px);overflow:auto;padding:9px 40px 9px 12px;}
-#restaurant-app[data-mobile=true] .event-card p {font-size:12px;line-height:1.4;}
-#restaurant-app[data-mobile=true] .event-card strong {font-size:22px;}
-#restaurant-app[data-mobile=true] #event-dismiss {top:0;right:0;min-width:44px;}
+
 #restaurant-app[data-mobile=true] .restaurant-toast {z-index:65;left:calc(var(--safe-left) + 145px);right:auto;bottom:var(--safe-bottom);max-width:calc(100% - 320px);padding:6px 10px;font-size:12px;}
 #restaurant-app[data-mobile=true][data-mobile-typing=true] .restaurant-toast {top:var(--safe-top);bottom:auto;left:var(--safe-left);right:var(--safe-right);max-width:none;}
-#restaurant-app[data-mobile=true] .evening-panel {top:var(--safe-top);left:var(--safe-left);max-width:min(310px,48%);max-height:calc(100% - var(--safe-top) - var(--safe-bottom));z-index:9;}
-#restaurant-app[data-mobile=true] .action-drawer:not([open]) {display:none;}
-#restaurant-app[data-mobile=true] .action-drawer[open] {min-width:0;padding:0 12px 8px;}
-#restaurant-app[data-mobile=true] .action-drawer>summary {display:flex;align-items:center;min-height:44px;border-bottom:1px solid #fff2dc44;}
-#restaurant-app[data-mobile=true] .action-drawer summary kbd {display:none;}
-#restaurant-app[data-mobile=true] .action-drawer h3 {font-size:24px;margin-top:6px;}
-#restaurant-app[data-mobile=true] .action-drawer p {font-size:12px;line-height:1.4;}
-#restaurant-app[data-mobile=true] .action-drawer button {padding-block:9px;font-size:13px;}
-#restaurant-app[data-mobile=true] .table-actions {gap:9px;margin:4px 0;}
+
 #restaurant-app[data-mobile=true] .modal-backdrop {padding:var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);align-items:center;}
 #restaurant-app[data-mobile=true] .paper-dialog {width:min(500px,72%);max-height:calc(var(--game-vh,100dvh) - var(--safe-top) - var(--safe-bottom));padding:12px 18px;}
 #restaurant-app[data-mobile=true] .modal-backdrop h2 {font-size:34px;}
 #restaurant-app[data-mobile=true] .command-list {margin:9px 0;gap:0;grid-template-columns:1fr 1fr;column-gap:14px;}
 #restaurant-app[data-mobile=true] .command-list button {font-size:24px;padding:7px 12px 7px 18px;}
 #restaurant-app[data-mobile=true] .panel-title button {min-width:44px;}
-#restaurant-app[data-mobile=true] :is(#menu-dialog,#dessert-dialog,#bill-dialog) .paper-dialog {width:min(430px,75%);max-height:calc(var(--game-vh,100dvh) - var(--safe-top) - var(--safe-bottom) - 8px);padding:14px 22px;transform:none;}
-#restaurant-app[data-mobile=true] :is(#menu-dialog,#dessert-dialog,#bill-dialog) h2 {font-size:30px;margin:8px 0;}
+#restaurant-app[data-mobile=true] :is(#menu-dialog,#bill-dialog) .paper-dialog {width:min(430px,75%);max-height:calc(var(--game-vh,100dvh) - var(--safe-top) - var(--safe-bottom) - 8px);padding:14px 22px;transform:none;}
+#restaurant-app[data-mobile=true] :is(#menu-dialog,#bill-dialog) h2 {font-size:30px;margin:8px 0;}
 #restaurant-app[data-mobile=true] .menu-options button {padding:10px 3px;font-size:15px;}
 #restaurant-app[data-mobile=true] :is(.text-button,.secondary-button,.primary-button) {min-height:44px;}
 #restaurant-app[data-mobile=true] #journal {z-index:21;padding:var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);}
@@ -109,21 +102,7 @@
 #restaurant-app[data-mobile=true] .double-date-detail {margin:5px 0;min-height:0;font-size:12px;}
 #restaurant-app[data-mobile=true] .double-people p {font-size:14px;padding:7px 0;}
 #restaurant-app[data-mobile=true] .scene-loading {bottom:var(--safe-bottom);right:var(--safe-right);max-width:40%;font-size:11px;}
-#restaurant-app[data-mobile=true] #activities-panel .ta-close {min-width:44px;min-height:44px;}
-#restaurant-app[data-mobile=true] .physical-coasters .ta-top {top:var(--safe-top);left:var(--safe-left);right:var(--safe-right);}
-#restaurant-app[data-mobile=true] .physical-coasters .ta-top h3 {font-size:28px;}
-#restaurant-app[data-mobile=true] .physical-coasters .ta-score {top:calc(var(--safe-top) + 48px);left:var(--safe-left);width:190px;font-size:12px;}
-#restaurant-app[data-mobile=true] .physical-coasters .ta-status {bottom:var(--safe-bottom);left:var(--safe-left);width:27%;padding:7px 10px;font-size:11px;}
-#restaurant-app[data-mobile=true] .physical-coasters .ta-extra {right:var(--safe-right);bottom:var(--safe-bottom);width:32%;padding:7px 10px;}
-#restaurant-app[data-mobile=true] .ta-controls {gap:6px;}
-#restaurant-app[data-mobile=true] .ta-controls label {font-size:12px;}
-#restaurant-app[data-mobile=true] .ta-controls input {height:28px;}
-#restaurant-app[data-mobile=true] .ta-row {gap:6px;margin-top:4px;}
-#restaurant-app[data-mobile=true] #activities-panel:is([data-activity=napkin],[data-activity=dessert]) {inset:var(--safe-top) auto var(--safe-bottom) 50%;transform:translateX(-50%);width:min(600px,85%);}
-#restaurant-app[data-mobile=true] #activities-panel:is([data-activity=napkin],[data-activity=dessert]) .ta-panel {max-height:100%;padding:10px 16px;}
-#restaurant-app[data-mobile=true] #activities-panel:is([data-activity=napkin],[data-activity=dessert]) .ta-board {max-height:calc(var(--game-vh,100dvh) - 164px);width:100%;}
-#restaurant-app[data-mobile=true] #activities-panel:is([data-activity=napkin],[data-activity=dessert]) .ta-top h3 {font-size:26px;}
-#restaurant-app[data-mobile=true] #activities-panel:is([data-activity=napkin],[data-activity=dessert]) .ta-status {font-size:12px;line-height:1.25;}
+
 @media(orientation:landscape) {
   #restaurant-app[data-mobile=true] .title-state {left:calc(var(--safe-left) + 22px);top:var(--safe-top);bottom:var(--safe-bottom);width:45%;}
   #restaurant-app[data-mobile=true] #arrival-title {font-size:clamp(57px,21vh,84px);margin:0;}
@@ -168,7 +147,7 @@
   #restaurant-app[data-mobile=true] .date-selection h2 {font-size:32px;}
   #restaurant-app[data-mobile=true] .date-card {min-height:44px;}
   #restaurant-app[data-mobile=true] .selection-stage-label {display:none;}
-  #restaurant-app[data-mobile=true] .paper-dialog,#restaurant-app[data-mobile=true] :is(#menu-dialog,#dessert-dialog,#bill-dialog) .paper-dialog,#restaurant-app[data-mobile=true] #ending-screen .ending-dialog {width:100%;}
+  #restaurant-app[data-mobile=true] .paper-dialog,#restaurant-app[data-mobile=true] :is(#menu-dialog,#bill-dialog) .paper-dialog,#restaurant-app[data-mobile=true] #ending-screen .ending-dialog {width:100%;}
   #restaurant-app[data-mobile=true] .double-lobby-copy {width:100%;padding:60px 10px 24px;}
   #restaurant-app[data-mobile=true] .command-list {grid-template-columns:1fr;}
   #restaurant-app[data-mobile=true] #journal :is(.panel-title,.journal-tabs,#conversation-log,#moments-log) {width:100%;}

@@ -30,7 +30,7 @@ export function tickScenario(room: DoubleDateRoomState) {
   const target = room.views[scenario.target];
   if (views.some(view => view.elapsed - view.evening.lastInterruptionAt <= 25 || view.elapsed < view.evening.care.quietUntil)) return;
   target.evening.scenario = scenario;
-  if (!(scenario.id === 'feeling-unwell' ? scenarioMayOpen(target) : scenarioCanStart(target)) || views.some(view => view.evening.incident || ['aiming', 'rolling'].includes(view.evening.coasters.phase) || view.evening.farewell.ending)) return;
+  if (!(scenario.id === 'feeling-unwell' ? scenarioMayOpen(target) : scenarioCanStart(target)) || views.some(view => view.evening.incident || view.evening.farewell.ending)) return;
   const elapsed = Math.min(...views.map(view => view.elapsed));
   if (scenario.id !== 'feeling-unwell' && elapsed < 240 && views.reduce((sum, view) => sum + view.evening.dialogueTurns, 0) < 4) return;
   const utterances = activateRestaurantScenario(scenario, elapsed, scenarioStyle(target));

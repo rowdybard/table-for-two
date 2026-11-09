@@ -176,28 +176,44 @@ async function resolveArrivalOrder(api: Awaited<ReturnType<typeof boot>>, seat: 
   await api.okay(seat, { type: 'scene', command: { type: 'evening', action: 'return-order' } });
   assert.equal((await api.poll(seat)).views.h1.evening.incident, null);
 }
-async function finishMainsThroughChoices(api: Awaited<ReturnType<typeof boot>>, seats: DoubleRoomResponse[]) {
-  const action = (seat: DoubleRoomResponse, value: Record<string, unknown>) => api.okay(seat, { type: 'scene', command: { type: 'evening', ...value } });
-  for (const seat of seats) {
-    for (let bite = 0; bite < 3; bite++) { await resolveSharedStory(api, seat); await action(seat, { action: 'taste' }); api.advance(.55); }
-    await resolveSharedStory(api, seat); await action(seat, { action: 'finish-main' });
+/** Bites are paced on the wall clock only, so the scene clock does not run into the next interruption. */
+async function eatBothMains(api: Awaited<ReturnType<typeof boot>>, seats: DoubleRoomResponse[]) {
+  for (let bite = 0; bite < 3; bite++) for (const seat of seats) { await resolveSharedStory(api, seat); await api.okay(seat, { type: 'scene', command: { type: 'evening', action: 'taste' } }); api.advanceWallClock(.55); }
+}
+/** Let the shared evening carry itself one scene second at a time, answering any table story, until the predicate holds. */
+async function waitFor(api: Awaited<ReturnType<typeof boot>>, seat: DoubleRoomResponse, label: string, predicate: (state: DoubleDateRoomState) => boolean, maxSeconds = 300, storyRate = 20) {
+  const clock = (state: DoubleDateRoomState) => Math.max(...Object.values(state.views).map(view => view.elapsed));
+  const start = clock(await api.poll(seat));
+  for (;;) {
+    const state = await api.poll(seat);
+    if (predicate(state)) return state;
+    assert.ok(clock(state) - start <= maxSeconds, `${label} did not happen within ${maxSeconds} scene seconds (${Object.values(state.views).map(view => `${view.evening.main.status}/${view.evening.dessert.status}/${view.evening.incident?.event ?? 'calm'}`).join(' ')})`);
+    if (state.scenario?.phase === 'active') await api.command(seat, { type: 'scenario', choice: state.scenario.choices[0].id });
+    api.advance(1 / storyRate);
   }
 }
 
-test('complete shared dinner has timed recoverable incidents, both courses, a shared bill and independent farewells', async t => {
+test('complete shared dinner carries itself: Eli serves and clears, the friends recover three interruptions, one check comes for the table, farewells stay independent', async t => {
   const api = await boot({}, { storyRate: 20, scenarioId: 'family-visit' }); t.after(() => api.close()); const { h1, h2 } = await api.pair();
   const action = (seat: DoubleRoomResponse, value: Record<string, unknown>) => api.okay(seat, { type: 'scene', command: { type: 'evening', ...value } });
   await serveBothMains(api, [h1,h2]); api.advance(5.4);
   assert.equal((await api.poll(h2)).views.h2.evening.incident?.event, 'wrong-order');
   await action(h2, { action: 'inspect-ticket' }); await action(h1, { action: 'return-order' });
-  await finishMainsThroughChoices(api, [h1,h2]); await resolveSharedStory(api, h1);
-  let state = await api.poll(h1); api.advance(Math.max(0, (485-state.views.h2.elapsed)/20));
-  state = await api.poll(h1); assert.equal(state.views.h2.evening.incident?.event, 'spilled-drink');
+  await eatBothMains(api, [h1,h2]);
+  let state = await waitFor(api, h1, 'the spill', room => Object.values(room.views).some(view => view.evening.incident?.event === 'spilled-drink'));
   for (let i = 0; i < 3; i++) { await action(i % 2 ? h1 : h2, { action: 'wipe' }); api.advance(.15); } await action(h2, { action: 'steady-glass' });
-  for (const seat of [h1,h2]) await action(seat, { action: 'skip-dessert' });
-  state = await api.poll(h1); api.advance(Math.max(0, (905-state.views.h2.elapsed)/20));
-  assert.equal((await api.poll(h2)).views.h2.evening.incident?.event, 'disruptive-diner'); await action(h2, { action: 'ask-quiet' });
-  await action(h1, { action: 'request-bill' }); await action(h2, { action: 'settle-bill', choice: 'split' });
+  state = await waitFor(api, h1, 'Eli clearing both tables', room => ['h1','h2'].every(id => room.views[id as 'h1'|'h2'].evening.main.status === 'finished'));
+  assert.ok(state.views.h1.evening.cues.some(cue => cue.key === 'main-finished' && cue.utterances[0].speaker === 'waiter'));
+  assert.equal((await api.command(h1, { type: 'scene', command: { type: 'evening', action: 'settle-bill', choice: 'split' } })).status, 409, 'nobody settles before Eli brings the check');
+  await action(h1, { action: 'skip-dessert' }); await action(h2, { action: 'order-dessert', choice: 'chocolate' });
+  state = await waitFor(api, h2, 'dessert service', room => room.views.h2.evening.dessert.status === 'served');
+  assert.equal(state.views.h1.evening.bill.requested, false, 'the check waits while the other pair is still eating');
+  for (let spoon = 0; spoon < 2; spoon++) { await action(h2, { action: 'taste' }); api.advanceWallClock(.55); }
+  state = await waitFor(api, h2, 'the noisy diner', room => Object.values(room.views).some(view => view.evening.incident?.event === 'disruptive-diner'));
+  await action(h2, { action: 'ask-quiet' });
+  state = await waitFor(api, h1, 'one check for the table', room => ['h1','h2'].every(id => room.views[id as 'h1'|'h2'].evening.bill.requested));
+  assert.equal(state.views.h2.evening.dessert.status, 'finished'); assert.equal(state.views.h1.evening.bill.arrivedAt, state.views.h2.evening.bill.arrivedAt);
+  await action(h2, { action: 'settle-bill', choice: 'split' });
   state = await api.poll(h1); assert.ok(['h1','h2'].every(id => state.views[id as 'h1'|'h2'].evening.bill.settlement === 'split'));
   for (const seat of [h1,h2]) await api.okay(seat, { type: 'scene', command: { type: 'interact', target: 'seat' } }); await api.walk([h1,h2], 0, 1, 1.4);
   await action(h1, { action: 'farewell', choice: 'friendly' }); await action(h2, { action: 'farewell', choice: 'goodbye' }); api.advance(2.5);
@@ -217,7 +233,7 @@ test('a finished human can stay as a wingman, help by name, converse, view their
   const before = (await api.poll(h1)).members[0].position[0]; await api.walk([h1], -1, 0, .2); state=await api.poll(h1);
   assert.ok(state.members[0].position[0] < before-.3); assert.deepEqual(state.members[1].position,otherPosition);
   await api.okay(h1, { type: 'scene', command: { type: 'interact', target: 'seat' } });
-  assert.equal((await api.command(h1, { type:'scene', command:{ type:'evening', action:'start-coasters' } })).status,409);
+  assert.equal((await api.command(h1, { type:'scene', command:{ type:'evening', action:'skip-dessert' } })).status,409);
   assert.equal((await api.command(h1, { type:'scene', command:{ type:'interact', target:'menu', choice:MENU[1] } })).status,409);
   await api.okay(h1, { type:'scene', command:{type:'evening',action:'request-water'} });
   await api.okay(h1, { type:'scene', command:{type:'evening',action:'check-in'} });
@@ -238,12 +254,14 @@ test('a date ending during a shared spill transfers recovery to the active pair 
   const api=await boot({}, {storyRate:20,scenarioId:'family-visit'}); t.after(()=>api.close()); const {h1,h2}=await api.pair();
   const action=(seat:DoubleRoomResponse, name:string)=>api.okay(seat,{type:'scene',command:{type:'evening',action:name}});
   await serveBothMains(api,[h1,h2]); api.advance(5.4); await action(h1,'inspect-ticket'); await action(h2,'return-order');
-  await finishMainsThroughChoices(api,[h1,h2]); await resolveSharedStory(api,h1);
-  let state=await api.poll(h1); api.advance(Math.max(0,(485-state.views.h2.elapsed)/20)); assert.equal((await api.poll(h1)).views.h1.evening.incident?.event,'spilled-drink');
+  await eatBothMains(api,[h1,h2]);
+  let state=await waitFor(api,h1,'the spill',room=>room.views.h1.evening.incident?.event==='spilled-drink');
   await api.okay(h1,{type:'scene',command:{type:'finish'}}); state=await api.poll(h2); assert.equal(state.views.h1.phase,'ended'); assert.equal(state.views.h1.evening.incident,null); assert.equal(state.views.h2.evening.incident?.event,'spilled-drink');
   for(let wipe=0;wipe<3;wipe++){await action(h2,'wipe');api.advance(.15);} await action(h2,'steady-glass');
   state=await api.poll(h2); assert.equal(state.views.h2.evening.incident,null); assert.ok(state.views.h2.evening.resolutions['spilled-drink']); assert.equal(state.views.h1.phase,'ended');
-  await action(h2,'skip-dessert'); await action(h2,'request-bill'); assert.equal((await api.poll(h2)).views.h2.evening.bill.requested,true);
+  state=await waitFor(api,h2,'Eli clearing the remaining table',room=>room.views.h2.evening.main.status==='finished');
+  await action(h2,'skip-dessert');
+  state=await waitFor(api,h2,'the check',room=>room.views.h2.evening.bill.requested,60); assert.equal(state.views.h1.phase,'ended');
 });
 
 test('personal ending choices never bypass a reconnect pause', async t=>{
@@ -256,14 +274,12 @@ test('personal ending choices never bypass a reconnect pause', async t=>{
   state=await api.okay(h1,{type:'return-to-table'}); assert.equal(localDoubleDateView(state,'h1').doubleDate?.role,'wingman');
 });
 
-test('one authoritative coaster board is visible to both players and only its owner can shoot or restart', async t => {
-  const api = await boot(); t.after(() => api.close()); const { h1, h2 } = await api.pair(); await api.walk([h1, h2], 0, -1, 1.4);
-  for (const seat of [h1, h2]) { await api.okay(seat, { type: 'scene', command: { type: 'interact', target: 'seat' } }); await api.okay(seat, { type: 'scene', command: { type: 'interact', target: 'menu', choice: MENU[0] } }); }
-  await api.okay(h1, { type: 'scene', command: { type: 'evening', action: 'start-coasters' } });
-  assert.equal((await api.poll(h2)).tableActivity?.owner, 'h1');
-  for (const command of [{ type: 'coaster-shot', angle: 0, power: .5 }, { type: 'evening', action: 'start-coasters' }]) assert.equal((await api.command(h2, { type: 'scene', command })).status, 409);
-  await api.okay(h1, { type: 'scene', command: { type: 'coaster-shot', angle: 0, power: .5 } }); api.advance(.2); const state = await api.poll(h2); assert.equal(state.views.h1.evening.coasters.phase, 'rolling'); assert.notEqual(state.views.h1.evening.coasters.disc.z, .43);
-  await api.okay(h1, { type: 'scene', command: { type: 'finish' } }); await api.okay(h2, { type: 'scene', command: { type: 'evening', action: 'start-coasters' } }); assert.equal((await api.poll(h2)).tableActivity?.owner, 'h2');
+test('removed table games and course shortcuts are rejected at the room door, not silently ignored', async t => {
+  const api = await boot(); t.after(() => api.close()); const { h1 } = await api.pair();
+  for (const command of [{ type: 'coaster-shot', angle: 0, power: .5 }, { type: 'napkin', points: [[.1, .1]], complete: true }, { type: 'evening', action: 'start-coasters' }, { type: 'evening', action: 'finish-main' }, { type: 'evening', action: 'request-bill' }, { type: 'interact', target: 'coasters' }]) {
+    assert.equal((await api.command(h1, { type: 'scene', command })).status, 400, JSON.stringify(command));
+  }
+  const state = await api.poll(h1); assert.equal('tableActivity' in state, false); assert.equal(state.views.h1.evening.main.status, 'none');
 });
 
 test('alternate scenario activates once after shared conversation, blocks competing course incidents, and resolves through either friend', async t => {
@@ -273,7 +289,7 @@ test('alternate scenario activates once after shared conversation, blocks compet
   for (let i = 0; i < 2; i++) { await api.request(api.path(h1) + '/turn', h1.token, { turnId: `scenario-${i}`, text: 'What would your ideal evening look like?', target: 'table' }); await api.settle(h1); }
   api.advance(.05); let state = await api.poll(h2); assert.equal(state.scenario?.phase, 'active'); assert.ok(contexts[0].includes('scenario'));
   assert.equal((await api.command(h2, { type: 'scenario', choice: 'invented-action' })).status, 400);
-  assert.equal((await api.command(h1, { type: 'scene', command: { type: 'evening', action: 'finish-main' } })).status, 409);
+  assert.equal((await api.command(h1, { type: 'scene', command: { type: 'evening', action: 'skip-dessert' } })).status, 409);
   const choice = state.scenario!.choices[0].id; await api.okay(h2, { type: 'scenario', choice }); state = await api.poll(h1); assert.equal(state.scenario?.phase, 'active'); assert.equal(state.scenario?.beat, 'follow-through'); assert.equal(state.scenario?.decisions[0].by, 'Jamie'); await api.okay(h1, { type: 'scenario', choice: state.scenario!.choices[0].id }); state = await api.poll(h1); assert.equal(state.scenario?.phase, 'resolved'); assert.ok(state.scenario?.resolution); assert.ok(state.views.h1.evening.moments.some(moment => moment.id.startsWith('scenario-'))); assert.ok(state.views.h2.evening.moments.some(moment => moment.id.startsWith('scenario-')));
   assert.equal((await api.command(h1, { type: 'scenario', choice })).status, 409); api.advance(.2); assert.equal((await api.poll(h1)).scenario?.phase, 'resolved');
 });
@@ -284,9 +300,7 @@ test('all eleven scenario tracks are deterministic, remain dormant during incide
     const room = await api.poll(h1); initializeScenario(room, id);
     for (const member of room.members) member.seated = true;
     for (const view of Object.values(room.views)) { view.seated = true; view.elapsed = 300; view.evening.main.status = 'served'; view.evening.incident = { event: 'wrong-order', progress: 0, startedAt: 290 }; }
-    tickScenario(room); assert.equal(room.scenario?.phase, 'dormant'); for (const view of Object.values(room.views)) { view.evening.incident = null; view.evening.coasters.phase = 'rolling'; }
-    tickScenario(room); assert.equal(room.scenario?.phase, 'dormant'); for (const view of Object.values(room.views)) view.evening.coasters.phase = 'aiming';
-    tickScenario(room); assert.equal(room.scenario?.phase, 'dormant'); for (const view of Object.values(room.views)) view.evening.coasters.phase = 'idle';
+    tickScenario(room); assert.equal(room.scenario?.phase, 'dormant'); for (const view of Object.values(room.views)) view.evening.incident = null;
     tickScenario(room); assert.equal(room.scenario?.phase, 'active'); assert.throws(() => resolveScenario(room, 'h1', 'invalid'));
     resolveScenario(room, 'h2', room.scenario!.choices[0].id); assert.equal(room.scenario?.phase, 'active');
     if (id === 'feeling-unwell') { const target = room.views[room.scenario!.target]; target.elapsed += 6; stepScenarioEffects(target); }

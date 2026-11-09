@@ -49,12 +49,12 @@ export function createBlindDate(seed: string): BlindDateIdentity {
   const preferredMain = pick(MENU), preferredDessert = pick(DESSERTS).id;
   const sociability = traits.sociability > 65 ? 'Talkative and quick to offer a concrete story, while leaving room for the other person.' : traits.sociability < 35 ? 'Comfortable with pauses; offers short, observant answers and warms up gradually.' : 'Easy company in a small group; alternates a story with listening instead of keeping an interview going.';
   const directness = traits.directness > 65 ? 'States likes and disagreements plainly without being cruel.' : traits.directness < 35 ? 'Usually tests an opinion with a gentle joke before saying what they really mean.' : 'Can be tactful without pretending to agree.';
-  const competition = traits.competitiveness > 65 ? 'Enjoys trying to win a table game and can laugh about losing.' : traits.competitiveness < 35 ? 'Treats a table game as something to do together rather than a ranking.' : 'Gets unexpectedly invested in one good shot, then lets it go.';
+  const competition = traits.competitiveness > 65 ? 'Enjoys a bit of friendly competition and can laugh about losing.' : traits.competitiveness < 35 ? 'Prefers doing something together over keeping score.' : 'Gets unexpectedly invested in a small wager, then lets it go.';
   const spontaneity = traits.spontaneity > 65 ? 'Often suggests trying something new before having a complete plan.' : traits.spontaneity < 35 ? 'Likes knowing the plan but can adapt when someone explains a change.' : 'Likes one new thing alongside something familiar.';
   const openness = traits.openness > 65 ? 'Willing to change an opinion when an interesting detail challenges it.' : traits.openness < 35 ? 'Has established favorites and does not pretend every new thing is better.' : 'Enjoys hearing a different taste without adopting it automatically.';
   const personality = `${sociability} ${directness} Humor: ${voiceHabits}. ${flirting}. ${competition} ${spontaneity} ${openness} Has their own opinions and may choose friendship, another date, or a courteous goodbye.`;
   const preferences = `Enjoys ${preferredMain.toLowerCase()}, ${hobby}, and ${value}. Dislikes ${dislike}. Food preferences are tastes, not allergies or medical conditions.`;
-  const boundaries = `Will push back on ${dislike}. Other people choose their own food, drink, disclosures and physical contact. Repeated explicit pressure can make them leave. Kindness, winning a game and paying for dinner never purchase affection.`;
+  const boundaries = `Will push back on ${dislike}. Other people choose their own food, drink, disclosures and physical contact. Repeated explicit pressure can make them leave. Kindness, winning an argument and paying for dinner never purchase affection.`;
   const opening = traits.sociability > 65 ? `There you are. I promised myself I’d leave work stories at the door. I’m giving that promise about five minutes.` : traits.directness > 65 ? `Hi. I’m glad you came. I vote we skip the impressive introductions and find out whether we actually enjoy dinner together.` : traits.sociability < 35 ? `Hi. This is a good table. Somewhere I can hear you without pretending I caught the last sentence.` : `Hi. I had a whole clever introduction on the way here. Apparently I’ve decided to start with “hi.”`;
   const biography: CharacterStory = {
     occupation,
@@ -79,16 +79,18 @@ export function getBlindDateCue(identity: BlindDateIdentity, key: string, contex
     'main-served': ['That smells good. I’m ready to stop looking at the menu and start eating.', 'warm'],
     taste: [dry ? 'Mm. Good choice.' : 'Okay, that was worth waiting for.', 'warm'],
     'main-finished': ['I needed an evening away from work. I’m glad this one actually happened.', 'warm'],
-    'coasters-start': [identity.traits.competitiveness > 65 ? 'All right. Friendly game. I reserve the right to get briefly very invested.' : 'A table sport. Excellent. No special shoes required.', 'amused'],
-    'coasters-win': ['Good shot. I’m choosing to be impressively gracious about this.', 'amused'],
-    'coasters-loss': ['I enjoyed that more than I expected. Winning may have helped.', 'amused'],
-    'coasters-draw': ['A draw. A very diplomatic piece of sporting history.', 'amused'],
-    'napkin-kept': ['Can we keep that? I like having something from an evening that wasn’t planned in advance.', 'warm'],
     'quiet-window': [dry ? 'This is nice. We don’t have to fill every second.' : 'A little quieter here. I like this part of the evening.', 'warm'],
+    'beat-waiting-1': ['I promised myself I’d leave work at the door, so here’s a question instead: what’s the last thing you did just because you wanted to?', 'warm'],
+    'beat-waiting-2': [dry ? 'I’m happy with a quiet minute. I’d still like to know what you were thinking just now.' : 'Okay, I’ll break the silence first. What were you thinking about just now?', 'warm'],
+    'beat-eating-1': ['This is good. I was ready to be polite about it. What’s the meal you’d defend to anyone?', 'amused'],
+    'beat-eating-2': ['You’ve gone quiet in a thinking way, not a bored way. I hope. Tell me.', 'warm'],
+    'beat-after-1': ['I like an evening where nobody’s performing. This one has mostly been that.', 'warm'],
+    'beat-after-2': ['Small question, honest answer: is this the kind of night you’d do again?', 'warm'],
+    'dessert-date-choice': [`If you’re happy to share, I’d pick the ${DESSERTS.find(item => item.id === identity.biography.preferredDessert)?.name.toLowerCase() ?? 'dessert'}. I’ll ask Eli.`, 'warm'],
     'dessert-ordered': ['Something to share sounds good. I can find a little room.', 'warm'],
-    'dessert-served': ['That looks good. Let’s make room for the plates.', 'warm'],
-    'dessert-shared': [context.resolution === 'kept-all' ? 'You’ve kept the whole dessert. Were you planning to offer me some?' : context.resolution === 'gave-all' ? 'You can have some too. We did order it to share.' : 'That works. You take that plate; I’ll take this one.', 'warm'],
-    'dessert-skipped': ['Fair enough. I’m happy taking our time with the rest of the evening.', 'neutral'],
+    'dessert-served': ['That looks good. Two spoons. I like a dessert that assumes company.', 'warm'],
+    'dessert-shared': [['guarded', 'hurt', 'leaving'].includes(context.resolution ?? '') ? 'Thanks for sharing. I’m still a little quiet after earlier.' : 'I don’t usually say this on a first date, but there’s something I keep putting off that I actually care about. Tonight makes it feel less heavy.', 'warm'],
+    'dessert-skipped': [['guarded', 'hurt', 'leaving'].includes(context.resolution ?? '') ? 'I’ll skip dessert. We can ask for the bill when you’re ready.' : 'Fair enough. I’m happy taking our time with the rest of the evening.', 'neutral'],
     'bill-requested': ['I think that’s us. Let’s get this settled.', 'neutral'],
     'bill-settled': ['Thanks. I’m glad we sorted that out without making it strange.', 'warm'],
     'farewell-invite': ['Shall we walk to the door together?', 'warm'],
@@ -112,8 +114,10 @@ export function getBlindDateCue(identity: BlindDateIdentity, key: string, contex
     'ending-early-exit': ['All right. Thanks for letting me know. Take care getting home.', 'neutral'],
     'ending-walked-away': ['I asked you to stop, and you kept pushing. I’m leaving. Take care.', 'defensive'],
   };
-  const chosen = lines[key];
-  if (!chosen) return [];
   const cast = getStoryCue(key, identity.dateId, context).filter(line => line.speaker !== 'date');
-  return [{ speaker: 'date', text: chosen[0], emotion: chosen[1] ?? 'neutral' }, ...cast];
+  const chosen = lines[key];
+  if (!chosen) return cast;
+  const dateLine: SceneUtterance = { speaker: 'date', text: chosen[0], emotion: chosen[1] ?? 'neutral' };
+  // Eli leads the course changes for blind dates too.
+  return ['main-finished', 'bill-requested'].includes(key) ? [...cast, dateLine] : [dateLine, ...cast];
 }

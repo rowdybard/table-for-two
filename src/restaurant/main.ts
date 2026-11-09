@@ -5,9 +5,8 @@ import { markup } from './ui';
 import { RestaurantRenderer } from './RestaurantRenderer';
 import { LocalRecognition } from './LocalRecognition';
 import { SpeechPlayer } from './SpeechPlayer';
-import { createEvening, eveningObjective } from './evening';
+import { createEvening } from './evening';
 import { EveningInterface } from './EveningInterface';
-import { TableActivities } from './TableActivities';
 import { EveningAudio } from './EveningAudio';
 import { GameMenuNavigation, type GameMenuScope } from './GameMenuNavigation';
 import { DoubleDateClient } from './DoubleDateClient';
@@ -51,9 +50,8 @@ let friendVoice: VoiceChat;
 let endingPresented = false;
 const ambience = new EveningAudio();
 ambience.setEnabled(preferences.ambience);
-let activities: TableActivities, eveningUI: EveningInterface;
+let eveningUI: EveningInterface;
 let presentedCues = new Set<string>();
-const dismissedIncidents = new Set<string>();
 let revealedIncident = '';
 let renderer: RestaurantRenderer;
 let providers: ProviderStatus | undefined;
@@ -87,11 +85,9 @@ const keys = new Set<string>();
 const listeningPreview = new ListeningPreviewController();
 let listeningTarget: ListeningPreviewTarget = null;
 const money = (value: number) => '$' + value.toFixed(3);
-const otherModalOpen = () => ['settings-dialog', 'pause-dialog', 'menu-dialog', 'ending-screen', 'dessert-dialog', 'bill-dialog', 'farewell-dialog', 'history-dialog'].some(id => !el(id).hidden);
+const otherModalOpen = () => ['settings-dialog', 'pause-dialog', 'menu-dialog', 'ending-screen', 'bill-dialog', 'history-dialog'].some(id => !el(id).hidden);
 const visibleModal = () => !!tabletopInspector?.isOpen || otherModalOpen();
-const actionDrawer = () => document.querySelector<HTMLDetailsElement>('#evening-panel > .action-drawer')!;
-const actionsOpen = () => !el('evening-panel').hidden && actionDrawer().open;
-const menuInputOpen = () => visibleModal() || !el('journal').hidden || actionsOpen();
+const menuInputOpen = () => visibleModal() || !el('journal').hidden;
 function currentListeningTarget(): ListeningPreviewTarget {
   if (!renderer?.isReady || !joined) return null;
   if (!state.doubleDate) return scenePresenceAvailable(state) ? 'date' : null;
@@ -108,7 +104,7 @@ function beginListeningPreview() {
 function gameMenuScope(): GameMenuScope | null {
   if (mobile?.menuScope) return { key: 'mobile-display', element: mobile.menuScope, initial: '#mobile-display-close' };
   // Settings can sit above Pause; the uppermost surface always owns input.
-  for (const id of ['settings-dialog', 'ending-screen', 'history-dialog', 'pause-dialog', 'farewell-dialog', 'bill-dialog', 'dessert-dialog', 'menu-dialog']) {
+  for (const id of ['settings-dialog', 'ending-screen', 'history-dialog', 'pause-dialog', 'bill-dialog', 'menu-dialog']) {
     if (!el(id).hidden) return { key: id, element: el(id), initial: id === 'pause-dialog' ? '#resume-date' : undefined };
   }
   if (doubleLobby && !doubleLobby.element.hidden) return { key: 'double-date', element: doubleLobby.element };
@@ -121,10 +117,8 @@ function gameMenuScope(): GameMenuScope | null {
       confirm(item) { if (!item.matches('[data-date]')) return false; btn('start-date').click(); return true; },
     } : { key: 'title', element: el('restaurant-app'), items: '[data-game-item]', initial: '#title-start' };
   }
-  if (activities?.isOpen) return { key: 'activity', element: el('activities-panel') };
   if (tabletopInspector?.isOpen) return { key: 'tabletop', element: el('tabletop-inspector'), initial: '#tabletop-use' };
   if (!el('journal').hidden) return { key: 'journal', element: el('journal'), horizontal: true };
-  if (actionsOpen()) return { key: 'actions', element: el('evening-panel'), initial: '#evening-action-buttons button:not(:disabled)' };
   return null;
 }
 const menuNavigation = new GameMenuNavigation(el('restaurant-app'), gameMenuScope, () => releasePointer());
@@ -180,7 +174,7 @@ function applyState(next: DinnerState) {
   if (joined && next.id === state.id && (diningOffsetZ(next) !== diningOffsetZ(state) || presenceChanged)) {
     const stage = el('restaurant-scene');
     stage.animate([{ opacity: .12 }, { opacity: 1 }], { duration: matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 200, easing: 'ease-out' });
-    tabletopInspector?.close(); activities?.close(); releasePointer();
+    tabletopInspector?.close(); releasePointer();
   }
   state = next;
   tabletopInspector?.update(state, null);
@@ -194,15 +188,8 @@ function applyState(next: DinnerState) {
   el('dinner-stage').textContent = wingman ? 'At the table' : stages[state.stage];
   const minutes = Math.floor(state.elapsed / 60);
   el('evening-label').textContent = `${String(19 + Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')} · TABLE 02`;
-  el('objective-text').textContent = wingman ? 'Stay with your friend, help at the table, or view your own ending.' : eveningObjective(state);
-  el('table-actions').hidden = !state.seated || state.phase !== 'playing';
-  btn('table-glass').textContent = state.glassRaised ? 'Set down glass' : 'Raise glass';
-  btn('table-menu').textContent = state.order ? 'View menu' : 'Menu';
   for (const event of state.events) if (!presentedEvents.has(event)) {
     presentedEvents.add(event);
-    el('event-title').textContent = EVENT_COPY[event].title;
-    el('event-description').textContent = EVENT_COPY[event].description;
-    el('event-card').hidden = false;
     log('The evening', EVENT_COPY[event].description, true);
   }
   for (const cue of state.mode === 'double-date' ? [] : state.evening.cues) if (!presentedCues.has(cue.id)) {
@@ -216,17 +203,14 @@ function applyState(next: DinnerState) {
       for (const line of cue.utterances) queueUtterance(line, activeGeneration, generationEpoch);
     }
   }
-  if (!state.evening.incident || dismissedIncidents.has(state.evening.incident.event)) el('event-card').hidden = true;
   saveSessionReference();
-  eveningUI.update(state); activities.update(state); ambience.setPaused(state.phase !== 'playing');
+  eveningUI.update(state); ambience.setPaused(state.phase !== 'playing');
   const incident = state.evening.incident;
   if (incident && revealedIncident !== `${incident.event}:${incident.startedAt}`) {
     tabletopInspector?.close();
     revealedIncident = `${incident.event}:${incident.startedAt}`;
-    document.querySelector<HTMLDetailsElement>('#evening-panel > .action-drawer')!.open = true;
   }
   recognition.setPaused(state.phase !== 'playing' || visibleModal() || !doubleClient.active && !scenePresenceAvailable(state));
-  btn('pause-actions').disabled = !state.seated && state.evening.chapter !== 'farewell' && state.doubleDate?.role !== 'wingman';
   if (state.phase === 'playing' && !pausePending) el('pause-dialog').hidden = true;
   if (state.phase === 'paused' && el('settings-dialog').hidden && el('menu-dialog').hidden && !eveningUI.isDialogOpen) el('pause-dialog').hidden = false;
   if (state.phase === 'ended') showEnding();
@@ -277,7 +261,7 @@ async function poll() {
     }
     el('turn-status').textContent = 'Connection interrupted · retrying';
   }
-  if (joined && !disposed && state.phase !== 'ended') pollTimer = setTimeout(() => void poll(), activities.isOpen ? 65 : 300);
+  if (joined && !disposed && state.phase !== 'ended') pollTimer = setTimeout(() => void poll(), 300);
 }
 function recordDelivery(generation: number, utterance: SceneUtterance, completed: boolean, playedSeconds: number) {
   if (doubleClient.active && utterance.lineId) {
@@ -305,7 +289,7 @@ const recognition = new LocalRecognition({
   onPartial(text) {
     lastPartial = text;
     if (micEnabled && !busy) el('turn-status').textContent = text ? `You: ${text}` : '';
-    if (!text || !micEnabled || !joined || busy || state.phase !== 'playing' || visibleModal() || activities?.isOpen || document.hidden) { clearListeningPreview(); return; }
+    if (!text || !micEnabled || !joined || busy || state.phase !== 'playing' || visibleModal() || document.hidden) { clearListeningPreview(); return; }
     const now = performance.now(), target = currentListeningTarget();
     if (target !== listeningTarget || !listeningPreview.sample(now)) { listeningTarget = target; listeningPreview.start(now, target); }
     listeningPreview.partial(text, now);
@@ -320,10 +304,7 @@ const recognition = new LocalRecognition({
   onError(message) { microphoneAttempt++; micEnabled = false; friendVoice?.disable(); updateMic(); toast(message, 10000); },
 }, { capture: () => sharedMicrophone.acquire(), release: stream => sharedMicrophone.release(stream) });
 speech.setVolume(preferences.volume);
-activities = new TableActivities(el('activities-panel'), body => { void command(body); }, () => { keys.clear(); }, {
-  project: (x, z) => renderer?.projectCoaster(x, z) ?? null,
-});
-eveningUI = new EveningInterface({ async command(body) { await command(body); }, openActivity, async viewEnding() { try { await doubleClient.command({ type: 'view-ending' }); } catch (error) { toast((error as Error).message); } }, async scenario(choice) { try { if (doubleClient.active) await doubleClient.command({ type: 'scenario', choice }); else await command({ type: 'scenario', choice }); } catch (error) { toast((error as Error).message); } }, releasePointer() { releasePointer(); activities.close(); }, modalChanged() { recognition.setPaused(state.phase !== 'playing' || visibleModal() || !doubleClient.active && !scenePresenceAvailable(state)); }, notice: toast });
+eveningUI = new EveningInterface({ async command(body) { await command(body); }, async openMenu() { await openMenu(); }, async viewEnding() { try { await doubleClient.command({ type: 'view-ending' }); } catch (error) { toast((error as Error).message); } }, async scenario(choice) { try { if (doubleClient.active) await doubleClient.command({ type: 'scenario', choice }); else await command({ type: 'scenario', choice }); } catch (error) { toast((error as Error).message); } }, releasePointer() { releasePointer(); }, modalChanged() { recognition.setPaused(state.phase !== 'playing' || visibleModal() || !doubleClient.active && !scenePresenceAvailable(state)); }, notice: toast });
 tabletopInspector = new TabletopInspector(el('restaurant-app'), {
   inspect(target) { renderer?.setInspectionTarget(target); },
   async use(target) { await useTableTarget(target); },
@@ -336,19 +317,6 @@ function saveSessionReference() {
   if (!joined || !state.id || !token || doubleClient.active) return;
   try { sessionStorage.setItem('table-for-two-session', JSON.stringify({ id: state.id, token, seenCues: [...presentedCues].slice(-120) })); } catch { /* Optional browser storage. */ }
 }
-function openActivity(kind: 'coasters' | 'napkin' | 'dessert') {
-  if (!renderer.isReady) return toast('The restaurant is still loading.');
-  if (!joined || !state.seated || state.phase !== 'playing') return toast('Take a seat at your table first.');
-  const wingman = state.doubleDate?.role === 'wingman';
-  const incident = wingman ? state.doubleDate?.otherView?.evening.incident : state.evening.incident;
-  if (incident || (state.doubleDate?.scenario ?? state.evening.scenario)?.phase === 'active') return toast('Finish the interruption first.');
-  if (wingman && (kind !== 'coasters' || !state.doubleDate?.tableActivity || state.doubleDate.tableActivity.owner === state.doubleDate.localHumanId)) return toast('You can watch when your friend starts a table game.');
-  tabletopInspector?.close(); closeTypedInput();
-  releasePointer(); keys.clear();
-  void command({ type: 'move', x: 0, z: 0, yaw: renderer.getYaw() }, true);
-  activities.open(kind); activities.update(state);
-}
-
 function updateMic() {
   btn('mic-toggle').setAttribute('aria-pressed', String(micEnabled));
   el('mic-label').textContent = micEnabled ? 'Mic on' : 'Mic off';
@@ -516,20 +484,13 @@ function showEnding() {
   el('ending-copy').textContent = state.reason || `You shared an evening with ${getDate(state.dateId)!.name}. Some moments were smooth. Others made a better story.`;
   el('ending-cost').textContent = `${state.usage.claudeRequests} conversation turns · ${money(state.usage.totalCost)} estimated API usage`;
   el('ending-cost').hidden = !providers?.development;
-  activities.close(); eveningUI.closeDialogs(); eveningUI.renderEnding(state); ambience.cue('ending');
+  eveningUI.closeDialogs(); eveningUI.renderEnding(state); ambience.cue('ending');
   try { sessionStorage.removeItem('table-for-two-session'); } catch { /* Optional. */ }
 }
 function releasePointer() {
   keys.clear(); dragging = false; mobile?.clear();
   if (joined && lastMovement) { lastMovement = false; void command({ type: 'move', x: 0, z: 0, yaw: renderer.getYaw() }, true); }
   if (document.pointerLockElement) { intentionalPointerRelease = true; document.exitPointerLock(); }
-}
-function toggleActions() {
-  tabletopInspector?.close();
-  if (!joined || state.phase !== 'playing' || visibleModal() || activities.isOpen || el('evening-panel').hidden) return;
-  releasePointer(); closeTypedInput(); el('journal').hidden = true;
-  btn('journal-toggle').setAttribute('aria-expanded', 'false');
-  actionDrawer().open = !actionDrawer().open;
 }
 async function resumeDinner(after?: () => void) {
   if (!joined || pausePending || state.phase === 'ended') return;
@@ -545,7 +506,6 @@ async function resumeDinner(after?: () => void) {
     }
   } finally {
     controls.forEach(control => { control.disabled = false; }); pausePending = false;
-    btn('pause-actions').disabled = !state.seated && state.evening.chapter !== 'farewell' && state.doubleDate?.role !== 'wingman';
   }
 }
 function closeTypedInput(restoreFocus = false) {
@@ -558,8 +518,7 @@ function closeTypedInput(restoreFocus = false) {
 function showTypedInput() {
   tabletopInspector?.close();
   if (!joined || state.phase !== 'playing' || visibleModal()) return;
-  releasePointer(); activities.close();
-  actionDrawer().open = false; el('journal').hidden = true;
+  releasePointer(); el('journal').hidden = true;
   btn('journal-toggle').setAttribute('aria-expanded', 'false');
   el('conversation-form').hidden = false;
   updateTypedSubmit();
@@ -572,7 +531,6 @@ async function pauseDinner() {
   if (!joined || state.phase === 'ended' || pausePending) return;
   tabletopInspector?.close();
   pausePending = true;
-  activities.close(); actionDrawer().open = false;
   el('journal').hidden = true; btn('journal-toggle').setAttribute('aria-expanded', 'false');
   releasePointer(); closeTypedInput(); el('pause-dialog').hidden = false; recognition.setPaused(true);
   const controls = el('pause-dialog').querySelectorAll<HTMLButtonElement>('button');
@@ -580,7 +538,6 @@ async function pauseDinner() {
   try { await interrupt(); await command({ type: 'pause', paused: true }); }
   finally {
     controls.forEach(control => { control.disabled = false; });
-    btn('pause-actions').disabled = !state.seated && state.evening.chapter !== 'farewell' && state.doubleDate?.role !== 'wingman';
     pausePending = false;
     if (state.phase === 'playing') el('pause-dialog').hidden = true;
     if (!el('pause-dialog').hidden) menuNavigation.focusInitial();
@@ -588,14 +545,15 @@ async function pauseDinner() {
 }
 async function interact() {
   if (!renderer.isReady) return;
-  if (!joined || state.phase !== 'playing' || menuInputOpen() || activities.isOpen) return;
+  if (!joined || state.phase !== 'playing' || menuInputOpen()) return;
   const hit = renderer.getInteraction(state);
   if (!hit) return;
   await useTableTarget(hit.target);
 }
 async function useTableTarget(target: Extract<DinnerCommand, {type:'interact'}>['target']) {
   if (!joined || state.phase !== 'playing') return;
-  const action = target === 'napkin' || target === 'glass' && state.evening.incident?.event === 'spilled-drink' ? null : tableActionForTarget(target);
+  const spill = (state.doubleDate?.role === 'wingman' ? state.doubleDate.otherView?.evening : state.evening)?.incident?.event === 'spilled-drink';
+  const action = (target === 'napkin' || target === 'glass') && spill ? null : tableActionForTarget(target);
   if (action) {
     const available = tabletopActionAvailability(state, action);
     if (!available.enabled) { toast(available.reason!); return; }
@@ -612,7 +570,7 @@ async function useTableTarget(target: Extract<DinnerCommand, {type:'interact'}>[
   } else await command({ type: 'interact', target });
 }
 function inspectTableAt(x?: number, y?: number) {
-  if (!renderer.isReady || !joined || state.phase !== 'playing' || !state.seated || menuInputOpen() || activities.isOpen || !el('conversation-form').hidden) return false;
+  if (!renderer.isReady || !joined || state.phase !== 'playing' || !state.seated || menuInputOpen() || !el('conversation-form').hidden) return false;
   const hit = x === undefined || y === undefined ? renderer.getInteraction(state) : renderer.getInteractionAt(state, x, y);
   if (!hit || !isInspectionTarget(hit.target)) return false;
   tabletopInspector!.update(state, { target: hit.target, label: hit.label });
@@ -621,7 +579,6 @@ function inspectTableAt(x?: number, y?: number) {
 async function openMenu() {
   if (!joined || state.phase !== 'playing') return;
   tabletopInspector?.close();
-  activities.close();
   closeTypedInput();
   document.querySelectorAll<HTMLButtonElement>('[data-order]').forEach(button => { button.disabled = !!state.order; });
   releasePointer(); menuPaused = !doubleClient.active; el('menu-dialog').hidden = false; recognition.setPaused(true);
@@ -636,15 +593,14 @@ function rebuildRenderer() {
   const canvas = renderer.canvas;
   canvas.addEventListener('click', event => {
     if (mobile?.enabled || (event instanceof PointerEvent && event.pointerType === 'touch')) return;
-    if (actionsOpen()) { actionDrawer().open = false; return; }
-    if (!renderer.isReady || !joined || menuInputOpen() || state.phase !== 'playing' || activities?.isOpen) return;
+    if (!renderer.isReady || !joined || menuInputOpen() || state.phase !== 'playing') return;
     if (pointerTravel > 6) return;
     if (document.pointerLockElement ? inspectTableAt() : inspectTableAt(event.clientX, event.clientY)) return;
     closeTypedInput();
     void unlockAudio();
     try { const result = canvas.requestPointerLock(); if (result) void result.catch(() => {}); } catch { /* Drag-look remains available. */ }
   });
-  canvas.addEventListener('pointerdown', event => { if (event.pointerType !== 'mouse' || !joined || menuInputOpen() || activities?.isOpen) return; dragging = true; pointerTravel = 0; pointerX = event.clientX; pointerY = event.clientY; });
+  canvas.addEventListener('pointerdown', event => { if (event.pointerType !== 'mouse' || !joined || menuInputOpen()) return; dragging = true; pointerTravel = 0; pointerX = event.clientX; pointerY = event.clientY; });
 }
 rebuildRenderer();
 
@@ -747,7 +703,7 @@ function returnToModes(message: string) {
   tabletopInspector?.close();
   cancelLocalPlayback(); clearTimeout(pollTimer); microphoneAttempt++;
   recognition.stop(); friendVoice.disconnect(); micEnabled = false; updateMic();
-  activities.close(); eveningUI.closeDialogs(); closeTypedInput(); releasePointer();
+  eveningUI.closeDialogs(); closeTypedInput(); releasePointer();
   joined = false; token = ''; doubleRoom = undefined; tableAttention = undefined; endingPresented = false;
   for (const id of ['pause-dialog', 'ending-screen', 'menu-dialog', 'settings-dialog', 'journal', 'dinner-hud']) el(id).hidden = true;
   el('restaurant-app').classList.remove('playing'); doubleLobby.hide();
@@ -775,7 +731,7 @@ doubleLobby = new DoubleDateLobby(el('restaurant-app'), {
 mobile = new MobileControls(el('restaurant-app'), {
   look(dx, dy) { if (renderer.isReady && joined && state.phase === 'playing') renderer.look(dx, dy); },
   tap(x, y) { inspectTableAt(x, y); },
-  interact() { void interact(); }, actions: toggleActions, talk: showTypedInput,
+  interact() { void interact(); }, talk: showTypedInput,
   closeTalk() { closeTypedInput(); }, mic() { btn('mic-toggle').click(); },
   pause() { void pauseDinner(); }, release: releasePointer, notice: toast,
 });
@@ -865,14 +821,13 @@ el<HTMLFormElement>('conversation-form').addEventListener('submit', event => {
   void sendTurn(text, target).then(sent => {
     if (submission === typedSubmissionEpoch && !sent && !input('conversation-input').value.trim()) {
       input('conversation-input').value = text;
-      if (state.phase === 'playing' && !visibleModal() && !activities.isOpen && !actionsOpen()) showTypedInput();
+      if (state.phase === 'playing' && !visibleModal()) showTypedInput();
     }
   }).catch(error => { if (submission === typedSubmissionEpoch) { if (!input('conversation-input').value.trim()) input('conversation-input').value = text; toast((error as Error).message); } })
     .finally(complete);
 });
 input('conversation-input').addEventListener('input', updateTypedSubmit);
 btn('type-toggle').addEventListener('click', () => { if (el('conversation-form').hidden) showTypedInput(); else closeTypedInput(true); });
-btn('actions-toggle').addEventListener('click', toggleActions);
 btn('mic-toggle').addEventListener('click', async () => {
   const attempt = ++microphoneAttempt;
   if (micEnabled) { recognition.stop(); friendVoice.disable(); micEnabled = false; updateMic(); return; }
@@ -884,14 +839,8 @@ btn('mic-toggle').addEventListener('click', async () => {
   catch (error) { if (attempt !== microphoneAttempt) return; recognition.stop(); friendVoice.disable(); micEnabled = false; updateMic(); toast((error as Error).message, 10000); }
 });
 btn('interaction').addEventListener('click', () => void interact());
-btn('table-menu').addEventListener('click', () => void openMenu());
-btn('table-glass').addEventListener('click', () => void command({ type: 'interact', target: 'glass' }));
-btn('table-stand').addEventListener('click', () => {
-  actionDrawer().open = false;
-  void command({ type: 'interact', target: 'seat' });
-});
 btn('capture-pointer').addEventListener('click', () => {
-  if (menuInputOpen() || activities.isOpen || mobile?.enabled) return;
+  if (menuInputOpen() || mobile?.enabled) return;
   try { const result = renderer.canvas.requestPointerLock?.(); if (result) void result.catch(() => {}); } catch { /* Drag-look remains available. */ }
 });
 btn('pause-open').addEventListener('click', () => void pauseDinner());
@@ -899,8 +848,7 @@ btn('resume-date').addEventListener('click', () => void resumeDinner());
 btn('finish-date').addEventListener('click', async () => { if (doubleClient.active && state.doubleDate?.role === 'wingman') { try { await doubleClient.command({ type: 'view-ending' }); } catch (error) { toast((error as Error).message); } return; } await interrupt(); await command({ type: 'finish' }); });
 btn('back-to-table').addEventListener('click', async () => { if (!doubleClient.active) return; try { await doubleClient.command({ type: 'return-to-table' }); } catch (error) { toast((error as Error).message); } });
 btn('new-date').addEventListener('click', async () => { if (doubleClient.active) await doubleClient.leave(true); location.href = '/'; });
-btn('event-dismiss').addEventListener('click', () => { if (state.evening.incident) dismissedIncidents.add(state.evening.incident.event); el('event-card').hidden = true; });
-btn('journal-toggle').addEventListener('click', () => { const open = el('journal').hidden; el('journal').hidden = !open; btn('journal-toggle').setAttribute('aria-expanded', String(open)); if (open) { releasePointer(); closeTypedInput(); activities.close(); actionDrawer().open = false; } });
+btn('journal-toggle').addEventListener('click', () => { const open = el('journal').hidden; el('journal').hidden = !open; btn('journal-toggle').setAttribute('aria-expanded', String(open)); if (open) { releasePointer(); closeTypedInput(); } });
 btn('journal-close').addEventListener('click', () => { el('journal').hidden = true; btn('journal-toggle').setAttribute('aria-expanded', 'false'); });
 btn('menu-close').addEventListener('click', async () => { el('menu-dialog').hidden = true; if (menuPaused) await command({ type: 'pause', paused: false }); menuPaused = false; recognition.setPaused(false); });
 document.querySelectorAll<HTMLButtonElement>('[data-order]').forEach(button => button.addEventListener('click', async () => {
@@ -927,7 +875,6 @@ btn('pause-settings').addEventListener('click', () => btn('settings-open').click
 for (const [id, action] of [
   ['pause-talk', () => showTypedInput()],
   ['pause-journal', () => btn('journal-toggle').click()],
-  ['pause-actions', () => { if (!el('evening-panel').hidden) actionDrawer().open = true; }],
 ] as const) btn(id).addEventListener('click', async () => {
   await resumeDinner(action);
 });
@@ -947,7 +894,7 @@ input('speech-enabled').addEventListener('change', () => { preferences.speech = 
 input('captions-enabled').addEventListener('change', () => { preferences.captions = input('captions-enabled').checked; el('caption').hidden = !preferences.captions || !el('caption-text').textContent; savePreferences(); });
 input('voice-volume').addEventListener('input', () => { preferences.volume = Number(input('voice-volume').value); speech.setVolume(preferences.volume); savePreferences(); });
 document.addEventListener('mousemove', event => {
-  if (mobile?.enabled || !joined || menuInputOpen() || state.phase !== 'playing' || activities.isOpen) return;
+  if (mobile?.enabled || !joined || menuInputOpen() || state.phase !== 'playing') return;
   if (document.pointerLockElement === renderer.canvas) renderer.look(event.movementX, event.movementY);
   else if (dragging) { pointerTravel += Math.hypot(event.clientX - pointerX, event.clientY - pointerY); renderer.look(event.clientX - pointerX, event.clientY - pointerY); pointerX = event.clientX; pointerY = event.clientY; }
 });
@@ -967,32 +914,31 @@ document.addEventListener('keydown', event => {
     if (event.repeat) return;
     if (!el('ending-screen').hidden) return;
     if (tabletopInspector?.isOpen) { tabletopInspector.close(); return; }
-    if (!el('conversation-form').hidden && !visibleModal() && !activities.isOpen) closeTypedInput(true);
+    if (!el('conversation-form').hidden && !visibleModal()) closeTypedInput(true);
     else if (!el('settings-dialog').hidden) btn('settings-close').click();
     else if (eveningUI.isDialogOpen) eveningUI.closeDialogs();
-    else if (activities.isOpen) activities.close();
     else if (!el('menu-dialog').hidden) btn('menu-close').click();
     else if (!el('journal').hidden) btn('journal-close').click();
     else if (!el('pause-dialog').hidden) btn('resume-date').click();
     else if (!joined) { if (startingDinner) return; if (!doubleLobby.element.hidden) { void leaveDoubleLobby(); return; } if (el('arrival-screen').dataset.screen === 'select') btn('select-back').click(); else if (el('arrival-screen').dataset.screen === 'mode') btn('mode-back').click(); }
-    else if (actionsOpen()) actionDrawer().open = false;
+    else if (eveningUI.dismissPrompt()) return;
     else void pauseDinner();
     return;
   }
   if (menuNavigation.handle(event)) { keys.clear(); return; }
   if (startingDinner || typing || !joined || visibleModal() || state.phase !== 'playing' || (mobile?.enabled && mobile.portrait) || mobile?.menuScope) return;
   const key = event.key.toLowerCase();
-  if (key === 'j' && !event.repeat && !activities.isOpen) { event.preventDefault(); btn('journal-toggle').click(); return; }
-  if (!el('journal').hidden || activities.isOpen) return;
+  if (key === 'j' && !event.repeat) { event.preventDefault(); btn('journal-toggle').click(); return; }
+  if (!el('journal').hidden) return;
   if (key === 'm' && !event.repeat) { event.preventDefault(); btn('mic-toggle').click(); return; }
-  if (actionsOpen() && key !== 'g' && key !== 't') return;
+  if (/^[1-4]$/.test(key) && !event.repeat && el('conversation-form').hidden) {
+    if (eveningUI.chip(Number(key))) { event.preventDefault(); keys.clear(); }
+    return;
+  }
   if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) { keys.add(key); event.preventDefault(); }
   if (key === 'e' && !event.repeat) { event.preventDefault(); void interact(); }
   if (key === 'r' && !event.repeat) { event.preventDefault(); inspectTableAt(); }
   if (key === 't' && !event.repeat) { event.preventDefault(); showTypedInput(); }
-  if (key === 'g' && !event.repeat && !activities.isOpen && !el('evening-panel').hidden) {
-    event.preventDefault(); toggleActions();
-  }
 });
 document.addEventListener('keyup', event => keys.delete(event.key.toLowerCase()));
 window.addEventListener('blur', () => releasePointer());
@@ -1014,7 +960,7 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('resize', () => renderer.resize());
 window.addEventListener('pagehide', event => {
   if (event.persisted) { pageSuspended = true; suspendPage(); return; }
-  disposed = true; keys.clear(); turnAbort?.abort(); speech.dispose(); recognition.dispose(); activities.dispose(); ambience.dispose(); clearTimeout(pollTimer);
+  disposed = true; keys.clear(); turnAbort?.abort(); speech.dispose(); recognition.dispose(); ambience.dispose(); clearTimeout(pollTimer);
   friendVoice.dispose(); sharedMicrophone.dispose();
   if (doubleClient.active) { void doubleClient.leave(false); doubleClient.dispose(); }
   else if (joined && state.phase === 'playing') void fetch(sessionPath() + '/command', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ type: 'pause', paused: true }), keepalive: true });
@@ -1031,9 +977,9 @@ function frame(now: number) {
   if (disposed) return;
   const dt = Math.min(.06, (now - lastFrame) / 1000); lastFrame = now;
   menuNavigation.refresh(el('conversation-form').hidden ? 'gameplay' : 'typing');
-  renderer.setTableFocus(!el('menu-dialog').hidden ? 'menu' : !el('farewell-dialog').hidden ? 'farewell' : activities.activeKind ?? null);
+  renderer.setTableFocus(!el('menu-dialog').hidden ? 'menu' : eveningUI.farewellReady ? 'farewell' : null);
   if (state.doubleDate) state.doubleDate.speakingActor = tableAttention && tableAttention.until > now ? tableAttention.actor : null;
-  if (!joined || !micEnabled || busy || state.phase !== 'playing' || visibleModal() || activities.isOpen || document.hidden || pageSuspended) clearListeningPreview();
+  if (!joined || !micEnabled || busy || state.phase !== 'playing' || visibleModal() || document.hidden || pageSuspended) clearListeningPreview();
   else {
     const cue = listeningPreview.sample(now);
     if (cue && cue.target !== currentListeningTarget()) clearListeningPreview();
@@ -1042,16 +988,13 @@ function frame(now: number) {
   renderer.update(dt, state, playback);
   if (tabletopInspector?.target && !renderer.hasTableTarget(tabletopInspector.target)) tabletopInspector.close();
   el('scene-loading').hidden = renderer.isReady;
-  if (activities.isOpen) activities.update(state);
-  el('objective').hidden = !joined || state.phase !== 'playing' || visibleModal() || activities.isOpen || actionsOpen() || !el('conversation-form').hidden || (!!state.order && state.evening.chapter !== 'farewell' && !state.evening.incident);
-  btn('actions-toggle').disabled = !joined || state.phase !== 'playing' || !!el('evening-panel').hidden || activities.isOpen;
-  btn('actions-toggle').setAttribute('aria-expanded', String(actionsOpen()));
+  el('prompt-line').classList.toggle('prompt-quiet', !joined || state.phase !== 'playing' || visibleModal() || !el('conversation-form').hidden);
   const touchBlocked = !!mobile?.enabled && (mobile.portrait || !!mobile.menuScope);
-  const controlsBlocked = menuInputOpen() || activities.isOpen || !el('conversation-form').hidden || pageSuspended || document.hidden;
+  const controlsBlocked = menuInputOpen() || !el('conversation-form').hidden || pageSuspended || document.hidden;
   const touchHit = !controlsBlocked && !touchBlocked && renderer.isReady && joined && state.phase === 'playing' ? renderer.getInteraction(state) : null;
   tabletopInspector?.update(state, touchHit && isInspectionTarget(touchHit.target) ? { target: touchHit.target, label: touchHit.label } : null);
-  if (tabletopInspector?.isOpen && (otherModalOpen() || activities.isOpen || actionsOpen() || !el('journal').hidden || !el('conversation-form').hidden || pageSuspended || document.hidden || touchBlocked)) tabletopInspector.close();
-  mobile?.update({ joined, playing: state.phase === 'playing' && renderer.isReady && !pageSuspended, blocked: controlsBlocked, modal: visibleModal(), typing: !el('conversation-form').hidden, seated: state.seated, actionsAvailable: !el('evening-panel').hidden, actionsOpen: actionsOpen(), micEnabled, interactionLabel: touchHit?.label ?? null, activityOpen: activities.isOpen });
+  if (tabletopInspector?.isOpen && (otherModalOpen() || !el('journal').hidden || !el('conversation-form').hidden || pageSuspended || document.hidden || touchBlocked)) tabletopInspector.close();
+  mobile?.update({ joined, playing: state.phase === 'playing' && renderer.isReady && !pageSuspended, blocked: controlsBlocked, modal: visibleModal(), typing: !el('conversation-form').hidden, seated: state.seated, micEnabled, interactionLabel: touchHit?.label ?? null });
   if (renderer.isReady && joined && state.phase === 'playing' && !visibleModal() && !pageSuspended && !document.hidden) {
     const blocked = controlsBlocked || touchBlocked;
     const hit = blocked ? null : renderer.getInteraction(state);
@@ -1062,7 +1005,7 @@ function frame(now: number) {
     const analog = mobile?.movement ?? { horizontal: 0, forward: 0 };
     const horizontal = !typing ? Math.max(-1, Math.min(1, Number(keys.has('d') || keys.has('arrowright')) - Number(keys.has('a') || keys.has('arrowleft')) + analog.horizontal)) : 0;
     const forward = !typing ? Math.max(-1, Math.min(1, Number(keys.has('w') || keys.has('arrowup')) - Number(keys.has('s') || keys.has('arrowdown')) + analog.forward)) : 0;
-    const moving = !!(horizontal || forward) && !state.seated && !activities.isOpen;
+    const moving = !!(horizontal || forward) && !state.seated;
     if (!movePending && now - lastMove > 80 && (moving || lastMovement)) {
       lastMove = now; lastMovement = moving; movePending = true;
       const vector = renderer.getMovement(moving ? horizontal : 0, moving ? forward : 0);

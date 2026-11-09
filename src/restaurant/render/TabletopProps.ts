@@ -2,13 +2,11 @@ import * as THREE from 'three';
 import type { DinnerState } from '../types';
 import { createProceduralMaterial } from './ProceduralMaterials';
 
-/** Keep shared desserts, the board and their supporting objects in distinct spaces. */
+/** Keep shared desserts and their supporting objects in distinct spaces. */
 export function dessertLayout(state: DinnerState) {
   const own=state.evening.dessert.status==='served',other=state.doubleDate?.otherView?.evening.dessert.status==='served';
-  const board=state.doubleDate?.tableActivity && state.doubleDate.tableActivity.owner!==state.doubleDate.localHumanId ? state.doubleDate.otherView?.evening ?? state.evening : state.evening;
-  const boardReserved=board.coasters.phase!=='idle'&&!board.bill.requested;
   const dual=!!state.doubleDate&&own&&!!other;
-  return {own,other:!!other,dual,park:(own||!!other)&&(boardReserved||dual)};
+  return {own,other:!!other,dual,park:dual};
 }
 
 /** Close-range tabletop meshes. Game rules remain in the dinner state. */
@@ -174,10 +172,9 @@ export class TabletopProps {
     this.carafe.position.x=(layout.dual?-.68:-.56)+.085*pouring;this.carafe.position.z=layout.dual?-1.0:-1.50;
     const actorX=remote?-x:x;
     this.shakers.forEach((shaker,i)=>{const shaking=action?.action===(i?'pepper-meal':'salt-meal')?beat:0;shaker.position.x=.66+i*.085+(actorX-(.66+i*.085))*.22*shaking;shaker.position.z=-.91+(z+.91)*.22*shaking;shaker.position.y=.7795+.065*shaking;shaker.rotation.z=shaking*Math.sin(age*28)*.3;});
-    // Make room for the shared board or dessert without making table objects disappear.
-    const boardEvening=state.doubleDate?.tableActivity && state.doubleDate.tableActivity.owner!==state.doubleDate.localHumanId ? state.doubleDate.otherView?.evening ?? state.evening : state.evening;
+    // Make room for a shared dessert without making table objects disappear.
     const extraItems=[...(state.evening.scenarioCare?.extraOrder.items??[]),...(otherCare?.extraOrder.items??[])];
-    const clear=['aiming','rolling'].includes(boardEvening.coasters.phase)||layout.own||layout.other||extraItems.some(item=>['served','shared','boxed'].includes(item.status))||!!state.evening.scenarioCare?.service.spaceCleared||!!otherCare?.service.spaceCleared;
+    const clear=layout.own||layout.other||extraItems.some(item=>['served','shared','boxed'].includes(item.status))||!!state.evening.scenarioCare?.service.spaceCleared||!!otherCare?.service.spaceCleared;
     this.lamp.position.x=THREE.MathUtils.lerp(this.lamp.position.x,clear?(double?-.18:-.36):-.20,ease);this.lamp.position.z=THREE.MathUtils.lerp(this.lamp.position.z,clear?(double?-1.65:-1.88):-1.12,ease);
     this.basket.position.x=THREE.MathUtils.lerp(this.basket.position.x,layout.park?.45:clear?.50:.34,ease);this.basket.position.z=THREE.MathUtils.lerp(this.basket.position.z,layout.park?-.83:clear?-1.55:-1.28,ease);
     for(const t of this.targets){const n=t.userData.target;if(n==='glass')t.position.set(this.playerGlass.position.x,.88+this.playerGlass.position.y-.782,this.playerGlass.position.z);if(n==='plate')t.position.set(x,.82,z);if(n==='cutlery')t.position.set(x+(tt?.cutleryCrossed?-.035:-.235),.82,z);if(n==='carafe')t.position.set(this.carafe.position.x,.96+this.carafe.position.y-.782,this.carafe.position.z);if(n==='salt'||n==='pepper'){const shaker=this.shakers[n==='salt'?0:1]!;t.position.set(shaker.position.x,.84+shaker.position.y-.7795,shaker.position.z);}if(n==='lamp')t.position.set(this.lamp.position.x,.92,this.lamp.position.z);if(n==='bread')t.position.set(this.basket.position.x,.85,this.basket.position.z);t.visible=state.seated&&!state.evening.bill.settlement&&state.evening.scenario?.phase!=='active';}

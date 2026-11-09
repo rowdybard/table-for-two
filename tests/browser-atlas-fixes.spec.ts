@@ -109,29 +109,51 @@ async function restore(page: Page, base: string, credentials: { id: string; toke
   await expect.poll(async () => (await readState(page)).phase).toBe('playing');
   await page.waitForTimeout(650);
 }
-async function actions(page: Page) {
-  const drawer = page.locator('#evening-panel > .action-drawer');
-  if (!await drawer.evaluate(element => (element as HTMLDetailsElement).open)) await page.keyboard.press('g');
-  await expect(drawer).toHaveAttribute('open', '');
+/** Chips live on the prompt line. These specs look around by dragging, so the pointer is never captured away from them. */
+async function prompt(page: Page) {
+  expect(await page.evaluate(() => !!document.pointerLockElement)).toBe(false);
+  await expect(page.locator('#prompt-line')).toBeVisible();
 }
-async function choose(page: Page, id: string) { await actions(page); await page.locator(`[data-scenario="${id}"]`).click(); }
-async function resolveWrongOrder(command: (body: DinnerCommand) => Promise<unknown>, state: DinnerState) {
-  if (state.evening.incident?.event !== 'wrong-order') return;
-  await command({ type: 'evening', action: 'inspect-ticket' }); await command({ type: 'evening', action: 'return-order' });
+async function choose(page: Page, id: string) { await prompt(page); await page.locator(`[data-scenario="${id}"]`).click(); }
+/** Whoever owns an interruption clears it through the real table commands. */
+async function clearIncident(command: (body: DinnerCommand) => Promise<unknown>, view: DinnerState) {
+  const incident = view.evening.incident;
+  if (!incident) return false;
+  if (incident.event === 'wrong-order') { if (!incident.progress) await command({ type: 'evening', action: 'inspect-ticket' }); await command({ type: 'evening', action: 'return-order' }); }
+  else if (incident.event === 'spilled-drink') { for (let wipe = incident.progress; wipe < 3; wipe++) await command({ type: 'evening', action: 'wipe' }); await command({ type: 'evening', action: 'steady-glass' }); }
+  else await command({ type: 'evening', action: 'ask-quiet' });
+  return true;
 }
-async function finishFood(command: (body: DinnerCommand) => Promise<unknown>, game: AtlasGame) {
-  for (let bite = 0; bite < 3; bite++) { await command({ type: 'evening', action: 'taste' }); game.advance(.6); }
-  await command({ type: 'evening', action: 'finish-main' }); await command({ type: 'evening', action: 'skip-dessert' });
+type Table = { read(): Promise<DinnerState>; command(body: DinnerCommand): Promise<unknown> };
+/** Eli's service runs on the scene clock; this walks it forward one second at a time, clearing spills and wrong plates as they come. */
+async function until(game: AtlasGame, tables: Table[], predicate: (views: DinnerState[]) => boolean, label: string, maxSeconds = 400) {
+  for (let second = 0; second < maxSeconds; second++) {
+    const views = await Promise.all(tables.map(table => table.read()));
+    let cleared = false;
+    for (const [index, view] of views.entries()) if (await clearIncident(tables[index]!.command, view)) cleared = true;
+    if (cleared) continue;
+    if (predicate(views)) return views;
+    game.advance(1);
+  }
+  throw new Error(`The table never reached: ${label}.`);
 }
-/** Initial seated/standing look angles are part of the real public input contract. */
-async function aimFromFreshLook(page: Page, point: [number, number, number]) {
+const untilElapsed = (game: AtlasGame, tables: Table[], elapsed: number) => until(game, tables, views => views.every(view => view.elapsed >= elapsed), `${elapsed}s on the scene clock`);
+/** Three bites, then Eli clears the plates on his own clock; declining dessert leaves the check to him as well. */
+async function finishFood(game: AtlasGame, table: Table, others: Table[] = []) {
+  for (let bite = 0; bite < 3; bite++) { await table.command({ type: 'evening', action: 'taste' }); game.advance(.6); }
+  await until(game, [table, ...others], ([view]) => view!.evening.main.status === 'finished', 'the main course cleared');
+  await table.command({ type: 'evening', action: 'skip-dessert' });
+}
+/** Initial seated/standing look angles are part of the real public input contract; later aims start from the look that was left behind. */
+async function aimFromLook(page: Page, point: [number, number, number], from?: { yaw: number; pitch: number }) {
   const state = await readState(page), human = state.participants.find(person => person.kind === 'human')!, viewport = page.viewportSize()!;
   const camera = new PerspectiveCamera(state.seated ? 43 : 61, viewport.width / viewport.height, .05, 100);
-  const offsetYaw = state.seated ? .245 : 0, pitch = state.seated ? -.095 : -.025;
+  const offsetYaw = state.seated ? .245 : 0, look = from ?? { yaw: 0, pitch: state.seated ? -.095 : -.025 };
   camera.position.set(human.position[0] + (state.seated ? .51 : 0), (state.seated ? RESTAURANT.seat[1] + .075 : RESTAURANT.spawn[1]), human.position[2] - (state.seated ? .28 : 0));
   camera.lookAt(new Vector3(...point));
   const rotation = new Euler().setFromQuaternion(camera.quaternion, 'YXZ');
-  let dx = (offsetYaw - rotation.y) / .002, dy = (pitch - rotation.x) / .002;
+  const target = { yaw: offsetYaw - rotation.y, pitch: rotation.x };
+  let dx = (target.yaw - look.yaw) / .002, dy = (look.pitch - target.pitch) / .002;
   while (Math.abs(dx) + Math.abs(dy) >= 8) {
     const x = Math.max(-viewport.width * .32, Math.min(viewport.width * .32, dx));
     const y = Math.max(-viewport.height * .30, Math.min(viewport.height * .30, dy));
@@ -141,6 +163,7 @@ async function aimFromFreshLook(page: Page, point: [number, number, number]) {
     dx -= x; dy -= y;
   }
   await page.evaluate(() => new Promise<void>(done => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
+  return target;
 }
 
 test('real Solo: a private break holds the waiting kitchen, returns the actor and resumes the remaining cook time', async ({ page }) => {
@@ -148,13 +171,13 @@ test('real Solo: a private break holds the waiting kitchen, returns the actor an
   try {
     const solo = await game.solo(); await solo.command({ type: 'interact', target: 'menu', choice: MENU[0] }); game.advance(15.1);
     expect((await solo.state()).evening.main.status).toBe('waiting');
-    await restore(page, game.base, solo.credentials); await actions(page);
-    await expect(page.locator('#evening-action-title')).toHaveText('An urgent detour');
+    await restore(page, game.base, solo.credentials); await prompt(page);
+    await expect(page.locator('[data-scenario="water"]')).toBeVisible();
     const absent = await readState(page); expect(absent.evening.scenarioCare!.presence).toBe('privacy-break');
     expect(absent.participants.find(person => person.kind === 'ai')!.position[2]).toBeGreaterThan(0);
     await choose(page, 'water');
     await expect(page.locator('[data-scenario="slow-dinner"]')).toBeDisabled();
-    await expect(page.locator('#evening-action-copy')).toContainText('They’re returning shortly.');
+    await expect(page.locator('#prompt-copy')).toContainText('They’re returning shortly.');
     game.advance(3.1); // Six seconds makes them start returning; walking back still takes real scene time.
     for (let step = 0; step < 80 && (await solo.state()).evening.scenarioCare!.presence !== 'at-table'; step++) game.advance(.25);
     await expect(page.locator('[data-scenario="slow-dinner"]')).toBeEnabled(); await choose(page, 'slow-dinner');
@@ -179,14 +202,9 @@ for (const mode of ['solo', 'double'] as const) test(`real ${mode}: cancelled ki
     const pair = mode === 'double' ? await game.pair() : undefined;
     if (solo) await solo.command({ type: 'interact', target: 'menu', choice: MENU[0] });
     if (pair) for (const [i, human] of (['h1', 'h2'] as const).entries()) await pair.command(human, { type: 'interact', target: 'menu', choice: MENU[i] });
-    game.advance(46);
-    if (solo) await resolveWrongOrder(solo.command, await solo.state());
-    if (pair) {
-      const room = await pair.state(), owner = room.incidentOwner ?? 'h1';
-      await resolveWrongOrder(body => pair.command(owner, body), room.views[owner]);
-    }
-    const elapsed = solo ? (await solo.state()).elapsed : Math.min(...Object.values((await pair!.state()).views).map(view => view.elapsed));
-    game.advance(Math.max(0, 240 - elapsed) + .1);
+    const tables: Table[] = solo ? [{ read: solo.state, command: solo.command }] : (['h1', 'h2'] as const).map(id => ({ read: async () => (await pair!.state()).views[id], command: body => pair!.command(id, body) }));
+    // Eli's wrong plate and the spill both arrive on his clock before the table story opens at four minutes.
+    await untilElapsed(game, tables, 240.1);
     const human = pair ? (await pair.state()).scenario!.target : 'h1';
     await restore(page, game.base, solo?.credentials ?? pair!.members[human]);
     await expect.poll(async () => (await readState(page)).evening.scenario?.phase).toBe('active');
@@ -199,14 +217,15 @@ for (const mode of ['solo', 'double'] as const) test(`real ${mode}: cancelled ki
     await expect.poll(async () => (await readState(page)).evening.scenario?.phase).toBe('resolved');
     const view = await readState(page), extras = view.evening.scenarioCare!.extraOrder.items;
     expect(extras.map(item => item.status)).toEqual(['shared', 'boxed', 'cancelled', 'cancelled']);
-    const command = solo?.command ?? ((body: DinnerCommand) => pair!.command(human, body));
-    await finishFood(command, game);
-    if (pair) await finishFood(body => pair.command(human === 'h1' ? 'h2' : 'h1', body), game);
-    await expect.poll(async () => (await readState(page)).evening.dessert.status).toBe('skipped'); await actions(page);
-    await page.locator('[data-evening="request-bill"]').count().then(async count => {
-      if (count) await page.locator('[data-evening="request-bill"]').click();
-      else await page.getByRole('button', { name: /Ask for the bill|Look at the bill/ }).click();
-    });
+    const own = tables[human === 'h2' ? 1 : 0]!, friend = tables.filter(table => table !== own);
+    await finishFood(game, own, friend);
+    for (const table of friend) await finishFood(game, table, [own]);
+    // One check comes for the whole table once every pair has finished or declined dessert.
+    await until(game, tables, views => views.every(view => view.evening.bill.requested), 'the check on the table');
+    await expect.poll(async () => (await readState(page)).evening.dessert.status).toBe('skipped');
+    await expect.poll(async () => (await readState(page)).evening.bill.requested).toBe(true); await prompt(page);
+    await expect(page.locator('#prompt-copy')).toHaveText('Eli left the check.');
+    await page.locator('#prompt-chips button', { hasText: 'See the check' }).click();
     await expect(page.locator('#bill-dialog')).toBeVisible();
     await expect(page.locator('#bill-items')).toContainText('Cancelled before cooking');
     await expect(page.locator('#bill-items')).toContainText('Not charged');
@@ -225,15 +244,13 @@ test('real Double: medical departure reveals their agenda and the other pair can
   try {
     const pair = await game.pair();
     for (const [i, human] of (['h1', 'h2'] as const).entries()) await pair.command(human, { type: 'interact', target: 'menu', choice: MENU[i] });
-    game.advance(46);
-    let room = await pair.state(); const owner = room.incidentOwner ?? 'h1';
-    await resolveWrongOrder(body => pair.command(owner, body), room.views[owner]);
-    game.advance(Math.max(0, 240 - Math.min(...Object.values((await pair.state()).views).map(view => view.elapsed))) + .1);
-    room = await pair.state(); const target = room.scenario!.target, friend = target === 'h1' ? 'h2' : 'h1';
+    const tables = Object.fromEntries((['h1', 'h2'] as const).map(id => [id, { read: async () => (await pair.state()).views[id], command: (body: DinnerCommand) => pair.command(id, body) } satisfies Table])) as Record<DoubleHumanId, Table>;
+    await untilElapsed(game, Object.values(tables), 240.1);
+    let room = await pair.state(); const target = room.scenario!.target, friend = target === 'h1' ? 'h2' : 'h1';
     await restore(page, game.base, pair.members[target]);
     await choose(page, 'get-help'); await choose(page, 'support-handoff');
     await expect.poll(async () => (await readState(page)).doubleDate?.role).toBe('wingman');
-    await actions(page); await page.locator('#view-own-ending').click();
+    await prompt(page); await page.locator('#view-own-ending').click();
     await expect(page.locator('#ending-screen')).toBeVisible();
     await expect(page.locator('#ending-agenda')).toBeVisible();
     await expect(page.locator('#ending-agenda-goal')).not.toHaveText('');
@@ -241,8 +258,9 @@ test('real Double: medical departure reveals their agenda and the other pair can
     room = await pair.state(); expect(room.phase).toBe('playing'); expect(room.views[friend].phase).toBe('playing');
     expect(room.views[friend].evening.agenda!.goal).toBeNull(); expect(room.views[target].evening.bill.settlement).toBe('separate');
     await page.locator('#back-to-table').click();
-    await finishFood(body => pair.command(friend, body), game);
-    await pair.command(friend, { type: 'evening', action: 'request-bill' });
+    await finishFood(game, tables[friend]);
+    // The remaining pair's check does not wait for the date that already ended.
+    await until(game, [tables[friend]], ([view]) => view!.evening.bill.requested, 'the remaining pair’s check');
     await pair.command(friend, { type: 'evening', action: 'settle-bill', choice: 'separate' });
     await expect.poll(async () => (await readRoom(page)).views[friend].evening.bill.settlement).toBe('separate');
   } finally { await page.goto('about:blank'); await game.stop(); }
@@ -252,26 +270,28 @@ test('real Solo: quieter-table relocation moves the camera, props and usable cha
   page.setDefaultTimeout(10_000);
   const game = await new AtlasGame().start('unwelcome-comment');
   try {
-    const solo = await game.solo(); await solo.command({ type: 'interact', target: 'menu', choice: MENU[0] }); game.advance(46);
-    await resolveWrongOrder(solo.command, await solo.state()); game.advance(Math.max(0, 240 - (await solo.state()).elapsed) + .1);
+    const solo = await game.solo(); await solo.command({ type: 'interact', target: 'menu', choice: MENU[0] });
+    await untilElapsed(game, [{ read: solo.state, command: solo.command }], 240.1);
     await restore(page, game.base, solo.credentials); const before = await readState(page);
     await choose(page, 'ask-staff'); await choose(page, 'move-away');
     await expect.poll(async () => (await readState(page)).evening.scenarioCare!.table).toBe('quiet');
     const after = await readState(page);
     expect(after.participants[0]!.position[2] - before.participants[0]!.position[2]).toBeCloseTo(QUIET_TABLE_OFFSET_Z, 4);
     expect(after.participants[1]!.position[2] - before.participants[1]!.position[2]).toBeCloseTo(QUIET_TABLE_OFFSET_Z, 4);
-    await expect(page.locator('#evening-action-copy')).toContainText('quieter table');
-    await page.keyboard.press('Escape'); // Close the G action drawer without pausing.
+    await expect(page.locator('#prompt-chips [data-scenario]')).toHaveCount(0);
     await page.waitForTimeout(700);
     // Aim at the physical relocated bread target through ordinary mouse drag, then R/E.
-    await aimFromFreshLook(page, [.34, .85, -1.28 + QUIET_TABLE_OFFSET_Z]);
+    const breadLook = await aimFromLook(page, [.34, .85, -1.28 + QUIET_TABLE_OFFSET_Z]);
     await page.keyboard.press('r'); await expect(page.locator('#tabletop-inspector')).toBeVisible();
     await expect(page.locator('#tabletop-inspector')).toContainText('Bread basket'); await page.keyboard.press('e');
     await expect.poll(async () => (await readState(page)).evening.tabletop!.breadEaten).toBe(1);
-    await page.keyboard.press('Escape'); await actions(page); await page.locator('#table-stand').click();
+    await page.keyboard.press('Escape'); await expect(page.locator('#tabletop-inspector')).toBeHidden(); await page.waitForTimeout(700);
+    // Looking down at the moved chair is how a guest stands up from it.
+    await aimFromLook(page, [0, .61, .1 + QUIET_TABLE_OFFSET_Z], breadLook);
+    await expect(page.locator('#interaction-label')).toHaveText('Stand up'); await page.keyboard.press('e');
     await expect.poll(async () => (await readState(page)).seated).toBe(false);
     await page.waitForTimeout(650);
-    await aimFromFreshLook(page, [0, .61, .1 + QUIET_TABLE_OFFSET_Z]);
+    await aimFromLook(page, [0, .61, .1 + QUIET_TABLE_OFFSET_Z]);
     await expect(page.locator('#interaction-label')).toHaveText('Take your seat'); await page.keyboard.press('e');
     await expect.poll(async () => (await readState(page)).seated).toBe(true);
     expect((await solo.state()).participants[0]!.position[2]).toBeCloseTo(after.participants[0]!.position[2], 4);

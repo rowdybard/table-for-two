@@ -96,7 +96,7 @@ test('landscape phone: two thumbs, talk return, neutral input, context action an
         x, y, defaultPrevented: event.defaultPrevented, preventedAfterDispatch: false, hit: Number.isFinite(x) && Number.isFinite(y) ? document.elementsFromPoint(x, y).slice(0, 5).map(name) : undefined,
         viewport: [innerWidth, innerHeight], app: { ...document.querySelector<HTMLElement>('#restaurant-app')?.dataset },
         pause: pause ? { rect: pause.getBoundingClientRect().toJSON(), hidden: pause.hidden } : null,
-        dialogHidden: (document.querySelector('#pause-dialog') as HTMLElement | null)?.hidden, activity: document.querySelector('#activities-panel')?.getAttribute('data-activity') };
+        dialogHidden: (document.querySelector('#pause-dialog') as HTMLElement | null)?.hidden, prompt: document.querySelector('#prompt-copy')?.textContent };
       trace.push(entry);
       setTimeout(() => { entry.preventedAfterDispatch = event.defaultPrevented; }, 0);
       if (trace.length > 350) trace.shift();
@@ -106,7 +106,7 @@ test('landscape phone: two thumbs, talk return, neutral input, context action an
     visualViewport?.addEventListener('resize', record);
   });
   await begin(page);
-  await assertFits(page, ['#mobile-move', '#mobile-actions', '#mobile-talk', '#mobile-mic', '#mobile-pause']);
+  await assertFits(page, ['#mobile-move', '#mobile-talk', '#mobile-mic', '#mobile-pause']);
   const cdp = await page.context().newCDPSession(page), thumbs = new Thumbs(cdp);
   const move = await center(page, '#mobile-move'), look = await center(page, '#mobile-look');
   const before = (await readState(page)).participants[0].position[2];
@@ -138,7 +138,7 @@ test('landscape phone: two thumbs, talk return, neutral input, context action an
   await expect.poll(() => messages.some(text => text.includes('I wanted to say hello.'))).toBe(true);
   await page.locator('#mobile-pause').tap();
   await expect(page.locator('#pause-dialog')).toBeVisible();
-  await assertFits(page, ['#resume-date', '#pause-talk', '#pause-actions', '#pause-settings', '#finish-date']);
+  await assertFits(page, ['#resume-date', '#pause-talk', '#pause-journal', '#pause-settings', '#finish-date']);
   await expect(page.locator('#mobile-controls')).toBeHidden();
   await page.locator('#resume-date').tap();
   await expect(page.locator('#mobile-controls')).toBeVisible();
@@ -171,39 +171,33 @@ test('landscape phone: two thumbs, talk return, neutral input, context action an
   await expect.poll(async () => (await readState(page)).seated).toBe(true);
   await page.screenshot({ path: '.qa/restaurant-mobile-seated.png' });
   await expect(page.locator('#mobile-move')).toBeHidden();
-  await page.locator('#mobile-actions').tap();
-  await page.locator('#table-menu').tap();
+  // The prompt line is the seated guest's whole menu: one chip, phone-sized, inside the safe area.
+  const menuChip = page.locator('#prompt-chips button', { hasText: 'Open the menu' });
+  await expect(menuChip).toBeVisible();
+  await assertFits(page, ['#prompt-line', '#prompt-chips button']);
+  expect((await menuChip.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await menuChip.tap();
   await expect(page.locator('#menu-dialog')).toBeVisible();
   await page.locator('[data-order="Wild mushroom risotto"]').tap();
   await expect.poll(async () => (await readState(page)).order).toBe('Wild mushroom risotto');
-  if (!(await page.locator('#evening-panel > .action-drawer').evaluate((node: HTMLDetailsElement) => node.open))) await page.locator('#mobile-actions').tap();
-  await page.locator('#table-play > summary').tap();
-  await page.locator('#play-napkin').tap();
-  await expect(page.locator('[data-activity=napkin] .ta-board')).toBeVisible();
+  await expect(menuChip).toBeHidden();
   await expect(page.locator('#mobile-pause')).toBeVisible();
-  await expect(page.locator('#mobile-talk')).toBeHidden();
-  await settleFrame(page); await page.screenshot({ path: '.qa/restaurant-mobile-doodle.png' });
-  let napkinCommits = 0;
-  page.on('request', request => { if (request.url().includes('/command') && request.postDataJSON()?.type === 'napkin') napkinCommits++; });
-  const board = (await page.locator('[data-activity=napkin] .ta-board').boundingBox())!;
-  await thumbs.down(1, board.x + board.width * .25, board.y + board.height * .45);
-  await thumbs.move(1, board.x + board.width * .4, board.y + board.height * .5);
-  await page.locator('[data-activity=napkin] .ta-board').dispatchEvent('pointerup', { pointerId: 999, pointerType: 'touch', clientX: board.x + board.width * .75, clientY: board.y + board.height * .65 });
-  expect(napkinCommits).toBe(0);
-  await thumbs.up(1);
-  await expect.poll(() => napkinCommits).toBe(1);
-  await thumbs.down(1, board.x + board.width * .3, board.y + board.height * .3);
-  await thumbs.move(1, board.x + board.width * .5, board.y + board.height * .3);
+  await settleFrame(page); await page.screenshot({ path: '.qa/restaurant-mobile-seated-prompt.png' });
+  // Typing covers the prompt so no chip can be tapped under the keyboard, and it returns afterwards.
+  await page.locator('#mobile-talk').tap();
+  await expect(page.locator('#conversation-input')).toBeFocused();
+  await expect(page.locator('#prompt-line')).toBeHidden();
+  await page.locator('#mobile-talk-close').tap();
+  await expect(page.locator('#conversation-form')).toBeHidden();
+  await expect(page.locator('#prompt-line')).toBeVisible();
   await page.setViewportSize({ width: 667, height: 320 });
-  await thumbs.up(1);
-  await page.waitForTimeout(150);
-  expect(napkinCommits, 'resizing a held doodle must cancel it without submitting').toBe(1);
+  await assertFits(page, ['#prompt-line', '#mobile-pause']);
   const pause = await center(page, '#mobile-pause');
   const pauseRequestsBeforeTap = pauseRequests;
   await thumbs.down(3, pause.x, pause.y); await thumbs.move(3, pause.x + 24, pause.y); await thumbs.up(3);
   await settleFrame(page);
   await expect(page.locator('#pause-dialog')).toBeHidden();
-  await expect(page.locator('[data-activity=napkin] .ta-board')).toBeVisible();
+  await expect(page.locator('#prompt-line')).toBeVisible();
   await page.locator('#mobile-pause').evaluate(button => button.addEventListener('pointerdown', event => { button.setAttribute('data-test-pointer', String((event as PointerEvent).pointerId)); }, { once: true }));
   await thumbs.down(4, pause.x, pause.y);
   const canceledPointer = Number(await page.locator('#mobile-pause').getAttribute('data-test-pointer'));
@@ -218,7 +212,7 @@ test('landscape phone: two thumbs, talk return, neutral input, context action an
   } finally {
     if (traceTouch) await writeFile('.qa/mobile-pause-touch-trace.json', JSON.stringify(await page.evaluate(() => (window as Window & { __mobileTouchTrace?: unknown[] }).__mobileTouchTrace), null, 2));
   }
-  await expect(page.locator('.ta-panel')).toBeHidden();
+  await expect(page.locator('#prompt-line')).toBeHidden();
   expect(await page.evaluate(() => document.pointerLockElement)).toBeNull();
   expect(errors).toEqual([]);
   if (process.env.RESTAURANT_CAPTURE_SCREENSHOTS === '1') await page.screenshot({ path: '.qa/restaurant-mobile-landscape.png' });

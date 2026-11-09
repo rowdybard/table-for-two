@@ -7,7 +7,6 @@ export type MobileControlsActions = {
   look(dx: number, dy: number): void;
   tap?(x: number, y: number): void;
   interact(): void;
-  actions(): void;
   talk(): void;
   closeTalk(): void;
   mic(): void;
@@ -22,13 +21,10 @@ export type MobileControlsState = {
   modal: boolean;
   typing: boolean;
   seated: boolean;
-  actionsAvailable: boolean;
-  actionsOpen: boolean;
   micEnabled: boolean;
   interactionLabel: string | null;
-  activityOpen?: boolean;
 };
-const emptyState: MobileControlsState = { joined: false, playing: false, blocked: false, modal: false, typing: false, seated: false, actionsAvailable: false, actionsOpen: false, micEnabled: false, interactionLabel: null };
+const emptyState: MobileControlsState = { joined: false, playing: false, blocked: false, modal: false, typing: false, seated: false, micEnabled: false, interactionLabel: null };
 
 /** Touch input is deliberately separate from keyboard state and server movement. */
 export class MobileControls {
@@ -42,7 +38,6 @@ export class MobileControls {
   private readonly lookPad: HTMLElement;
   private readonly stick: HTMLElement;
   private readonly context: HTMLButtonElement;
-  private readonly actionsButton: HTMLButtonElement;
   private readonly micButton: HTMLButtonElement;
   private readonly rotate: HTMLElement;
   private readonly displayButton: HTMLButtonElement;
@@ -64,13 +59,12 @@ export class MobileControls {
     this.controls.hidden = true;
     this.controls.innerHTML = `<div id="mobile-look" class="mobile-look" role="group" aria-label="Drag with your right thumb to look"><span>Drag to look</span></div>
       <div id="mobile-move" class="mobile-move" role="group" aria-label="Drag with your left thumb to move"><span class="mobile-stick-ring"><span class="mobile-stick"></span></span><span class="mobile-pad-label">Move</span></div>
-      <nav class="mobile-toolbar" aria-label="Dinner controls"><button id="mobile-actions" type="button" aria-expanded="false">Actions</button><button id="mobile-talk" type="button">Talk</button><button id="mobile-mic" type="button" aria-label="Turn microphone on" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4m-4 0h8" fill="none" stroke="currentColor" stroke-width="2"/><path class="mobile-mic-slash" d="m4 20 16-16" stroke="currentColor" stroke-width="2"/></svg><span class="sr-only">Microphone</span></button><button id="mobile-pause" type="button" aria-label="Pause dinner">Pause</button></nav>
+      <nav class="mobile-toolbar" aria-label="Dinner controls"><button id="mobile-talk" type="button">Talk</button><button id="mobile-mic" type="button" aria-label="Turn microphone on" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4m-4 0h8" fill="none" stroke="currentColor" stroke-width="2"/><path class="mobile-mic-slash" d="m4 20 16-16" stroke="currentColor" stroke-width="2"/></svg><span class="sr-only">Microphone</span></button><button id="mobile-pause" type="button" aria-label="Pause dinner">Pause</button></nav>
       <button id="mobile-interact" class="mobile-interact" type="button" hidden></button>`;
     this.movePad = this.controls.querySelector('#mobile-move')!;
     this.lookPad = this.controls.querySelector('#mobile-look')!;
     this.stick = this.controls.querySelector('.mobile-stick')!;
     this.context = this.controls.querySelector('#mobile-interact')!;
-    this.actionsButton = this.controls.querySelector('#mobile-actions')!;
     this.micButton = this.controls.querySelector('#mobile-mic')!;
     this.rotate = document.createElement('aside');
     this.rotate.id = 'mobile-rotate'; this.rotate.hidden = true;
@@ -97,7 +91,6 @@ export class MobileControls {
     app.append(this.controls, this.rotate, this.displayButton, this.displayHelp);
 
     const click = (id: string, callback: () => void) => this.bindAction(this.controls.querySelector<HTMLButtonElement>('#' + id)!, callback);
-    click('mobile-actions', () => this.actions.actions());
     click('mobile-talk', () => this.actions.talk());
     click('mobile-mic', () => this.actions.mic());
     click('mobile-pause', () => this.actions.pause());
@@ -142,7 +135,7 @@ export class MobileControls {
     if (signature === this.signature) return;
     this.signature = signature;
     const enabled = this.active && state.joined && state.playing && !state.modal && !state.typing && !this.helpOpen;
-    const gesture = enabled && !state.blocked && !state.activityOpen && !this.isPortrait && !document.hidden;
+    const gesture = enabled && !state.blocked && !this.isPortrait && !document.hidden;
     if (this.canGesture && !gesture) this.clear();
     this.canGesture = gesture;
     this.controls.hidden = !enabled || this.isPortrait;
@@ -150,8 +143,6 @@ export class MobileControls {
     this.lookPad.hidden = !gesture;
     this.context.hidden = !gesture || !state.interactionLabel;
     if (state.interactionLabel && this.context.textContent !== state.interactionLabel) this.context.textContent = state.interactionLabel;
-    this.actionsButton.disabled = !state.actionsAvailable || !!state.activityOpen;
-    this.actionsButton.setAttribute('aria-expanded', String(state.actionsOpen));
     this.micButton.setAttribute('aria-pressed', String(state.micEnabled));
     this.micButton.setAttribute('aria-label', state.micEnabled ? 'Turn microphone off' : 'Turn microphone on');
     this.rotate.hidden = !this.active || !this.isPortrait || !state.joined || !state.playing || state.modal || state.typing || this.helpOpen;

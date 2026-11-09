@@ -64,12 +64,11 @@ test('a resolved short break has a fallback resume while paused or unresolved sc
   f.view.phase = 'playing'; stepScenarioEffects(f.view); assert.equal(f.view.evening.scenarioCare!.presence, 'at-table'); assert.equal(f.view.evening.scenarioCare!.kitchen.held, false); assert.equal(scenarioKitchenDelay(f.view), 50);
 });
 
-test('unwell story never re-holds an eaten main, and an active board prevents dishes arriving over it', () => {
+test('unwell story never re-holds an eaten main, and a live incident keeps every story closed', () => {
   const f = fixture('feeling-unwell'); f.view.evening.main.status = 'finished'; assert.equal(scenarioMayOpen(f.view), false);
   f.view.evening.main.status = 'served'; f.view.evening.main.bites = 3; assert.equal(scenarioMayOpen(f.view), false);
-  f.view.evening.main.bites = 0; f.view.evening.coasters.phase = 'aiming'; assert.equal(scenarioMayOpen(f.view), false);
-  f.view.evening.coasters.phase = 'rolling'; assert.equal(scenarioMayOpen(f.view), false);
-  f.view.evening.coasters.phase = 'complete'; assert.equal(scenarioMayOpen(f.view), true);
+  f.view.evening.main.bites = 0; f.view.evening.incident = { event: 'spilled-drink', progress: 0, startedAt: 100 }; assert.equal(scenarioMayOpen(f.view), false);
+  f.view.evening.incident = null; assert.equal(scenarioMayOpen(f.view), true);
 });
 
 test('wine clean-up clears the actual stain and glass state; a private clean-up break returns before dinner resumes', () => {
@@ -131,7 +130,7 @@ test('targeted Double care and extra orders never consume another pair’s meal,
 });
 
 test('pending mains and desserts are not charged before service, while prepared courses remain billed', () => {
-  const f = fixture('family-visit'); ensureScenarioCare(f.view); f.view.evening.main.status = 'waiting'; f.view.evening.dessert = { choice: 'lemon', status: 'waiting', portions: [] };
+  const f = fixture('family-visit'); ensureScenarioCare(f.view); f.view.evening.main.status = 'waiting'; f.view.evening.dessert = { choice: 'lemon', status: 'waiting', bites: 0, chosenBy: 'you' };
   assert.equal(refreshScenarioBill(f.view).totalCents, 0);
   f.view.evening.main.status = 'served'; assert.equal(refreshScenarioBill(f.view).totalCents, 4000);
   f.view.evening.dessert.status = 'served'; assert.equal(refreshScenarioBill(f.view).totalCents, 4900);

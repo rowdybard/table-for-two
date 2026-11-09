@@ -102,16 +102,15 @@ test('table controller rejects paused, standing, active incidents, scenarios and
   const before = structuredClone(state.evening.tabletop); assert.throws(() => director.action('teleport' as any)); assert.deepEqual(state.evening.tabletop, before);
 });
 
-test('sips lower automatically in scene time, paused time stays frozen, and drawing unfolds without erasing a keepsake', () => {
+test('sips lower automatically in scene time, paused time stays frozen, and the napkin folds and unfolds', () => {
   const state = seatedState(), director = new EveningDirector(state);
   try {
     director.tabletop.action('sip-water'); assert.equal(state.glassRaised, true);
     state.elapsed = 1.1; director.step(.1, { allowIncidents: false, allowScenarios: false }); assert.equal(state.glassRaised, true);
     state.phase = 'paused'; state.elapsed = 2; director.step(.1); assert.equal(state.glassRaised, true);
     state.phase = 'playing'; director.step(.1, { allowIncidents: false, allowScenarios: false }); assert.equal(state.glassRaised, false);
-    const points: [number, number][] = [[.1, .2], [.2, .3]];
-    director.napkin(points, false); director.tabletop.action('fold-napkin'); assert.equal(state.evening.tabletop!.napkinFolded, true); assert.deepEqual(state.evening.napkin.points, points);
-    director.napkin(points, false); assert.equal(state.evening.tabletop!.napkinFolded, false); assert.deepEqual(state.evening.napkin.points, points);
+    director.tabletop.action('fold-napkin'); assert.equal(state.evening.tabletop!.napkinFolded, true);
+    director.tabletop.action('fold-napkin'); assert.equal(state.evening.tabletop!.napkinFolded, false);
     director.tabletop.action('sip-water'); state.seated = false; director.step(.1, { allowIncidents: false, allowScenarios: false }); assert.equal(state.glassRaised, false);
   } finally { director.free(); }
 });

@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import type { TableFocus } from '../RestaurantRenderer';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { MENU } from '../content';
 import type { DinnerState } from '../types';
@@ -75,14 +74,7 @@ export class EveningTable {
   private readonly meals: THREE.Group[][] = [[], [], [], []];
   private readonly dessert = new THREE.Group();
   private readonly otherDessert = new THREE.Group();
-  private readonly portions: THREE.Group[] = [];
-  private readonly otherPortions: THREE.Group[] = [];
-  private readonly dessertColor = foodMaterial('#e2bd63', 'crumb');
-  private readonly otherDessertColor = this.dessertColor.clone();
-  private readonly coasterBoard = new THREE.Group();
-  private readonly coasterStack = new THREE.Group();
-  private readonly disc: THREE.Mesh;
-  private readonly ring = new THREE.Group();
+  private readonly dessertVariants: THREE.Group[][] = [[], []];
   private readonly ticket = new THREE.Group();
   private readonly ticketCanvas: HTMLCanvasElement;
   private readonly ticketTexture: THREE.CanvasTexture;
@@ -96,21 +88,14 @@ export class EveningTable {
   private friendWater!: THREE.Mesh;
   private readonly napkin: THREE.Mesh;
   private readonly napkinFold: THREE.Mesh;
-  private readonly napkinTexture: THREE.CanvasTexture;
-  private readonly napkinCanvas = document.createElement('canvas');
-  private napkinSignature = '';
 
   constructor() {
     const mat = (color: string, roughness = .8, metalness = 0) => { const m = new THREE.MeshStandardMaterial({ color, roughness, metalness }); this.materials.push(m); return m; };
     const own = <T extends THREE.Material>(material: T) => { this.materials.push(material); return material; };
     const cream = own(createProceduralMaterial('ceramic', '#eee3c8', { roughness: .42, bumpScale: .0002 }));
-    const brown = own(foodMaterial('#78523a', 'roast')), green = mat('#547652'), gold = mat('#bda16c', .35, .5);
+    const brown = own(foodMaterial('#78523a', 'roast')), gold = mat('#bda16c', .35, .5);
     const red = own(foodMaterial('#a15a42', 'sauce')), pasta = own(foodMaterial('#d6a053', 'pasta')), rice = own(foodMaterial('#d1bc8f', 'rice'));
     const roast = own(foodMaterial('#c78b56', 'roast')), leaf = own(foodMaterial('#547652', 'leaf')), softCream = own(foodMaterial('#eee3c8', 'cream'));
-    const frameWood = own(createProceduralMaterial('wood', '#78523a', { roughness: .72, bumpScale: .0006 }));
-    const boardWood = own(createProceduralMaterial('wood', '#d4c29b', { roughness: .77, bumpScale: .00035 }));
-    const greenCork = own(foodMaterial('#547652', 'cork')), brownCork = own(foodMaterial('#a27c51', 'cork'));
-    this.materials.push(this.dessertColor,this.otherDessertColor);
     const mesh = (parent: THREE.Object3D, geometry: THREE.BufferGeometry, material: THREE.Material, x: number, y: number, z: number) => { const m = new THREE.Mesh(geometry, material); m.position.set(x, y, z); parent.add(m); return m; };
     // Shared hollow ridged rigatoni geometry remains readable from the inspection camera.
     const pastaProfile: THREE.Vector2[] = [new THREE.Vector2(.008, -.022), new THREE.Vector2(.011, -.022)];
@@ -151,15 +136,31 @@ export class EveningTable {
       const herb = mesh(group, herbGeometry, leaf, .025, meal===0?.052:meal===1?.055:.049, .018); herb.rotation.y = -.3; herb.userData.course = true;
       group.visible = false; this.meals[plate]!.push(group); this.root.add(group);
     }
-    const trayGeometry=new THREE.CylinderGeometry(.18,.18,.018,24),cakeGeometry=new RoundedBoxGeometry(.07,.043,.07,2,.012),dollopGeometry=new THREE.SphereGeometry(1,12,8),mintGeometry=garnishLeaf(.012,.006,.003);
-    const makeDessert=(root:THREE.Group,portions:THREE.Group[],color:THREE.Material)=>{
-      const tray=mesh(root,trayGeometry,cream,.06,.791,-1.16);tray.userData.centralTray=true;
-      for(let piece=0;piece<4;piece++){const group=new THREE.Group();mesh(group,cakeGeometry,color,0,.02,0);
-        const dollop=mesh(group,dollopGeometry,softCream,0,.047,0);dollop.scale.set(.025,.012,.02);
-        const mint=mesh(group,mintGeometry,leaf,.01,.06,0);mint.rotation.y=.35;portions.push(group);root.add(group);}
+    // One shared dessert plate with two spoons. Each dessert is its own small build; spoonfuls take pieces away.
+    const plateGeometry=new THREE.CylinderGeometry(.125,.118,.012,28),dollopGeometry=new THREE.SphereGeometry(1,12,8),mintGeometry=garnishLeaf(.012,.006,.003);
+    const spoonBowl=new THREE.SphereGeometry(1,10,8),spoonHandle=new THREE.BoxGeometry(.008,.003,.075);
+    const chocolate=own(foodMaterial('#4a2a1f','crumb')),posset=own(new THREE.MeshStandardMaterial({color:'#f3e3a6',roughness:.5})),ramekin=own(new THREE.MeshStandardMaterial({color:'#d9e6e2',roughness:.15,transparent:true,opacity:.35,depthWrite:false,side:THREE.DoubleSide}));
+    const shortbread=own(foodMaterial('#dcc08a','crumb')),strawberry=own(foodMaterial('#b8322f','sauce')),zest=mat('#e9d35c',.6);
+    const makeDessert=(root:THREE.Group,variants:THREE.Group[])=>{
+      const plate=mesh(root,plateGeometry,cream,0,.006,0);plate.userData.centralTray=true;
+      for(let side=0;side<2;side++){const spoon=new THREE.Group();spoon.position.set(side?.1:-.1,.013,side?.035:-.035);spoon.rotation.y=side?-.5:2.65;
+        const bowl=mesh(spoon,spoonBowl,gold,0,.004,.045);bowl.scale.set(.013,.005,.019);mesh(spoon,spoonHandle,gold,0,.002,0);root.add(spoon);}
+      // Lemon posset: a glass ramekin of set cream, a shortbread finger and a curl of zest.
+      const lemon=new THREE.Group();const cup=mesh(lemon,new THREE.CylinderGeometry(.036,.03,.04,20,1,true),ramekin,0,.032,0);cup.userData.course=true;
+      const fill=mesh(lemon,new THREE.CylinderGeometry(.034,.029,.03,20),posset,0,.027,0);fill.userData.course=true;
+      const finger=mesh(lemon,new THREE.BoxGeometry(.06,.009,.016),shortbread,.055,.0165,.02);finger.rotation.y=-.4;finger.userData.bite=1;
+      const curl=mesh(lemon,new THREE.TorusGeometry(.007,.0018,5,10,4.5),zest,0,.044,0);curl.rotation.x=-Math.PI/2;curl.userData.bite=0;
+      // Chocolate fondant: a dark dome, vanilla cream and mint.
+      const fondant=new THREE.Group();const cake=mesh(fondant,new RoundedBoxGeometry(.062,.046,.062,2,.014),chocolate,0,.035,0);cake.userData.course=true;
+      const dollop=mesh(fondant,dollopGeometry,softCream,.045,.024,.03);dollop.scale.set(.022,.012,.018);dollop.userData.bite=0;
+      const mint=mesh(fondant,mintGeometry,leaf,.01,.06,0);mint.rotation.y=.35;mint.userData.bite=2;
+      // Strawberries and cream: halved berries around a soft dollop.
+      const berries=new THREE.Group();const creamDollop=mesh(berries,dollopGeometry,softCream,0,.026,0);creamDollop.scale.set(.03,.016,.026);creamDollop.userData.course=true;
+      for(let i=0;i<6;i++){const a=i*1.05,berry=mesh(berries,dollopGeometry,strawberry,Math.cos(a)*.052,.022,Math.sin(a)*.052);berry.scale.set(.016,.012,.013);berry.rotation.y=a;berry.userData.bite=i%4;}
+      for(const group of [lemon,fondant,berries]){group.position.y=.012;group.visible=false;root.add(group);variants.push(group);}
       this.root.add(root);
     };
-    makeDessert(this.dessert,this.portions,this.dessertColor);makeDessert(this.otherDessert,this.otherPortions,this.otherDessertColor);
+    makeDessert(this.dessert,this.dessertVariants[0]!);makeDessert(this.otherDessert,this.dessertVariants[1]!);
     // A spill stays on the linen as a small mark after the incident; it is a
     // view of the scenario state, rather than a second source of game state.
     const wine = own(new THREE.MeshStandardMaterial({color:'#692938',roughness:.4,transparent:true,opacity:.64,depthWrite:false}));
@@ -210,24 +211,13 @@ export class EveningTable {
     for (const [radius, y] of [[.046, .15], [.039, .006]]) { const rim = mesh(this.friendGlass, new THREE.TorusGeometry(radius, .002, 6, 32), glass, 0, y, 0); rim.rotation.x = Math.PI / 2; }
     this.friendWater = mesh(this.friendGlass, new THREE.CylinderGeometry(.043, .036, .08, 20), water, 0, .042, 0);
     this.friendGlass.visible = false; this.root.add(this.friendGlass);
-    mesh(this.coasterBoard, new RoundedBoxGeometry(.5, .025, .6, 2, .012), frameWood, .06, .7945, -1.16);
-    mesh(this.coasterBoard, new THREE.BoxGeometry(.465, .005, .565), boardWood, .06, .8095, -1.16);
-    for (const r of [.139, .0824, .0412]) {
-      const ring = mesh(this.ring, new THREE.TorusGeometry(r, .002, 4, 24), r < .05 ? red : green, 0, 0, 0); ring.rotation.x = -Math.PI / 2;
-    }
-    this.coasterBoard.add(this.ring);
-    this.disc = mesh(this.coasterBoard, new THREE.CylinderGeometry(.018, .018, .009, 20), greenCork, .06, .8165, -.94);
-    for (let i = 0; i < 3; i++) mesh(this.coasterStack, new THREE.CylinderGeometry(.046, .046, .008, 20), i % 2 ? greenCork : brownCork, .68, .786 + i * .008, -1.31);
-    this.coasterBoard.scale.set(.86,1,.78);this.coasterBoard.position.set(.06*(1-.86),0,-1.16*(1-.78));
-    this.root.add(this.coasterBoard, this.coasterStack);
     mesh(this.root, new THREE.CylinderGeometry(.049, .055, .012, 20), gold, .61, .788, -1.13);
     const bell = mesh(this.root, new THREE.SphereGeometry(1, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), gold, .61, .793, -1.13); bell.scale.set(.04, .033, .04);
     mesh(this.root, new THREE.CylinderGeometry(.008, .008, .016, 10), gold, .61, .835, -1.13);
-    this.napkinCanvas.width = 512; this.napkinCanvas.height = 512;
-    this.napkinTexture = new THREE.CanvasTexture(this.napkinCanvas); this.napkinTexture.colorSpace = THREE.SRGBColorSpace;
-    const paper = new THREE.MeshStandardMaterial({ map: this.napkinTexture, roughness: 1 }); this.materials.push(paper);
-    this.napkin = mesh(this.root, new THREE.PlaneGeometry(.16, .16), paper, .40, .783, -.48); this.napkin.rotation.x = -Math.PI / 2; this.napkin.rotation.z = -.12;
-    this.napkinFold = mesh(this.napkin, new THREE.PlaneGeometry(.16, .08), paper, 0, .04, .002); this.napkinFold.visible = false;
+    // A plain linen napkin at the player's place: it wipes a spill and folds, nothing more.
+    const linen = own(createProceduralMaterial('linen', '#ebe2cc', { roughness: 1, bumpScale: .0004 }));
+    this.napkin = mesh(this.root, new THREE.PlaneGeometry(.16, .16), linen, .40, .783, -.48); this.napkin.rotation.x = -Math.PI / 2; this.napkin.rotation.z = -.12;
+    this.napkinFold = mesh(this.napkin, new THREE.PlaneGeometry(.16, .08), linen, 0, .04, .002); this.napkinFold.visible = false;
     const ticketCanvas = document.createElement('canvas'); this.ticketCanvas = ticketCanvas; ticketCanvas.width = 256; ticketCanvas.height = 384;
     const tc = ticketCanvas.getContext('2d')!; tc.fillStyle = '#f4ead4'; tc.fillRect(0, 0, 256, 384); tc.fillStyle = '#4d4d38'; tc.font = 'bold 26px monospace'; tc.textAlign = 'center'; tc.fillText('TABLE 02', 128, 62); tc.font = '17px monospace'; tc.fillText('ORDER TICKET', 128, 105);
     tc.textAlign = 'left'; tc.font = '15px monospace'; ['DINNER SERVICE', '--------------------', '1  RIGATONI', '1  RISOTTO', '--------------------', 'THANK YOU'].forEach((line, i) => tc.fillText(line, 29, 150 + i * 33));
@@ -235,12 +225,12 @@ export class EveningTable {
     const ticketMat = new THREE.MeshStandardMaterial({ map: ticketTexture, roughness: 1 }); this.materials.push(ticketMat);
     const ticket = mesh(this.ticket, new THREE.PlaneGeometry(.13, .2), ticketMat, .34, .783, -1.03); ticket.rotation.set(-Math.PI / 2, 0, -.16); this.root.add(this.ticket);
     const target = (name: string, x: number, y: number, z: number, sx: number, sy: number, sz: number) => { const m = mesh(this.root, new THREE.BoxGeometry(sx, sy, sz), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, colorWrite: false, depthWrite: false }), x, y, z); m.userData.target = name; this.targets.push(m); };
-    target('ticket', .34, .85, -1.03, .17, .1, .24); target('napkin', .30, .85, -.5, .24, .1, .24); target('coasters', .68, .86, -1.31, .18, .15, .18);
-    target('dessert', .06, .86, -1.16, .38, .14, .38); target('service-bell', .61, .85, -1.13, .13, .15, .13); target('window', -6.43, 1.8, -.8, .16, 1.65, 2.6);
+    target('ticket', .34, .85, -1.03, .17, .1, .24); target('napkin', .30, .85, -.5, .24, .1, .24);
+    target('dessert', .06, .86, -1.16, .3, .14, .3); target('service-bell', .61, .85, -1.13, .13, .15, .13); target('window', -6.43, 1.8, -.8, .16, 1.65, 2.6);
     target('meal', 0, .875, -.64, .34, .15, .34);
   }
 
-  update(state: DinnerState, focus: TableFocus = null) {
+  update(state: DinnerState) {
     const e = state.evening;
     const wingman = state.doubleDate?.role === 'wingman';
     const foreignIncident=!!state.doubleDate?.incidentOwner && state.doubleDate.incidentOwner!==state.doubleDate.localHumanId;
@@ -290,27 +280,18 @@ export class EveningTable {
         group.children.forEach(part => { part.visible = part.userData.bite === undefined || Number(part.userData.bite) >= bites * 4; if (part.userData.course) { part.userData.baseScaleY ??= part.scale.y; part.scale.y = part.userData.baseScaleY * Math.max(.15, 1 - bites * .22); } });
       });
     }
-    const boardEvening = state.doubleDate?.tableActivity && state.doubleDate.tableActivity.owner !== state.doubleDate.localHumanId
-      ? state.doubleDate.otherView?.evening ?? e : e;
-    const board = boardEvening.coasters;
-    const playingCoasters = ['aiming', 'rolling'].includes(board.phase) && !boardEvening.bill.requested;
-    this.coasterBoard.visible = playingCoasters || focus === 'coasters'; this.coasterStack.visible = !this.coasterBoard.visible;
-    this.disc.position.set(.06 + board.disc.x / .9 * .465, .8165, -1.16 + board.disc.z / 1.1 * .565);
-    this.ring.position.set(.06 + board.target.x / .9 * .465, .814, -1.16 + board.target.z / 1.1 * .565);
     const layout=dessertLayout(state), otherDessert=state.doubleDate?.otherView?.evening.dessert;
-    this.dessert.visible=layout.own&&focus!=='dessert';this.otherDessert.visible=!!state.doubleDate&&layout.other;
-    this.napkin.visible = focus !== 'napkin';
+    this.dessert.visible=layout.own;this.otherDessert.visible=!!state.doubleDate&&layout.other;
     this.napkin.position.set(state.doubleDate ? Math.sign(doubleX) * .84 : .40, .783, state.doubleDate ? -.80 : -.48);
     const folded = !!e.tabletop?.napkinFolded; this.napkin.scale.y = folded ? .62 : 1; this.napkin.rotation.z = folded ? .26 : -.12; this.napkinFold.visible = folded;
-    const shade=(choice:string|null|undefined)=>choice==='chocolate'?'#70412d':choice==='berries'?'#bd6251':'#e2bd63';
-    this.dessertColor.color.set(shade(e.dessert.choice));this.otherDessertColor.color.set(shade(otherDessert?.choice));
-    const center=(other:boolean)=>{const side=other?-Math.sign(doubleX):Math.sign(doubleX);return {x:layout.park?(layout.dual?(side<0?-.45:.47):.50):.06,z:layout.park?-1.55:-1.16};};
-    const arrange=(root:THREE.Group,portions:THREE.Group[],value:typeof e.dessert|undefined,other:boolean)=>{
-      const c=center(other),pairX=other?-doubleX:doubleX;root.children[0]!.position.set(c.x,.791,c.z);
-      portions.forEach((portion,piece)=>{const assigned=value?.portions.find(p=>p.piece===piece);portion.visible=true;
-        portion.position.set(assigned?pairX+(piece%2?.045:-.045):c.x+(piece%2?.065:-.065),assigned?.7955:.8015,assigned?(assigned.plate==='you'?humanPlateZ:datePlateZ)+(piece<2?-.04:.04):c.z+(piece<2?-.065:.065));});
+    const center=(other:boolean)=>{const side=other?-Math.sign(doubleX):Math.sign(doubleX);return {x:layout.park?(side<0?-.45:.47):.06,z:layout.park?-1.55:-1.16};};
+    const arrange=(root:THREE.Group,variants:THREE.Group[],value:typeof e.dessert|undefined,other:boolean)=>{
+      const c=center(other);root.position.set(c.x,.782,c.z);
+      const chosen=Math.max(0,['lemon','chocolate','berries'].indexOf(value?.choice??'')),bites=value?.bites??0;
+      // Spoonfuls take real pieces away from the shared plate; the dessert is never hidden to fake progress.
+      variants.forEach((variant,index)=>{variant.visible=index===chosen;variant.children.forEach(part=>{part.visible=part.userData.bite===undefined||Number(part.userData.bite)>=bites;if(part.userData.course){part.userData.baseScaleY??=part.scale.y;part.scale.y=part.userData.baseScaleY*Math.max(.2,1-bites*.2);}});});
     };
-    arrange(this.dessert,this.portions,e.dessert,false);arrange(this.otherDessert,this.otherPortions,otherDessert,true);
+    arrange(this.dessert,this.dessertVariants[0]!,e.dessert,false);arrange(this.otherDessert,this.dessertVariants[1]!,otherDessert,true);
     this.ticket.visible = interactionEvening.incident?.event === 'wrong-order';
     this.ticket.position.set(state.doubleDate?-.34:0,0,state.doubleDate?.17:0);
     const ticketView = wingman || foreignIncident ? state.doubleDate?.otherView ?? state : state;
@@ -324,27 +305,13 @@ export class EveningTable {
       print(ticketName.toUpperCase(),145);print('1  '+(ticketView.order || 'NOT ORDERED').toUpperCase(),177);print('DATE',225);print('1  '+(interactionEvening.main.dateDish || 'NOT ORDERED').toUpperCase(),257);
       c.font='14px monospace';c.fillText('-------------------------',23,294);c.textAlign='center';c.fillText('THANK YOU',128,337);this.ticketTexture.needsUpdate=true;
     }
-    const signature = JSON.stringify([state.dateId, e.napkin.points, e.napkin.complete]);
-    if (signature !== this.napkinSignature) {
-      this.napkinSignature = signature;
-      const c = this.napkinCanvas.getContext('2d')!; c.fillStyle = '#e9dfc5'; c.fillRect(0, 0, 512, 512); c.strokeStyle = '#bead8b'; c.lineWidth = 2; c.strokeRect(18, 18, 476, 476);
-      // Warp and weft remain behind the unchanged authored and human pen strokes.
-      for (let p = 2; p < 512; p += 5) { c.fillStyle = '#fffaf120'; c.fillRect(p, 0, 1, 512); c.fillStyle = '#958d7915'; c.fillRect(0, p, 512, 1); }
-      c.strokeStyle = '#a36c55'; c.lineWidth = 5; c.beginPath();
-      if (state.dateId === 'mira') { for (let i = 0; i <= 10; i++) { const a = i * Math.PI / 5, r = i % 2 ? 40 : 82, x = 158 + Math.sin(a) * r, y = 230 + Math.cos(a) * r; if (!i) c.moveTo(x, y); else c.lineTo(x, y); } }
-      else if (state.dateId === 'jules') { c.moveTo(100, 330); c.bezierCurveTo(120, 160, 240, 130, 260, 105); c.bezierCurveTo(270, 240, 150, 280, 100, 330); c.lineTo(230, 145); }
-      else { c.arc(170, 230, 80, 0, Math.PI * 2); c.moveTo(90, 230); c.lineTo(250, 230); c.moveTo(170, 150); c.lineTo(170, 310); }
-      c.stroke(); c.strokeStyle = '#3a6049'; c.lineWidth = 5; c.lineCap = 'round'; c.beginPath();
-      e.napkin.points.forEach((point, i) => { if (i) c.lineTo(point[0] * 512, point[1] * 512); else c.moveTo(point[0] * 512, point[1] * 512); }); c.stroke(); this.napkinTexture.needsUpdate = true;
-    }
     for (const target of this.targets) {
       const name = target.userData.target;
       if (name === 'meal') target.position.set(doubleX, .875, humanPlateZ);
       if (name === 'napkin') target.position.set(this.napkin.position.x, .85, this.napkin.position.z);
       if (name === 'ticket') target.position.set(.34+this.ticket.position.x,.85,-1.03+this.ticket.position.z);
-      target.visible = name === 'window' || state.seated && scenario?.phase !== 'active' && (name === 'meal' ? !wingman && e.main.status === 'served' && !e.scenarioCare?.kitchen.held && !e.incident : name === 'ticket' ? this.ticket.visible : name === 'dessert' ? !wingman && this.dessert.visible : name === 'coasters' ? wingman ? !!state.doubleDate?.tableActivity && state.doubleDate.tableActivity.owner !== state.doubleDate.localHumanId : !!state.order && !e.bill.requested : name === 'service-bell' ? interactionEvening.incident?.event === 'disruptive-diner' || (interactionEvening.incident?.event === 'wrong-order' && interactionEvening.incident.progress > 0) || (!interactionEvening.incident && (interactionEvening.care.water.status === 'none' || ((interactionEvening.tabletop?.shared.carafeFill ?? 6) === 0 && (interactionEvening.tabletop?.glassFill ?? 4) < 4)) && !interactionEvening.bill.requested) : name === 'napkin' && wingman ? interactionEvening.incident?.event === 'spilled-drink' : !interactionEvening.bill.settlement);
+      target.visible = name === 'window' || state.seated && scenario?.phase !== 'active' && (name === 'meal' ? !wingman && e.main.status === 'served' && !e.scenarioCare?.kitchen.held && !e.incident : name === 'ticket' ? this.ticket.visible : name === 'dessert' ? !wingman && this.dessert.visible && !e.scenarioCare?.kitchen.held : name === 'service-bell' ? interactionEvening.incident?.event === 'disruptive-diner' || (interactionEvening.incident?.event === 'wrong-order' && interactionEvening.incident.progress > 0) || (!interactionEvening.incident && (interactionEvening.care.water.status === 'none' || ((interactionEvening.tabletop?.shared.carafeFill ?? 6) === 0 && (interactionEvening.tabletop?.glassFill ?? 4) < 4)) && !interactionEvening.bill.requested) : name === 'napkin' && wingman ? interactionEvening.incident?.event === 'spilled-drink' : !interactionEvening.bill.settlement);
       if (name === 'dessert') { const c=center(false);target.position.set(c.x,.86,c.z); }
-      if (name === 'coasters') target.position.set(playingCoasters ? .06 : .68, .86, playingCoasters ? -1.16 : -1.31);
     }
   }
 

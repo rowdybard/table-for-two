@@ -29,7 +29,6 @@ export interface DoubleDateRoomState {
   id: string; code: string; mode: 'double-date';
   phase: 'waiting' | 'playing' | 'paused' | 'ended';
   scenario?: DoubleScenario;
-  tableActivity?: { kind: 'coasters'; owner: DoubleHumanId };
   incidentOwner?: DoubleHumanId;
   hostId: DoubleHumanId; generation: number; revision: number;
   members: DoubleMember[]; dates: DoubleDateActor[];
@@ -64,7 +63,6 @@ export interface DoubleTurnRequest {
 }
 export interface DoubleDatePresentation {
   scenario?: DoubleScenario;
-  tableActivity?: { kind: 'coasters'; owner: DoubleHumanId };
   incidentOwner?: DoubleHumanId;
   role: 'dating' | 'wingman' | 'finished';
   localHumanId: DoubleHumanId; roomId: string;
@@ -95,7 +93,7 @@ export function localDoubleDateView(room: DoubleDateRoomState, humanId: DoubleHu
       { id: 'p1', kind: 'human', name: member.name, position: member.position },
       { id: 'p2', kind: 'ai', name: source.participants.find(participant => participant.kind === 'ai')?.name ?? 'Your date', position: date.position },
     ],
-    doubleDate: { role: room.phase === 'ended' ? 'finished' : source.phase === 'ended' ? 'wingman' : 'dating', scenario: room.scenario, tableActivity: room.tableActivity, incidentOwner: room.incidentOwner, localHumanId: humanId, roomId: room.id, members: room.members, dates: room.dates, speakingActor: null,
+    doubleDate: { role: room.phase === 'ended' ? 'finished' : source.phase === 'ended' ? 'wingman' : 'dating', scenario: room.scenario, incidentOwner: room.incidentOwner, localHumanId: humanId, roomId: room.id, members: room.members, dates: room.dates, speakingActor: null,
       otherView: { ...room.views[humanId === 'h1' ? 'h2' : 'h1'], doubleDate: undefined } },
   };
 }

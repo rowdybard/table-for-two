@@ -4,7 +4,6 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { DoubleTableScene, createPairView } from '../server/double-date/scene';
 import { emptyUsage } from '../server/restaurant/scene';
 import { MENU } from '../src/restaurant/content';
-import { activateRestaurantScenario, createRestaurantScenario } from '../src/restaurant/scenarios';
 import type { DoubleDateRoomState } from '../src/restaurant/double-date-types';
 
 before(async () => { await RAPIER.init(); });
@@ -54,26 +53,36 @@ test('a departed diner’s wrong meal is cleared by staff instead of becoming th
     assert.equal(next.evening.lastInterruptionAt, next.elapsed);
     assert.throws(() => scene.command('h2', { type: 'evening', action: 'inspect-ticket' }, 1200));
     assert.equal(next.evening.moments.some(moment => moment.id === 'ticket'), false);
-    next.evening.main.bites = 3; scene.command('h2', { type: 'evening', action: 'finish-main' }, 1300);
-    assert.equal(next.evening.main.status, 'finished'); assert.equal(next.evening.incident, null);
+    next.evening.resolutions['spilled-drink'] = 'The table was dried earlier.';
+    for (let bite = 0; bite < 3; bite++) scene.command('h2', { type: 'evening', action: 'taste' }, 1300 + bite * 600);
+    next.elapsed = 140; scene.step(.016, 3200);
+    assert.equal(next.evening.main.status, 'finished', 'Eli clears the plates on his own once the diner has eaten'); assert.equal(next.evening.incident, null);
   } finally { scene.free(); }
 });
 
-test('shared bill preflight rejects an unavailable second pair before mutating the first pair', () => {
-  for (const blocked of ['standing', 'leaving', 'incident', 'scenario', 'rolling'] as const) {
-    const { room, scene } = fixture();
-    try {
-      const other = room.views.h2;
-      if (blocked === 'standing') { other.seated = false; room.members[1].seated = false; }
-      if (blocked === 'leaving') other.evening.stance = 'leaving';
-      if (blocked === 'incident') other.evening.incident = { event: 'spilled-drink', progress: 0, startedAt: 0 };
-      if (blocked === 'rolling') other.evening.coasters.phase = 'rolling';
-      if (blocked === 'scenario') { other.evening.scenario = createRestaurantScenario('bill', 'family-visit'); activateRestaurantScenario(other.evening.scenario, 0, 'dry'); }
-      const before = structuredClone(room);
-      assert.throws(() => scene.command('h1', { type: 'evening', action: 'request-bill' }, 1000), blocked);
-      assert.deepEqual(room, before, `${blocked}: a rejected shared action must add no bill, cue, moment, or memory`);
-    } finally { scene.free(); }
-  }
+test('one check comes for the whole table: Eli waits for every pair’s dessert and for a table nobody is mopping', () => {
+  const { room, scene } = fixture();
+  try {
+    const first = room.views.h1, second = room.views.h2;
+    first.evening.dessert.finishedAt = 100; first.elapsed = 200;
+    second.evening.dessert.status = 'none'; second.elapsed = 200;
+    scene.step(.016, 1000);
+    assert.equal(first.evening.bill.requested, false, 'the other pair has not decided on dessert');
+    second.evening.dessert.status = 'skipped'; second.evening.dessert.finishedAt = 195;
+    scene.step(.016, 1100);
+    assert.equal(first.evening.bill.requested, false, 'the other pair only just declined dessert');
+    second.evening.dessert.finishedAt = 100; second.evening.incident = { event: 'spilled-drink', progress: 0, startedAt: 190 };
+    scene.step(.016, 1200);
+    assert.equal(first.evening.bill.requested, false, 'nobody brings a check to a table mid-spill');
+    assert.equal(second.evening.bill.requested, false);
+    second.evening.incident = null;
+    scene.step(.016, 1300); scene.step(.016, 1400);
+    for (const view of [first, second]) {
+      assert.equal(view.evening.bill.requested, true); assert.equal(view.evening.chapter, 'bill'); assert.equal(view.evening.bill.arrivedAt, view.elapsed);
+      assert.ok(view.evening.cues.some(cue => cue.key === 'bill-requested' && cue.utterances[0].speaker === 'waiter'));
+    }
+    assert.equal(first.evening.bill.arrivedAt, second.evening.bill.arrivedAt, 'one check arrives for the table');
+  } finally { scene.free(); }
 });
 
 test('shared settlement preflight rejects mismatched bill state atomically, then settles both eligible pairs', () => {
@@ -89,7 +98,9 @@ test('shared settlement preflight rejects mismatched bill state atomically, then
   }
   const { room, scene } = fixture();
   try {
-    scene.command('h1', { type: 'evening', action: 'request-bill' }, 1000);
+    for (const view of Object.values(room.views)) { view.evening.dessert.finishedAt = 100; view.elapsed = 200; }
+    scene.step(.016, 1000);
+    assert.ok(Object.values(room.views).every(view => view.evening.bill.requested), 'Eli brought one check for the table');
     scene.command('h2', { type: 'evening', action: 'settle-bill', choice: 'split' }, 1100);
     for (const view of Object.values(room.views)) { assert.equal(view.evening.bill.settlement, 'split'); assert.equal(view.stage, 'farewell'); }
   } finally { scene.free(); }
@@ -100,7 +111,8 @@ test('a seated wingman can settle the remaining pair’s eligible bill while pre
   try {
     scene.command('h1', { type: 'finish' }, 1000);
     const ending = structuredClone(room.views.h1.evening.farewell.ending), bill = structuredClone(room.views.h1.evening.bill);
-    scene.command('h1', { type: 'evening', action: 'request-bill' }, 1100);
+    room.views.h2.evening.dessert.finishedAt = 100; room.views.h2.elapsed = 200; scene.step(.016, 1100);
+    assert.equal(room.views.h2.evening.bill.requested, true, 'the remaining pair’s check does not wait for an ended date');
     scene.command('h1', { type: 'evening', action: 'settle-bill', choice: 'separate' }, 1200);
     assert.equal(room.views.h2.evening.bill.settlement, 'separate');
     assert.equal(room.views.h1.phase, 'ended'); assert.deepEqual(room.views.h1.evening.farewell.ending, ending); assert.deepEqual(room.views.h1.evening.bill, bill);

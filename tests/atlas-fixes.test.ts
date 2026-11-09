@@ -105,7 +105,8 @@ for (const blind of [false, true]) test(`${blind ? 'blind' : 'solo'} quiet table
   try {
     f.command({ type: 'interact', target: 'menu', choice: MENU[0] });
     f.scene.state.elapsed += 45; f.scene.director.step(1 / 60, { allowIncidents: false, allowScenarios: false });
-    f.scene.state.elapsed = 300; f.scene.director.step(1 / 60, { allowIncidents: false }); assert.equal(f.scene.state.evening.scenario!.phase, 'active');
+    // Late in the main course, before Eli clears the plates, the table story can open.
+    f.scene.state.elapsed = 240; f.scene.director.step(1 / 60, { allowIncidents: false }); assert.equal(f.scene.state.evening.scenario!.phase, 'active');
     const before = f.scene.state.participants.map(person => [...person.position]);
     const body = (f.scene as unknown as { diningCollider: RAPIER.RigidBody }).diningCollider;
     assert.ok(body.collider(0).containsPoint({ x: 0, y: 0, z: -1.15 }));
@@ -189,13 +190,17 @@ test('spill and noisy-diner incidents can happen without a prerequisite resolved
   try {
     f.command({ type: 'interact', target: 'menu', choice: MENU[0] }); f.scene.state.elapsed += 45;
     f.scene.director.step(1 / 60, { allowIncidents: false, allowScenarios: false });
-    assert.equal(f.scene.state.events.length, 0); f.scene.state.elapsed = 480; f.scene.director.step(1 / 60, { allowScenarios: false });
+    assert.equal(f.scene.state.events.length, 0); f.scene.state.elapsed += 65; f.scene.director.step(1 / 60, { allowScenarios: false });
     assert.equal(f.scene.state.evening.incident?.event, 'spilled-drink'); assert.equal(f.scene.state.evening.resolutions['wrong-order'], undefined);
   } finally { f.scene.free(); }
   const g = solo();
   try {
+    // A quiet main course, cleared plates and a dessert on the table: the neighbour's call still comes, with no spill ever having happened.
+    const quiet = { allowIncidents: false, allowScenarios: false } as const;
     g.scene.state.elapsed = 900; g.command({ type: 'interact', target: 'menu', choice: MENU[0] });
-    g.scene.director.step(1 / 60, { allowScenarios: false });
+    for (const seconds of [45, 200, 40, 20]) { g.scene.state.elapsed += seconds; g.scene.director.step(1 / 60, quiet); }
+    assert.equal(g.scene.state.evening.main.status, 'finished'); assert.equal(g.scene.state.evening.dessert.status, 'served'); assert.equal(g.scene.state.events.length, 0);
+    g.scene.state.elapsed += 30; g.scene.director.step(1 / 60, { allowScenarios: false });
     assert.equal(g.scene.state.evening.incident?.event, 'disruptive-diner'); assert.equal(g.scene.state.evening.resolutions['spilled-drink'], undefined); assert.equal(g.scene.state.evening.resolutions['wrong-order'], undefined);
   } finally { g.scene.free(); }
 });

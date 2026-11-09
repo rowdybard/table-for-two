@@ -24,8 +24,8 @@ export const CHARACTER_STORIES: Record<DateId, CharacterStory> = {
     preferences: 'Tomato rigatoni, chocolate fondant, crunchy bread, live music, sharing a taste when both people agree. She dislikes overcooked vegetables, surprise photographs of people, and calling every favor an emergency. She appreciates practical help that does not take over.',
     preferredMain: 'Roasted tomato rigatoni', preferredDessert: 'chocolate',
     vulnerability: 'She finds it easier to be useful and entertaining than to ask for attention for her own work. She worries her quiet photographs will seem ordinary without a big event around them. Kindness is welcome; rescuing her career or deciding her exhibition for her is not.',
-    dinnerArc: 'Begin with food-sharing banter and a quick observation. During the main course, let being off duty feel unfamiliar. The coaster game gives her permission to be ridiculous rather than impressive. A saved napkin drawing can prompt the first mention of her unbooked photo show. Dessert can bring a small decision to choose her own prints. A warm farewell offers another outing; a friendship farewell still leaves a real connection.',
-    disclosureRules: 'Reveal the exhibition gradually when the conversation or a shared activity earns it. If guarded or hurt, keep details private and state what she needs. Do not claim the human drew a camera, promised to attend, fixed her overcommitting, or agreed to another date unless the transcript or scene records it. An apology permits a conversation, not instant trust.',
+    dinnerArc: 'Begin with food-sharing banter and a quick observation. During the main course, let being off duty feel unfamiliar. A quiet stretch gives her permission to be ridiculous rather than impressive. Sharing dessert can prompt the first mention of her unbooked photo show and a small decision to choose her own prints. A warm farewell offers another outing; a friendship farewell still leaves a real connection.',
+    disclosureRules: 'Reveal the exhibition gradually when the conversation or a shared moment earns it. If guarded or hurt, keep details private and state what she needs. Do not claim the human promised to attend, fixed her overcommitting, or agreed to another date unless the transcript or scene records it. An apology permits a conversation, not instant trust.',
   },
   jules: {
     occupation: 'Book restorer at a small conservation workshop; repairs bindings, paper tears, and damaged family books.',
@@ -35,8 +35,8 @@ export const CHARACTER_STORIES: Record<DateId, CharacterStory> = {
     preferences: 'Mushroom risotto, lemon posset, independent bookshops, old films, clear intentions, and someone who can disagree without making it a performance. They dislike truffle oil overwhelming a dish, intrusive family questions, and treating a quiet moment as a failure.',
     preferredMain: 'Wild mushroom risotto', preferredDessert: 'lemon',
     vulnerability: 'Preserving other people\'s stories can become a way to avoid writing anything personal. They want the restored cookbook to contain a recipe of their own, but dislike being pushed to turn a modest hope into a grand confession.',
-    dinnerArc: 'Begin reserved and quietly amused. Dinner brings a specific craft or cookbook anecdote. They become unexpectedly competitive at coasters, but recover from losing without an argument. Keeping the napkin drawing gives them something new to place in an old book. Lemon dessert connects memory with trying their own version. The farewell can be an invitation, a recipe-sharing friendship, or a clear courteous ending.',
-    disclosureRules: 'Inez is not deceased; do not invent bereavement. Their identity is not a puzzle or a subject the player is owed an explanation of. A thoughtful interaction may invite a personal detail, but guarded Jules can decline. Do not claim a family recipe was shared or a drawing was kept unless it happened. No instant intimacy after a single compliment.',
+    dinnerArc: 'Begin reserved and quietly amused. Dinner brings a specific craft or cookbook anecdote. A comfortable pause is allowed to stand. Sharing dessert connects memory with trying their own version of a recipe. The farewell can be an invitation, a recipe-sharing friendship, or a clear courteous ending.',
+    disclosureRules: 'Inez is not deceased; do not invent bereavement. Their identity is not a puzzle or a subject the player is owed an explanation of. A thoughtful interaction may invite a personal detail, but guarded Jules can decline. Do not claim a family recipe was shared unless it happened. No instant intimacy after a single compliment.',
   },
   dev: {
     occupation: 'Bicycle mechanic who cooks ambitious dinners for friends after work; enthusiastic amateur, not a restaurant chef.',
@@ -46,26 +46,33 @@ export const CHARACTER_STORIES: Record<DateId, CharacterStory> = {
     preferences: 'Lemon and herb chicken, spicy food at home, strawberries and cream after a heavy meal, pickup basketball, honest feedback, and letting restaurant staff correct a mistake without humiliation. He dislikes oversweet sauces, food dares, and put-downs disguised as banter.',
     preferredMain: 'Lemon & herb chicken', preferredDessert: 'berries',
     vulnerability: 'He is afraid that saying he wants a food truck will turn a private wish into a public test. Taking over an order or making every activity competitive protects him from uncertainty. He can recognize that habit and stop; the player should not have to flatter him into basic respect.',
-    dinnerArc: 'Begin with a strong food opinion and a small effort not to order for someone else. Let him enjoy the main course without judging it endlessly. Coasters can loosen his need to win. A shared drawing or a good conversation can get him to name the food truck idea. Dessert gives him a chance to accept someone else\'s choice. The farewell may invite a future taste test, offer friendship, or accept a mismatch without turning it into defeat.',
-    disclosureRules: 'Do not present him as an established chef or truck owner. Reveal the plan in small pieces when comfortable; a guarded Dev may keep it private. He can admit he was overbearing and apologize without demanding reassurance. Paying for dinner never buys affection, and winning coasters never decides the relationship.',
+    dinnerArc: 'Begin with a strong food opinion and a small effort not to order for someone else. Let him enjoy the main course without judging it endlessly. A good conversation over dessert can get him to name the food truck idea. Dessert also gives him a chance to accept someone else\'s choice. The farewell may invite a future taste test, offer friendship, or accept a mismatch without turning it into defeat.',
+    disclosureRules: 'Do not present him as an established chef or truck owner. Reveal the plan in small pieces when comfortable; a guarded Dev may keep it private. He can admit he was overbearing and apologize without demanding reassurance. Paying for dinner never buys affection, and winning an argument never decides the relationship.',
   },
 };
 
 export const STORY_CUE_KEYS = [
-  'welcome', 'seated', 'ordered', 'main-served', 'taste', 'main-finished',
-  'coasters-start', 'coasters-win', 'coasters-loss', 'coasters-draw', 'napkin-kept', 'quiet-window',
-  'dessert-ordered', 'dessert-served', 'dessert-shared', 'dessert-skipped',
+  'welcome', 'seated', 'order-nudge', 'ordered', 'main-served', 'taste', 'main-finished', 'quiet-window',
+  'beat-waiting-1', 'beat-waiting-2', 'beat-eating-1', 'beat-eating-2', 'beat-after-1', 'beat-after-2',
+  'dessert-date-choice', 'dessert-ordered', 'dessert-served', 'dessert-shared', 'dessert-skipped',
   'bill-requested', 'bill-settled', 'farewell-invite',
   'wrong-order', 'wrong-order-returned', 'wrong-order-kept', 'spill', 'spill-help', 'spill-wiped', 'spill-fixed',
   'diner', 'diner-quiet', 'diner-ignored', 'repair', 'boundary-warning', 'date-leaving',
   'ending-another-evening', 'ending-new-friend', 'ending-second-chance', 'ending-quiet-goodbye', 'ending-early-exit', 'ending-walked-away',
 ] as const;
 export type StoryCueKey = typeof STORY_CUE_KEYS[number];
+/** Staff lines with no date reply; the date may react to them in conversation instead. */
+export const WAITER_ONLY_CUES: Partial<Record<StoryCueKey, SceneUtterance>> = {
+  'order-nudge': { speaker: 'waiter', text: 'Take your time with the menu. I’ll come back whenever you’re ready to order.', emotion: 'warm' },
+};
+/** Silence breakers the date offers without a model request, in course order. */
+export const BEAT_CUES = { waiting: ['beat-waiting-1', 'beat-waiting-2'], eating: ['beat-eating-1', 'beat-eating-2'], after: ['beat-after-1', 'beat-after-2'] } as const satisfies Record<string, readonly StoryCueKey[]>;
+export type BeatPhase = keyof typeof BEAT_CUES;
 export interface StoryCueContext { choice?: string; dish?: string; resolution?: string }
 const date = (text: string, emotion: Emotion = 'warm'): SceneUtterance => ({ speaker: 'date', text, emotion });
 const waiter = (text: string, emotion: Emotion = 'warm'): SceneUtterance => ({ speaker: 'waiter', text, emotion });
 
-const CUES: Record<DateId, Record<StoryCueKey, SceneUtterance>> = {
+const CUES: Record<DateId, Record<Exclude<StoryCueKey, 'order-nudge'>, SceneUtterance>> = {
   mira: {
     welcome: date('There you are. I was pretending to be less curious about you than I am.', 'amused'),
     seated: date('Good. No camera, no seating chart, and nobody asking me to get their good side. I like this already.'),
@@ -73,12 +80,14 @@ const CUES: Record<DateId, Record<StoryCueKey, SceneUtterance>> = {
     'main-served': date('Oh, that smells good. My plan to be very elegant about dinner is in danger.', 'amused'),
     taste: date('Mm. I was going to make a clever observation, but the sauce has taken over.', 'amused'),
     'main-finished': date('I spend a lot of dinners photographing other people’s big nights. It’s nice having one without a camera.'),
-    'coasters-start': date('A tiny sport with no paperwork. Finally, my natural habitat.', 'amused'),
-    'coasters-win': date('Fine, you win. I’ll put “gracious in defeat” on next week’s list.', 'amused'),
-    'coasters-loss': date('I would like to thank the table, the coaster, and a frankly irresponsible amount of confidence.', 'amused'),
-    'coasters-draw': date('A draw. Very diplomatic. We can both claim we were robbed.', 'amused'),
-    'napkin-kept': date('I’d like to keep this. I have a folder for a photo show I keep putting off. It could use something made for fun.'),
     'quiet-window': date('That’s the light I keep trying to photograph. The little bit after everyone stops looking. We can just enjoy it, though.'),
+    'beat-waiting-1': date('I keep catching myself framing the room. Occupational hazard. Tell me something I wouldn’t guess from across a table.', 'amused'),
+    'beat-waiting-2': date('My sister just texted to ask if I’d arrived safely. The restaurant is eleven minutes from my flat. Who worries about you like that?', 'amused'),
+    'beat-eating-1': date('I have to say it: this bread is doing more work than most of the wedding speeches I’ve photographed. What’s your actual favourite thing to eat? No performance answers.', 'amused'),
+    'beat-eating-2': date('You’ve got a thinking face. It’s a good one. What are you not saying?'),
+    'beat-after-1': date('I had a whole plan to be mysterious tonight. It lasted until the bread. For the record, I’m glad it didn’t work.', 'amused'),
+    'beat-after-2': date('Honest question, no wrong answer: do you like nights like this, or do you mostly like having done them?'),
+    'dessert-date-choice': date('Can I be bold? The chocolate fondant. I’ve been eyeing it since we sat down. Two spoons.', 'amused'),
     'dessert-ordered': date('Dessert is an excellent reason to stay a little longer.'),
     'dessert-served': date('Well. That has my full attention.', 'amused'),
     'dessert-shared': date('I’ve been putting off a small photo show. I might choose the prints this week. No announcement. Just choose them.'),
@@ -113,12 +122,14 @@ const CUES: Record<DateId, Record<StoryCueKey, SceneUtterance>> = {
     'main-served': date('That smells like someone gave the mushrooms time. A good sign.'),
     taste: date('I was prepared to defend mushrooms. Apparently they don’t need me.', 'amused'),
     'main-finished': date('My grandmother writes corrections in all her cookbooks. Half my cooking is arguing with her handwriting.'),
-    'coasters-start': date('I should warn you that I can become unreasonable about a very small game.', 'amused'),
-    'coasters-win': date('A convincing win. I’ll be gracious as soon as I’ve finished examining the table.', 'amused'),
-    'coasters-loss': date('A modest triumph. I’ll try not to bring it up before dessert.', 'amused'),
-    'coasters-draw': date('A draw. Annoyingly balanced. I suppose we can live with that.', 'amused'),
-    'napkin-kept': date('I’d keep this as a bookmark. My grandmother uses old bus tickets. Apparently the habit skipped a generation and came back.'),
     'quiet-window': date('We don’t have to fill every minute. I like a conversation that leaves a little space.'),
+    'beat-waiting-1': date('I restored a cookbook last week that someone had used as a coaster for forty years. It had the shape of every cup. I liked it better than the clean ones. What do you wear out from using it too much?'),
+    'beat-waiting-2': date('I’m comfortable with a pause, so this isn’t a complaint. I’d still like to know what you were thinking just then.'),
+    'beat-eating-1': date('A good risotto takes someone standing still for twenty minutes. Most people won’t. I suspect that’s true of most things worth doing. What do you stand still for?'),
+    'beat-eating-2': date('My grandmother would already have sent this back once, on principle. I’m enjoying it, which she’d call a character flaw. Do you take after anyone like that?', 'amused'),
+    'beat-after-1': date('I noticed you listen before you answer. That’s rarer than it should be.'),
+    'beat-after-2': date('Here’s a question I ask when an evening is going well: what’s a small thing you’ve kept for no sensible reason?'),
+    'dessert-date-choice': date('If you’ve no objection, the lemon posset. It’s a family argument I’d like to continue.', 'amused'),
     'dessert-ordered': date('A small additional chapter. I’m in favor.'),
     'dessert-served': date('That looks carefully made. I appreciate a dessert that doesn’t require a structural survey.', 'amused'),
     'dessert-shared': date('I should put one of my own recipes in my grandmother’s cookbook. There’s room. I keep acting as if there isn’t.'),
@@ -153,12 +164,14 @@ const CUES: Record<DateId, Record<StoryCueKey, SceneUtterance>> = {
     'main-served': date('Okay, that looks good. I can stop doing the imaginary inspection now.'),
     taste: date('Good lemon, proper seasoning. That’s my entire restaurant review. I’m off duty now.', 'amused'),
     'main-finished': date('I test recipes after work. Calling it dinner is easier than admitting it’s a plan.'),
-    'coasters-start': date('Three rounds? Good. Enough time for confidence to become a mistake.', 'amused'),
-    'coasters-win': date('You earned that. I’m resisting a very elaborate explanation involving the grain of the table.', 'amused'),
-    'coasters-loss': date('I won. I’m choosing to say that once, at a sensible volume.', 'amused'),
-    'coasters-draw': date('A draw. Fine. A healthy outcome that I will enjoy in a minute.', 'amused'),
-    'napkin-kept': date('That’s going in my recipe notebook. The notebook is real. The food truck on the cover is still imaginary.'),
     'quiet-window': date('This is nice. I keep thinking of something to say, then realizing I don’t need to.'),
+    'beat-waiting-1': date('Confession: I checked what oil they fry in before I sat down. I’m working on it. What’s the thing you can’t switch off?', 'amused'),
+    'beat-waiting-2': date('I almost ordered for both of us out of habit. Deeply unpopular habit. I’m glad I didn’t. What would you have said?', 'amused'),
+    'beat-eating-1': date('All right, honest review, one sentence, no lecture: good acid, proper seasoning, I’d eat it again. Your turn. One sentence.', 'amused'),
+    'beat-eating-2': date('I usually fill a quiet patch with a story about a bike or a sauce. I’m practising not doing that. So. Your move.'),
+    'beat-after-1': date('Thursday nights I play pickup ball with people who’d rather argue about fouls than win. Best part of my week. What’s yours?'),
+    'beat-after-2': date('You know what I like about tonight? Nobody’s needed me to fix anything. Don’t ruin it by asking about your brakes.', 'amused'),
+    'dessert-date-choice': date('Strawberries and cream. Something simple after all that. I’ll let Eli know.'),
     'dessert-ordered': date('Good call. I can make room. That’s not a challenge, just a fact.'),
     'dessert-served': date('There we go. I’m putting the food critic away before the first bite.'),
     'dessert-shared': date('I’ve been planning a food truck. Second Helping. I hide the numbers in a file called Bike Parts, which probably isn’t fooling anyone.'),
@@ -189,16 +202,17 @@ const CUES: Record<DateId, Record<StoryCueKey, SceneUtterance>> = {
 };
 
 const GUARDED: Record<DateId, Partial<Record<StoryCueKey, string>>> = {
-  mira: { 'main-finished': 'Thanks for giving me time to finish. I don’t like being hurried through dinner.', 'napkin-kept': 'Thanks for showing me. I’m going to leave the napkin here for now.', 'quiet-window': 'A little quiet is welcome. I’d like a minute to myself.', 'dessert-shared': 'Thanks for sharing. I’m still a little quiet after earlier.', 'farewell-invite': 'I’ll head to the entrance. We can say good night there.' },
-  jules: { 'main-finished': 'That was a good meal. I’m content to leave a little space after it.', 'napkin-kept': 'I appreciate you showing me. I’d rather not keep it, but thank you.', 'quiet-window': 'I’d like a quiet minute here. You don’t need to fill it.', 'dessert-shared': 'Thank you. I’m not quite ready to pick up where we left off.', 'farewell-invite': 'I’ll walk to the entrance. Then I’m going to make my own way home.' },
-  dev: { 'main-finished': 'Good meal. I’m going to sit with that for a minute.', 'napkin-kept': 'Thanks for showing me. I’ll leave it here, though.', 'quiet-window': 'I need a quiet minute. Let’s leave it at that for now.', 'dessert-shared': 'Thanks. I’m still thinking about what happened earlier.', 'farewell-invite': 'I’m heading to the entrance. We can say good night there.' },
+  mira: { 'main-finished': 'Thanks for giving me time to finish. I don’t like being hurried through dinner.', 'quiet-window': 'A little quiet is welcome. I’d like a minute to myself.', 'dessert-shared': 'Thanks for sharing. I’m still a little quiet after earlier.', 'dessert-skipped': 'I’ll pass on dessert tonight. We can ask for the bill when you’re ready.', 'farewell-invite': 'I’ll head to the entrance. We can say good night there.' },
+  jules: { 'main-finished': 'That was a good meal. I’m content to leave a little space after it.', 'quiet-window': 'I’d like a quiet minute here. You don’t need to fill it.', 'dessert-shared': 'Thank you. I’m not quite ready to pick up where we left off.', 'dessert-skipped': 'No dessert for me, thank you. The bill whenever it suits you.', 'farewell-invite': 'I’ll walk to the entrance. Then I’m going to make my own way home.' },
+  dev: { 'main-finished': 'Good meal. I’m going to sit with that for a minute.', 'quiet-window': 'I need a quiet minute. Let’s leave it at that for now.', 'dessert-shared': 'Thanks. I’m still thinking about what happened earlier.', 'dessert-skipped': 'I’m going to skip dessert. We can get the bill when you’re ready.', 'farewell-invite': 'I’m heading to the entrance. We can say good night there.' },
 };
 
 const ALIASES: Record<string, string> = {
   'main-arrived': 'main-served', 'spill-cleaned': 'spill-fixed',
-  'dessert-arrived': 'dessert-served', 'dessert-finished': 'dessert-shared', 'napkin-finished': 'napkin-kept',
+  'dessert-arrived': 'dessert-served', 'dessert-finished': 'dessert-shared',
   apology: 'repair', boundary: 'boundary-warning', leaving: 'date-leaving',
 };
+const DESSERT_OFFER = 'All finished here? I’ll take these. There’s lemon posset, chocolate fondant, or strawberries and cream, whenever you like.';
 const MAIN_DELIVERY: Record<string, string> = {
   'Roasted tomato rigatoni': 'The rigatoni is yours. Careful, the plates are warm.',
   'Lemon & herb chicken': 'Lemon chicken for you. Careful, the plates are warm.',
@@ -210,9 +224,11 @@ export function getStoryCue(key: string, dateId: DateId, context: StoryCueContex
   if (!CUES[dateId]) return [];
   if (key.startsWith('farewell-') && key !== 'farewell-invite') key = key.replace('farewell-', 'ending-');
   if (['bill-split', 'bill-treat', 'bill-separate'].includes(key)) { context = { ...context, choice: key.slice(5) }; key = 'bill-settled'; }
-  if (key === 'coasters-end') key = context.choice === 'win' || context.resolution === 'win' ? 'coasters-win' : context.choice === 'loss' || context.resolution === 'loss' ? 'coasters-loss' : 'coasters-draw';
   key = ALIASES[key] ?? key;
-  const cue = key as StoryCueKey, base = CUES[dateId][cue];
+  const cue = key as StoryCueKey;
+  const staffOnly = WAITER_ONLY_CUES[cue];
+  if (staffOnly) return [{ ...staffOnly }];
+  const base = CUES[dateId][cue as Exclude<StoryCueKey, 'order-nudge'>];
   if (!base) return [];
   const guarded = ['guarded', 'hurt', 'leaving'].includes(context.resolution ?? '');
   if (guarded && GUARDED[dateId][cue]) return [date(GUARDED[dateId][cue]!, 'neutral')];
@@ -231,8 +247,9 @@ export function getStoryCue(key: string, dateId: DateId, context: StoryCueContex
     };
     line = date(reactions[dateId][dessert.id]);
   }
-  if (cue === 'dessert-shared' && context.resolution === 'kept-all') line = date({ mira: 'You’ve kept the whole dessert. I was hoping for a little of the sharing part.', jules: 'I had understood “sharing” to include both of us. Could I have a little?', dev: 'You took the lot. I’d like a bite too. This isn’t another competition.' }[dateId], 'annoyed');
-  if (cue === 'dessert-shared' && context.resolution === 'gave-all') line = date({ mira: 'That’s generous, but I don’t need all of it. Keep a little for yourself.', jules: 'Thank you, but I’d rather we both had some. That was the idea.', dev: 'I appreciate it. You’re allowed some too. I’m not training for a dessert event.' }[dateId]);
+  // Eli leads the course changes; the date reacts after the plates move.
+  if (cue === 'main-finished') return [waiter(DESSERT_OFFER), line];
+  if (cue === 'bill-requested') return [waiter('Whenever you’re ready, I’ll leave the bill here. No rush at all.'), line];
   if (cue === 'welcome') extra.push(waiter('Welcome in. Your table is ready whenever you are.'));
   if (cue === 'ordered') extra.push(waiter('Lovely. I’ll put that through for you.'));
   if (cue === 'main-served') extra.push(waiter(MAIN_DELIVERY[context.dish ?? ''] ?? 'Here we are. Careful, the plates are warm.'));
@@ -244,7 +261,6 @@ export function getStoryCue(key: string, dateId: DateId, context: StoryCueContex
   if (cue === 'spill-fixed') extra.push(waiter('Thank you. I’ve replaced the water. Let me know if you need anything else.'));
   if (cue === 'diner') extra.push({ speaker: 'diner', text: 'I’m having a conversation. I didn’t realize the entire restaurant was listening.', emotion: 'defensive' });
   if (cue === 'diner-quiet') extra.push({ speaker: 'diner', text: 'All right. I’ll take it outside.', emotion: 'defensive' });
-  if (cue === 'bill-requested') extra.push(waiter('Of course. I’ll leave the bill here. There’s no rush.'));
   if (cue === 'bill-settled') extra.push(waiter('All taken care of. Thank you both, and have a good evening.'));
   return [line, ...extra];
 }
@@ -254,6 +270,6 @@ export const STORY_CUE_VARIANTS: { id: string; context: StoryCueContext }[] = [
   { id: 'default', context: {} },
   ...DESSERTS.map(item => ({ id: item.id, context: { choice: item.id } })),
   ...['split', 'treat', 'separate'].map(choice => ({ id: choice, context: { choice } })),
-  ...['guarded', 'hurt', 'leaving', 'kept-all', 'gave-all'].map(resolution => ({ id: resolution, context: { resolution } })),
+  ...['guarded', 'hurt', 'leaving'].map(resolution => ({ id: resolution, context: { resolution } })),
   ...Object.keys(MAIN_DELIVERY).map((dish, index) => ({ id: `main-${index}`, context: { dish } })),
 ];

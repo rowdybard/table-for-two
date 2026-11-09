@@ -25,8 +25,8 @@ TypeScript, plain imperative Three.js, Vite, Node, Rapier and DOM game overlays.
 | Client entry, networking, input and playback | `src/restaurant/main.ts` |
 | First-person/selection/inspection camera and actor presentation | `src/restaurant/RestaurantRenderer.ts` |
 | Restaurant geometry, place settings, food and props | `src/restaurant/render/RestaurantScene.ts`, `TabletopProps.ts`, `EveningTable.ts` |
-| Course menus, receipt, scenario choices, notebook and endings | `src/restaurant/EveningInterface.ts` |
-| Coasters, drawing and dessert activities | `src/restaurant/TableActivities.ts` |
+| Prompt line (course choices, incidents, scenarios, gestures), receipt, notebook and endings | `src/restaurant/EveningInterface.ts` |
+| Shared pacing clocks and dessert list | `src/restaurant/evening.ts` |
 | Touch input | `MobileControls.ts`, `MobileInput.ts`, `TouchLookTap.ts`, `TouchButtonGesture.ts` |
 | Shared protocol/content | `types.ts`, `scenario-types.ts`, `scenarios.ts`, `content.ts`, `story.ts`, `blind-date.ts` |
 | Solo/Blind physical authority | `server/restaurant/scene.ts` |
@@ -54,6 +54,7 @@ The older bowling game remains at `/?venue=bowling`. Its source/tests are still 
 - Do not treat ordinary flirting, identities, illness, stutters or transcription corrections as boundary violations. A personal refusal counts only after it was actually delivered. Roleplay framing does not override provider rules.
 - No automatic affection/agenda points for food, cleaning, spending, fidgeting or selecting a considerate scenario response. Understanding and attraction are different.
 - Solo snapshots have a monotonic revision; discard late older responses. Double uses room revisions. Never let a delayed response roll back a newer prop or course action.
+- The evening carries itself on scene time (`EVENING_PACE`): Eli nudges an idle menu, serves, clears the main after a long course, a rested fork or a few bites, offers dessert, and brings one check for the table after dessert ends or is declined. The date picks their favourite dessert when nobody chooses and breaks long silences with authored lines (no model call, four per evening). Do not add player actions that merely advance a course, and do not let an authored beat count as a human turn.
 
 ## Current scenario mechanics
 
@@ -67,14 +68,14 @@ The catalogue has 11 two-beat stories, 51 authored choice records and 58 complet
 - Medical early exits finalize the affected director's agenda and reflection, revoke chemistry and preserve the other pair's ability to continue. `DoubleTableScene.reconcile()` must invoke each director's finalization path. Do not finalize only one transport path.
 - Wine cleanup clears the actual stain and adjusts cloth/glass state. Medical care clears usable space and stops service/drinks without awarding romance.
 - A quiet-table choice moves the dining station to the spare area: `dining-space.ts` supplies the +3.85m Z offset. The furniture, props, cameras, interaction targets, seated people and Rapier table collider must all agree. Door/window targets remain in world space. Both Double couples share this table move while retaining personal progress.
-- Wrong plates arrive during service before any bites. Never swap an eaten meal later. The spill and noisy diner have independent timing/eligibility with calm intervals; skipping one cannot suppress the others. New interruptions stop at billing/farewell and during care/quiet periods.
+- Wrong plates arrive with service before any bites. Never swap an eaten meal later. The spill belongs to the main course (a minute after service, or the next calm moment before dessert reaches the table) and the noisy diner to dessert (half a minute after it is served); each has its own window and calm interval, and neither needs the other to have happened. Interruptions land before a course moves on. New interruptions stop at billing/farewell and during care/quiet periods.
 - `incidentOwner` identifies the actual affected Double pair. A friend can help without their own correct food or ticket being rewritten.
 
 The editable atlas and its data are generated from the actual catalogue/controllers. Use `scripts/analyze-encounter-atlas.mjs`, `verify-encounter-atlas-audit.mjs`, `build_encounter_atlas.py` and `verify_encounter_atlas_doc.py` when changing branches. Review the rendered document; do not update only its counts or leave resolved bugs described as current.
 
 ## Visual and interaction constraints
 
-WASD/mouse, E use, R or prop click inspection, T typing, G actions, J journal, M microphone, Escape closes the current surface before pausing. Touch uses drag-to-look and short single-finger tap-to-inspect; drags, second fingers and canceled gestures must not activate props. Desktop inspection and mobile controls share the same server actions.
+WASD/mouse, E use, R or prop click inspection, T typing, 1–4 pick a prompt chip, J journal, M microphone, Escape closes the current surface before pausing. There is no actions drawer, objective bar or event card: one compact prompt line shows the evening’s current choice and hides when there is none. Touch uses drag-to-look and short single-finger tap-to-inspect; drags, second fingers and canceled gestures must not activate props. Desktop inspection and mobile controls share the same server actions.
 
 Keep materials/geometry reusable and dispose GPU resources. Do not allocate textures every frame. Table-height and physical footprints matter: test plates, cutlery, glasses, paper, cloth, food, board and serving trays from table height as well as overhead. Test all four Double settings and both human seats. Do not hide served dishes or shared props to disguise overlap; park them on a clear support surface and move their targets with them. One human's bites must not eat their date's or friend's food.
 

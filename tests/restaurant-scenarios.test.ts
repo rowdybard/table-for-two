@@ -66,7 +66,7 @@ test('solo and blind directors activate the same stories, record both beats and 
       state.evening.main.status = 'served'; state.evening.main.servedDish = state.order; state.evening.resolutions['wrong-order'] = 'The meal was checked earlier.';
       director.step(.016); assert.equal(state.evening.scenario?.phase, 'active');
       assert.throws(() => director.action({ type: 'evening', action: 'taste' }, 1000));
-      assert.throws(() => director.shot(0, .5)); assert.throws(() => director.napkin([], false));
+      assert.throws(() => director.action({ type: 'evening', action: 'skip-dessert' }, 1000));
       director.scenario('boundary'); assert.equal(state.evening.scenario?.beat, 'follow-through');
       director.scenario('return-date'); assert.equal(state.evening.scenario?.phase, 'resolved');
       assert.ok(state.memory.includes('family visit')); assert.ok(state.evening.moments.some(moment => moment.id === 'scenario-family-visit'));
@@ -98,36 +98,43 @@ test('care actions respect preferences and a refusal, are attributable, and cann
   }
 });
 
-test('wrong plates arrive before bites and course progression never manufactures later interruptions', () => {
+test('wrong plates arrive before bites, interruptions keep their calm intervals, and declining dessert brings the check before a third one', () => {
   const state = view(), director = new EveningDirector(state, { scenarioId: 'family-visit' });
   try {
     state.elapsed = 0; director.ordered(); state.elapsed = 45; director.step(.016);
     assert.equal(state.evening.incident?.event, 'wrong-order'); assert.equal(state.evening.main.bites, 0);
     director.action({ type: 'evening', action: 'inspect-ticket' }, 500); director.action({ type: 'evening', action: 'return-order' }, 600);
     for (let bite = 0; bite < 3; bite++) director.action({ type: 'evening', action: 'taste' }, 1000 + bite * 600);
-    director.action({ type: 'evening', action: 'finish-main' }, 3000);
-    director.action({ type: 'evening', action: 'skip-dessert' }, 4000);
-    director.action({ type: 'evening', action: 'request-bill' }, 5000);
-    assert.deepEqual(state.events, ['wrong-order']); assert.equal(state.evening.incident, null); assert.equal(state.evening.bill.requested, true);
+    state.elapsed = 60; director.step(.016); assert.equal(state.evening.incident?.event, undefined, 'a resolved plate earns a calm interval');
+    state.elapsed = 105; director.step(.016); assert.equal(state.evening.incident?.event, 'spilled-drink', 'the spill is keyed to service');
+    for (let wipe = 0; wipe < 3; wipe++) director.action({ type: 'evening', action: 'wipe' }, 3000 + wipe * 200); director.action({ type: 'evening', action: 'steady-glass' }, 4000);
+    state.elapsed = 136; director.step(.016);
+    assert.equal(state.evening.main.status, 'finished', 'Eli clears the plates after the diner has eaten'); assert.equal(state.evening.incident, null);
+    director.action({ type: 'evening', action: 'skip-dessert' }, 5000);
+    state.elapsed = 149; director.step(.016);
+    assert.deepEqual(state.events, ['wrong-order', 'spilled-drink']); assert.equal(state.evening.incident, null); assert.equal(state.evening.bill.requested, true);
+    state.elapsed = 400; director.step(.016); assert.equal(state.evening.incident, null, 'no interruption arrives once the check is on the table');
   } finally { director.free(); }
   const late = view(), timed = new EveningDirector(late, { scenarioId: 'family-visit' });
   try {
     late.elapsed = 0; timed.ordered(); late.elapsed = 45; timed.step(.016); assert.equal(late.evening.incident?.event, 'wrong-order'); const plate = late.evening.main.servedDish; late.elapsed = 150; timed.step(.016); assert.equal(late.evening.main.servedDish, plate);
-    assert.equal(late.evening.incident?.event, 'wrong-order'); assert.throws(() => timed.action({ type: 'evening', action: 'finish-main' }, 1000));
+    assert.equal(late.evening.incident?.event, 'wrong-order'); assert.throws(() => timed.action({ type: 'evening', action: 'taste' }, 1000));
+    late.elapsed = 400; timed.step(.016); assert.equal(late.evening.main.status, 'served', 'an unresolved wrong plate is never cleared by the clock');
   } finally { timed.free(); }
 });
 
 test('new physical incidents stop when the table is empty or dinner reaches the bill and farewell', () => {
-  for (const stop of ['away', 'requested', 'settled', 'farewell'] as const) {
+  for (const stop of ['none', 'away', 'requested', 'settled', 'farewell'] as const) {
     const state = view(), director = new EveningDirector(state, { scenarioId: 'family-visit' });
     try {
-      state.elapsed = 500; state.evening.main.status = 'finished';
+      state.elapsed = 170; state.evening.main.status = 'served'; state.evening.main.servedAt = 100;
       state.evening.resolutions['wrong-order'] = 'Returned earlier.';
       if (stop === 'away') state.seated = false;
       if (stop === 'requested') state.evening.bill.requested = true;
       if (stop === 'settled') state.evening.bill.settlement = 'split';
       if (stop === 'farewell') { state.evening.chapter = 'farewell'; state.stage = 'farewell'; }
       director.step(.016, { allowScenarios: false });
+      if (stop === 'none') { assert.equal(state.evening.incident?.event, 'spilled-drink', 'the same table receives the course-keyed spill when nothing stops it'); continue; }
       assert.equal(state.evening.incident, null, stop);
       assert.equal(state.events.includes('spilled-drink'), false, stop);
     } finally { director.free(); }
@@ -182,7 +189,7 @@ test('a bold joke can miss, create a different follow-through and recover withou
 test('a resolved story earns a quiet interval before another physical interruption', () => {
   const state = view(), director = new EveningDirector(state, { scenarioId: 'family-visit' });
   try {
-    state.evening.main.status = 'finished'; state.evening.dessert.status = 'served'; state.evening.chapter = 'dessert';
+    state.evening.main.status = 'finished'; state.evening.main.finishedAt = 280; state.evening.dessert.status = 'served'; state.evening.dessert.servedAt = 880; state.evening.chapter = 'dessert';
     state.evening.resolutions['wrong-order'] = 'Returned earlier.'; state.evening.resolutions['spilled-drink'] = 'Dried earlier.';
     director.step(.016); director.scenario('welcome'); director.scenario('return-date');
     state.elapsed = 900; state.evening.lastInterruptionAt = 890;

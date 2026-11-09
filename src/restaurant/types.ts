@@ -15,12 +15,13 @@ export interface DatePreset { id: DateId; name: string; age: number; pronouns: s
 export interface SceneUtterance { speaker: Speaker; text: string; emotion: Emotion; clipId?: string; actorId?: import('./double-date-types').DoubleSpeakerId; dateId?: DateId; lineId?: string }
 export interface SocialResponse { signal: 'none' | 'kindness' | 'curiosity' | 'humor' | 'pressure' | 'repair'; reason: string; wantsToLeave: boolean; boundary?: import('./boundary-types').BoundaryAssessment }
 export interface SceneTurn { utterances: SceneUtterance[]; emotion: Emotion; action: DateAction; memory: string; social?: SocialResponse; agenda?: import('./agenda-types').AgendaAssessment }
-export type EveningAction = 'taste' | 'finish-main' | 'order-dessert' | 'skip-dessert' | 'serve-dessert' | 'finish-dessert' | 'request-bill' | 'settle-bill' | 'farewell' | 'inspect-ticket' | 'return-order' | 'keep-order' | 'wipe' | 'steady-glass' | 'ask-quiet' | 'let-it-go' | 'apologize' | 'start-coasters' | 'offer-taste' | 'toast' | 'request-water' | 'check-in' | 'resume-dinner';
+export type EveningAction = 'taste' | 'order-dessert' | 'skip-dessert' | 'settle-bill' | 'farewell' | 'inspect-ticket' | 'return-order' | 'keep-order' | 'wipe' | 'steady-glass' | 'ask-quiet' | 'let-it-go' | 'apologize' | 'offer-taste' | 'toast' | 'request-water' | 'check-in' | 'resume-dinner';
+/** Player-facing actions the server still accepts; course progression itself is paced by the waiter. */
+export const EVENING_ACTIONS: readonly EveningAction[] = ['taste', 'order-dessert', 'skip-dessert', 'settle-bill', 'farewell', 'inspect-ticket', 'return-order', 'keep-order', 'wipe', 'steady-glass', 'ask-quiet', 'let-it-go', 'apologize', 'offer-taste', 'toast', 'request-water', 'check-in', 'resume-dinner'];
 export type DateStance = 'curious' | 'comfortable' | 'guarded' | 'hurt' | 'leaving';
 export interface EveningCue { id: string; key: string; utterances: SceneUtterance[] }
 export interface EveningMoment { id: string; title: string; description: string }
 export interface EveningEnding { kind: 'another-evening' | 'new-friend' | 'second-chance' | 'quiet-goodbye' | 'early-exit' | 'walked-away'; title: string; description: string; dateLine: string }
-export interface CoasterState { phase: 'idle' | 'aiming' | 'rolling' | 'complete'; turn: 'human' | 'date'; round: number; humanScore: number; dateScore: number; shots: number; disc: { x: number; z: number }; target: { x: number; z: number }; lastResult: string }
 export interface EveningState {
   tabletop?: import('./tabletop').TabletopState;
   scenarioCare?: import('./scenario-types').ScenarioCareState;
@@ -30,16 +31,18 @@ export interface EveningState {
   agenda?: import('./agenda-types').DateAgendaProgress;
   scenario?: import('./scenario-types').RestaurantScenarioState;
   care: import('./scenario-types').RestaurantCareState;
-  chapter: 'welcome' | 'mains' | 'shared-moment' | 'dessert' | 'bill' | 'farewell';
+  chapter: 'welcome' | 'mains' | 'dessert' | 'bill' | 'farewell';
   lastInterruptionAt: number;
   variation: number; dialogueTurns: number; stance: DateStance; stanceReason: string;
-  main: { status: 'none' | 'waiting' | 'served' | 'finished'; bites: number; dateDish: string | null; servedDish: string | null; orderedAt?: number; servedAt?: number };
-  dessert: { choice: string | null; status: 'none' | 'waiting' | 'served' | 'finished' | 'skipped'; portions: { piece: number; plate: 'you' | 'date' }[] };
+  /** Courses are served and cleared by the waiter on scene time; bites are the player's own physical eating. */
+  main: { status: 'none' | 'waiting' | 'served' | 'finished'; bites: number; dateDish: string | null; servedDish: string | null; orderedAt?: number; servedAt?: number; finishedAt?: number };
+  dessert: { choice: string | null; status: 'none' | 'waiting' | 'served' | 'finished' | 'skipped'; bites: number; chosenBy: 'you' | 'date' | null; offeredAt?: number; servedAt?: number; finishedAt?: number };
+  /** Authored lines the date offered to break a silence; no model request is made for them. */
+  beats: number;
   incident: { event: DinnerEvent; progress: number; startedAt: number } | null;
   resolutions: Partial<Record<DinnerEvent, string>>;
-  coasters: CoasterState; napkin: { points: [number, number][]; complete: boolean };
   sharedActivities: string[]; moments: EveningMoment[]; cues: EveningCue[];
-  bill: { requested: boolean; settlement: 'split' | 'treat' | 'separate' | null; items?: import('./scenario-types').DinnerBillItem[]; totalCents?: number };
+  bill: { requested: boolean; settlement: 'split' | 'treat' | 'separate' | null; arrivedAt?: number; items?: import('./scenario-types').DinnerBillItem[]; totalCents?: number };
   farewell: { choice: 'again' | 'friendly' | 'goodbye' | null; ending: EveningEnding | null };
 }
 export interface CostUsage { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; speechCharacters: number; cacheHits: number; claudeRequests: number; claudeCost: number; speechCost: number; totalCost: number; responseMs: number | null; firstAudioMs: number | null }
@@ -55,14 +58,14 @@ export interface DinnerState {
   evening: EveningState;
   doubleDate?: import('./double-date-types').DoubleDatePresentation;
 }
+export const INTERACTION_TARGETS = ['seat', 'menu', 'glass', 'meal', 'date', 'exit', 'bill', 'ticket', 'napkin', 'dessert', 'service-bell', 'window', 'carafe', 'bread', 'salt', 'pepper', 'cutlery', 'lamp', 'vase', 'plate'] as const;
+export type InteractionTarget = typeof INTERACTION_TARGETS[number];
 export type DinnerCommand =
   | { type: 'move'; x: number; z: number; yaw: number }
-  | { type: 'interact'; target: 'seat' | 'menu' | 'glass' | 'meal' | 'date' | 'exit' | 'bill' | 'ticket' | 'napkin' | 'coasters' | 'dessert' | 'service-bell' | 'window' | 'carafe' | 'bread' | 'salt' | 'pepper' | 'cutlery' | 'lamp' | 'vase' | 'plate'; choice?: string }
+  | { type: 'interact'; target: InteractionTarget; choice?: string }
   | { type: 'tabletop'; action: import('./tabletop').TabletopAction }
-  | { type: 'evening'; action: EveningAction; choice?: string; piece?: number; plate?: 'you' | 'date' }
+  | { type: 'evening'; action: EveningAction; choice?: string }
   | { type: 'scenario'; choice: string }
-  | { type: 'coaster-shot'; angle: number; power: number }
-  | { type: 'napkin'; points: [number, number][]; complete: boolean }
   | { type: 'pause'; paused: boolean }
   | { type: 'finish' };
 export interface TurnRequest { turnId: string; text: string; model: ClaudeModel }

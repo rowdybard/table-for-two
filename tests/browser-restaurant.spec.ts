@@ -42,11 +42,6 @@ const licensedAssets = [
 ];
 
 async function openSettingsFromPause(page: Page) {
-  const drawer = page.locator('#evening-panel > .action-drawer');
-  if (await drawer.locator(':scope > summary').isVisible() && await drawer.evaluate((node: HTMLDetailsElement) => node.open)) {
-    await page.keyboard.press('Escape');
-    await expect(drawer).not.toHaveAttribute('open', '');
-  }
   await page.route('**/api/date/sessions/*/interrupt', async route => {
     const response = await route.fetch();
     await new Promise(resolve => setTimeout(resolve, 250));
@@ -186,32 +181,31 @@ test('solo restaurant: roster, real movement, seat, order, streamed cast, privat
   }, { timeout: 12_000 }).toBeLessThan(.2);
   await page.waitForTimeout(400);
   await captureRestaurantScene(page, '.qa/restaurant-seated.png');
-  // The seated shortcuts provide a keyboard/mouse alternative to aiming at table props.
+  // The prompt line offers the menu; its numbered chip works under pointer lock, where no mouse can reach a button.
   await page.keyboard.press('Escape');
   await expect(page.locator('#pause-dialog')).toBeVisible();
   await page.locator('#resume-date').click();
   await expect.poll(async () => (await state(page)).phase).toBe('playing');
+  await expect(page.locator('#prompt-copy')).toHaveText('Look over the menu whenever you’re ready.');
+  const menuChip = page.locator('#prompt-chips button', { hasText: 'Open the menu' });
+  await expect(menuChip).toBeVisible();
+  await expect(menuChip.locator('kbd')).toHaveText('1');
   await page.locator('.restaurant-canvas').click({ position: { x: 850, y: 350 } });
   await expect.poll(() => page.evaluate(() => !!document.pointerLockElement)).toBe(true);
-  await page.keyboard.press('g');
-  await expect(page.locator('#evening-panel > .action-drawer')).toHaveAttribute('open', '');
-  await expect.poll(() => page.evaluate(() => !!document.pointerLockElement)).toBe(false);
-  await page.keyboard.down('Escape');
-  await expect(page.locator('#evening-panel > .action-drawer')).not.toHaveAttribute('open', '');
-  await page.keyboard.down('Escape');
-  await expect(page.locator('#pause-dialog')).toBeHidden();
-  expect((await state(page)).phase).toBe('playing');
-  await page.keyboard.up('Escape');
-  await page.keyboard.press('g');
-  await page.locator('#table-menu').click();
+  await page.keyboard.press('1');
   await expect(page.locator('#menu-dialog')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => !!document.pointerLockElement)).toBe(false);
   await expect(page.locator('.restaurant-canvas')).toHaveAttribute('aria-label', 'Reading the dinner menu at the table');
   await expect.poll(async () => (await state(page)).phase).toBe('paused');
-  await page.keyboard.press('Escape');
+  // A held Escape closes the menu once and never falls through into a pause.
+  await page.keyboard.down('Escape');
   await expect(page.locator('#menu-dialog')).toBeHidden();
+  await page.keyboard.down('Escape');
+  await expect(page.locator('#pause-dialog')).toBeHidden();
   await expect.poll(async () => (await state(page)).phase).toBe('playing');
+  await page.keyboard.up('Escape');
   await expect(page.locator('.restaurant-canvas')).toHaveAttribute('aria-label', 'First-person view of Table for Two restaurant');
-  await page.locator('#table-menu').click();
+  await menuChip.click();
   await expect(page.locator('#menu-dialog')).toBeVisible();
   await page.locator('[data-order="Wild mushroom risotto"]').focus();
   await page.keyboard.press('Enter');
@@ -662,17 +656,13 @@ test('failed typed turns keep the player draft and rejected orders never become 
     }
     return route.continue();
   });
-  await page.keyboard.press('g');
-  await page.locator('#table-menu').click();
+  await page.locator('#prompt-chips button', { hasText: 'Open the menu' }).click();
   const dish = await page.locator('[data-order]').first().getAttribute('data-order');
   await page.locator('[data-order]').first().click();
   await expect(page.locator('#toast')).toContainText('another moment');
   expect((await state(page)).order).toBeNull();
   await expect(page.locator('#conversation-log')).not.toContainText(`You ordered ${dish}.`);
-  if (!await page.locator('#menu-dialog').isVisible()) {
-    if (!await page.locator('#evening-panel > .action-drawer').evaluate((node: HTMLDetailsElement) => node.open)) await page.keyboard.press('g');
-    await page.locator('#table-menu').click();
-  }
+  if (!await page.locator('#menu-dialog').isVisible()) await page.locator('#prompt-chips button', { hasText: 'Open the menu' }).click();
   await page.locator('[data-order]').first().click();
   await expect.poll(async () => (await state(page)).order).toBe(dish);
   await expect(page.locator('#conversation-log')).toContainText(`You ordered ${dish}.`);
@@ -714,7 +704,8 @@ test('pending starts and rejected resumes keep a single coherent newcomer flow',
     await expect(page.locator('#arrival-screen')).toHaveAttribute('data-screen', 'select');
     await expect(page.locator('#dinner-hud')).toBeHidden(); expect(requests).toBe(1);
     release(); await expect(page.locator('#dinner-hud')).toBeVisible(); await waitForRestaurantScene(page);
-    await expect(page.locator('#objective-text')).toContainText(/chair|seat/i);
+    // Nothing asks anything of a guest who is still walking in; the prompt line waits for the chair.
+    await expect(page.locator('#prompt-line')).toBeHidden(); expect((await state(page)).seated).toBe(false);
     await page.keyboard.press('Escape'); await expect(page.locator('#pause-dialog')).toBeVisible();
     let rejectResume = true;
     await page.route('**/api/date/sessions/*/command', route => {

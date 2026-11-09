@@ -1,5 +1,5 @@
 {
-  "builtAt": "2026-11-08T19:15:49.830Z",
+  "builtAt": "2026-11-09T00:44:25.133Z",
   "root": ".",
   "sources": [
     {
@@ -16,11 +16,11 @@
     },
     {
       "path": "src/restaurant/story.ts",
-      "sha256": "883d909a79754c7243a39771f0a1dae2a79aa0b29cf4bcd9e0447d3ba8bcc680"
+      "sha256": "2d1c43f82e1b8611f2fddb385dac673ef76288dfcdd70341360d311aa98fff47"
     },
     {
       "path": "src/restaurant/blind-date.ts",
-      "sha256": "3a361512bce9e844de9b2adc80cb232d023a6be699a5dcdfaf348a2c37b5b15c"
+      "sha256": "560dff604132c5a35fb3d8f068725ce53c99fc41e2430bf0971a8f5cab63e613"
     },
     {
       "path": "src/restaurant/agenda-types.ts",
@@ -28,7 +28,7 @@
     },
     {
       "path": "server/restaurant/evening.ts",
-      "sha256": "ef49c9b6d7c64623077895d8d321dec029b77190bb77941d7dbc1eba7b742bb6"
+      "sha256": "f881658a3a19db9a57d64570d90488a66f8fa51757eb57ff99c6a12500a525ec"
     },
     {
       "path": "server/restaurant/scenario.ts",
@@ -51,20 +51,16 @@
       "sha256": "e8f0ca860ed2c7a8a4defc0a1e180809704512c398b1045fd7c65008867be94f"
     },
     {
-      "path": "server/restaurant/coasters.ts",
-      "sha256": "1a97452fce9743a6d494a16731747f7bda19a7d401b068584685b0911e1279b5"
-    },
-    {
       "path": "server/double-date/scenarios.ts",
-      "sha256": "70c427da3b7488447fa2af28220ebe026d80bfa0ea80d73fd953af15cb06b959"
+      "sha256": "9eb41f2a5ab6d122176457c882dc7cd51aea78dd06d1da4fc1dd6b7a31dde5dd"
     },
     {
       "path": "server/double-date/scene.ts",
-      "sha256": "b8df67d822940531483f9f785be16b69f9d8713ae1e2b6ae2ecd50e1ace42600"
+      "sha256": "9b0659e595de88c72ea9288683f13922ef5b653318af007d989898c883f1f9ff"
     },
     {
       "path": "server/double-date/conversation.ts",
-      "sha256": "d557d87f6a30d98b3efa8f0338525f73a3e8f484ac5b2874283f96812bd1b972"
+      "sha256": "3998215dd2d7e4529e77b32c95dead2ca1da063f7a54f14fac33249fe70afd9e"
     },
     {
       "path": "server/restaurant/tabletop.ts",
@@ -76,7 +72,7 @@
     },
     {
       "path": "src/restaurant/scenario-care.ts",
-      "sha256": "6cf58356ca0976095bb39c41d3418918c39e2e994d4a7edf999067cb7831074a"
+      "sha256": "17cf35494ce74b312696b5e665bd19e1a0e911924e00f0b3ec9833c9c5641b87"
     },
     {
       "path": "server/restaurant/scenario-effects.ts",
@@ -84,11 +80,11 @@
     },
     {
       "path": "src/restaurant/EveningInterface.ts",
-      "sha256": "8a79f3e3045d30ce578963f896eaf979b97dedcbcef9ab08383c30d726cab15a"
+      "sha256": "4aa221c3c27dd281c3b910c894967d19582eef081edad2bfd4bf700d723174cb"
     },
     {
       "path": "server/restaurant/index.ts",
-      "sha256": "31c1ae03c323a5938fb7316dc4befc1eb2dba42ade4ab0e4c3f7b8f0cde4ac78"
+      "sha256": "77ffa678cf8925a7b9b45c68ca7d5ea9df7b2e64a9eb0d7a28f3eec7d8396711"
     },
     {
       "path": "src/restaurant/dining-space.ts",
@@ -100,7 +96,7 @@
     },
     {
       "path": "src/restaurant/types.ts",
-      "sha256": "5e4b7142145fd43b558a801dcf42fd6bbd93a782f6f330078ac1aead4d447ad9"
+      "sha256": "fb6fbf5dd1944e7893d76108a47cdc5f44f0404ab834e65af95ee06c7157ee5b"
     }
   ],
   "counts": {
@@ -114,7 +110,7 @@
     "agendaGoals": 16,
     "presetDates": 3,
     "endingKinds": 6,
-    "storyCueKeys": 38
+    "storyCueKeys": 41
   },
   "scenarios": [
     {
@@ -22799,8 +22795,8 @@
         "preferredMain": "Roasted tomato rigatoni",
         "preferredDessert": "chocolate",
         "vulnerability": "She finds it easier to be useful and entertaining than to ask for attention for her own work. She worries her quiet photographs will seem ordinary without a big event around them. Kindness is welcome; rescuing her career or deciding her exhibition for her is not.",
-        "dinnerArc": "Begin with food-sharing banter and a quick observation. During the main course, let being off duty feel unfamiliar. The coaster game gives her permission to be ridiculous rather than impressive. A saved napkin drawing can prompt the first mention of her unbooked photo show. Dessert can bring a small decision to choose her own prints. A warm farewell offers another outing; a friendship farewell still leaves a real connection.",
-        "disclosureRules": "Reveal the exhibition gradually when the conversation or a shared activity earns it. If guarded or hurt, keep details private and state what she needs. Do not claim the human drew a camera, promised to attend, fixed her overcommitting, or agreed to another date unless the transcript or scene records it. An apology permits a conversation, not instant trust."
+        "dinnerArc": "Begin with food-sharing banter and a quick observation. During the main course, let being off duty feel unfamiliar. A quiet stretch gives her permission to be ridiculous rather than impressive. Sharing dessert can prompt the first mention of her unbooked photo show and a small decision to choose her own prints. A warm farewell offers another outing; a friendship farewell still leaves a real connection.",
+        "disclosureRules": "Reveal the exhibition gradually when the conversation or a shared moment earns it. If guarded or hurt, keep details private and state what she needs. Do not claim the human promised to attend, fixed her overcommitting, or agreed to another date unless the transcript or scene records it. An apology permits a conversation, not instant trust."
       }
     },
     {
@@ -22825,8 +22821,8 @@
         "preferredMain": "Wild mushroom risotto",
         "preferredDessert": "lemon",
         "vulnerability": "Preserving other people's stories can become a way to avoid writing anything personal. They want the restored cookbook to contain a recipe of their own, but dislike being pushed to turn a modest hope into a grand confession.",
-        "dinnerArc": "Begin reserved and quietly amused. Dinner brings a specific craft or cookbook anecdote. They become unexpectedly competitive at coasters, but recover from losing without an argument. Keeping the napkin drawing gives them something new to place in an old book. Lemon dessert connects memory with trying their own version. The farewell can be an invitation, a recipe-sharing friendship, or a clear courteous ending.",
-        "disclosureRules": "Inez is not deceased; do not invent bereavement. Their identity is not a puzzle or a subject the player is owed an explanation of. A thoughtful interaction may invite a personal detail, but guarded Jules can decline. Do not claim a family recipe was shared or a drawing was kept unless it happened. No instant intimacy after a single compliment."
+        "dinnerArc": "Begin reserved and quietly amused. Dinner brings a specific craft or cookbook anecdote. A comfortable pause is allowed to stand. Sharing dessert connects memory with trying their own version of a recipe. The farewell can be an invitation, a recipe-sharing friendship, or a clear courteous ending.",
+        "disclosureRules": "Inez is not deceased; do not invent bereavement. Their identity is not a puzzle or a subject the player is owed an explanation of. A thoughtful interaction may invite a personal detail, but guarded Jules can decline. Do not claim a family recipe was shared unless it happened. No instant intimacy after a single compliment."
       }
     },
     {
@@ -22851,8 +22847,8 @@
         "preferredMain": "Lemon & herb chicken",
         "preferredDessert": "berries",
         "vulnerability": "He is afraid that saying he wants a food truck will turn a private wish into a public test. Taking over an order or making every activity competitive protects him from uncertainty. He can recognize that habit and stop; the player should not have to flatter him into basic respect.",
-        "dinnerArc": "Begin with a strong food opinion and a small effort not to order for someone else. Let him enjoy the main course without judging it endlessly. Coasters can loosen his need to win. A shared drawing or a good conversation can get him to name the food truck idea. Dessert gives him a chance to accept someone else's choice. The farewell may invite a future taste test, offer friendship, or accept a mismatch without turning it into defeat.",
-        "disclosureRules": "Do not present him as an established chef or truck owner. Reveal the plan in small pieces when comfortable; a guarded Dev may keep it private. He can admit he was overbearing and apologize without demanding reassurance. Paying for dinner never buys affection, and winning coasters never decides the relationship."
+        "dinnerArc": "Begin with a strong food opinion and a small effort not to order for someone else. Let him enjoy the main course without judging it endlessly. A good conversation over dessert can get him to name the food truck idea. Dessert also gives him a chance to accept someone else's choice. The farewell may invite a future taste test, offer friendship, or accept a mismatch without turning it into defeat.",
+        "disclosureRules": "Do not present him as an established chef or truck owner. Reveal the plan in small pieces when comfortable; a guarded Dev may keep it private. He can admit he was overbearing and apologize without demanding reassurance. Paying for dinner never buys affection, and winning an argument never decides the relationship."
       }
     }
   ],
@@ -22999,16 +22995,19 @@
   "storyCueKeys": [
     "welcome",
     "seated",
+    "order-nudge",
     "ordered",
     "main-served",
     "taste",
     "main-finished",
-    "coasters-start",
-    "coasters-win",
-    "coasters-loss",
-    "coasters-draw",
-    "napkin-kept",
     "quiet-window",
+    "beat-waiting-1",
+    "beat-waiting-2",
+    "beat-eating-1",
+    "beat-eating-2",
+    "beat-after-1",
+    "beat-after-2",
+    "dessert-date-choice",
     "dessert-ordered",
     "dessert-served",
     "dessert-shared",
