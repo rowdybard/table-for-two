@@ -1,11 +1,13 @@
 import { HORDE_MODEL } from '../../src/restaurant/types';
 import { hordeNativeAdapter } from './horde-native';
 import { openRouterSchemaInstructions } from './openrouter';
-import { DateApiError, type ClaudeAdapter, type ClaudeChunk, type ClaudeRequest, type TokenUsage } from './providers';
+import { DateApiError, TURN_SCHEMA, type ClaudeAdapter, type ClaudeChunk, type ClaudeRequest, type TokenUsage } from './providers';
 
 export const DEFAULT_HORDE_MODEL = 'koboldcpp/G4-MeroMero-26B-A4B-it-uncensored-heretic';
 /** Grow to an eligible worker's context limit without dropping conversation turns. */
 export const HORDE_BRIDGE_CONTEXT_FIT = 'grow';
+export const HORDE_BRIDGE_RESPONSE_FORMAT = 'json_schema';
+export const HORDE_BRIDGE_SCHEMA_STRICT = true;
 const endpoint = 'https://oai.aihorde.net/v1/chat/completions';
 const maxFrameCharacters = 64 * 1024;
 const maxStreamBytes = 4 * 1024 * 1024;
@@ -57,7 +59,7 @@ export function hordeAdapter(env: NodeJS.ProcessEnv = process.env, fetcher: type
       response = await fetcher(endpoint, { method: 'POST', signal,
         headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json', 'X-Title': 'Table for Two' },
         body: JSON.stringify({ model, max_tokens: Math.min(512, request.maxTokens), stream: true,
-          stream_options: { include_usage: true }, response_format: { type: 'json_object' }, reasoning_effort: 'none',
+          stream_options: { include_usage: true }, response_format: { type: HORDE_BRIDGE_RESPONSE_FORMAT, json_schema: { name: 'date_turn', schema: request.outputSchema ?? TURN_SCHEMA, strict: HORDE_BRIDGE_SCHEMA_STRICT } }, reasoning_effort: 'none',
           horde: { conformance: 'best_effort', include_reasoning: false, context_fit: HORDE_BRIDGE_CONTEXT_FIT, trusted_workers: true, validated_backends: true, availability_mode: 'fail_fast' },
           messages: [{ role: 'system', content: `${request.system}\n${openRouterSchemaInstructions(request.outputSchema)}` }, ...request.messages] }) });
     } catch {

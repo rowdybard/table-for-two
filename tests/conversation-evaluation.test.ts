@@ -229,10 +229,12 @@ test('model settings record requested Horde identities and transport caps withou
   assert.equal(bridge.maxTokens, 700); assert.equal(bridge.effectiveMaxTokens, 512);
   assert.deepEqual(bridge.routingConfig?.requestedModels, ['fictional/configured-model']); assert.equal(bridge.routingConfig?.actualWorkerObserved, false);
   assert.equal(bridge.routingConfig?.contextFit, 'grow');
+  assert.equal(bridge.routingConfig?.responseFormat, 'json_schema'); assert.equal(bridge.routingConfig?.schemaStrict, true);
   assert.equal(evaluationModelSettings(['ai-horde'])[0].upstreamModel, DEFAULT_HORDE_MODEL);
   const native = evaluationModelSettings(['ai-horde'], { ...env, AI_HORDE_TRANSPORT: 'native', AI_HORDE_TIMEOUT_MS: '999999' })[0];
   assert.equal(native.transport, 'horde-native'); assert.equal(native.providerTimeoutMs, 120000); assert.equal(native.upstreamModel, bridge.upstreamModel);
   assert.equal(native.routingConfig?.contextFit, 'reject');
+  assert.equal('responseFormat' in native.routingConfig!, false); assert.equal('schemaStrict' in native.routingConfig!, false);
   const pool = evaluationModelSettings(['ai-horde'], { AI_HORDE_TRANSPORT: 'native' })[0];
   assert.equal(pool.upstreamModel, null); assert.equal(pool.routingConfig?.selection, 'reviewed-native-pool'); assert.equal(pool.routingConfig?.requestedModels, null);
   assert.ok(!JSON.stringify([bridge, native, pool]).includes('private-'));
