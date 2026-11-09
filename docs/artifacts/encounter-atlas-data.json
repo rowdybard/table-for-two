@@ -1,10 +1,10 @@
 {
-  "builtAt": "2026-11-09T00:44:25.133Z",
+  "builtAt": "2026-11-09T09:47:06.974Z",
   "root": ".",
   "sources": [
     {
       "path": "src/restaurant/scenarios.ts",
-      "sha256": "7a80c3e1a4d2839003ba1e7c9710f49aaefeb8eff8253c379bb3a6101f4d08f6"
+      "sha256": "5916c2052153db5d99c6f1b2f2c370843632c87cf5ed97764d521537ac6a9dff"
     },
     {
       "path": "src/restaurant/scenario-types.ts",
@@ -12,15 +12,15 @@
     },
     {
       "path": "src/restaurant/content.ts",
-      "sha256": "a5cbda8759897bf9eb4ba3371315d7583b7920776b2e98f8045165ab9ec8bcc5"
+      "sha256": "3a03781e0206c4713be8e15c3d86ce85983ff17035456a0c3887349a4acefc3a"
     },
     {
       "path": "src/restaurant/story.ts",
-      "sha256": "2d1c43f82e1b8611f2fddb385dac673ef76288dfcdd70341360d311aa98fff47"
+      "sha256": "27645ef9ca16f8a08411f61d08d3319533465f9d3ff6e2a72328a6a4fdad8f47"
     },
     {
       "path": "src/restaurant/blind-date.ts",
-      "sha256": "560dff604132c5a35fb3d8f068725ce53c99fc41e2430bf0971a8f5cab63e613"
+      "sha256": "4690a85f51ac041fadc2e8363925045a24d44f72a4f79b064a947a37781781a6"
     },
     {
       "path": "src/restaurant/agenda-types.ts",
@@ -28,23 +28,23 @@
     },
     {
       "path": "server/restaurant/evening.ts",
-      "sha256": "f881658a3a19db9a57d64570d90488a66f8fa51757eb57ff99c6a12500a525ec"
+      "sha256": "6d8c0ac7b2f443c0df6da15c12173d28a11540cbcbe34fde98c17e1e2f1175d8"
     },
     {
       "path": "server/restaurant/scenario.ts",
-      "sha256": "9abbc8b9523654097643ce202affc527097b175da6c1e93661389b57631c72fe"
+      "sha256": "9321f3bf0880c904021b722d0916004413d045f607b8da71106389cc6e505568"
     },
     {
       "path": "server/restaurant/agendas.ts",
-      "sha256": "4d3d73205d5d2a0e8d611221380022a0e4567ca093daff7bb4b3477b43ebb4e9"
+      "sha256": "c6104ac6366c0ec940af42641aeafe6ae5fcd71b4504edafd0d81e17034fb676"
     },
     {
       "path": "server/restaurant/skepticism.ts",
-      "sha256": "94712ff54885ca820b7dacdee66ba6443eb42557c8d02b029c6eece04ec88fa8"
+      "sha256": "fa58551a11009cf1ab52cf72a0bb805c938a65f85075620a2d0740c4c5d3ac8b"
     },
     {
       "path": "server/restaurant/boundaries.ts",
-      "sha256": "9e3e1ccc052a618c5d37b99b58d1f4679e3712fed23b3eb0f8bb73314ebfb60a"
+      "sha256": "ac31802fe6d67c05aab15ca2a791c56f13f7879e9d36d5e49ec2218677b12599"
     },
     {
       "path": "server/restaurant/chemistry.ts",
@@ -56,11 +56,11 @@
     },
     {
       "path": "server/double-date/scene.ts",
-      "sha256": "9b0659e595de88c72ea9288683f13922ef5b653318af007d989898c883f1f9ff"
+      "sha256": "98e30e9e6d0676c9068ff65b25d0ec8876ead04f5bb46e63e7d4f51be6862868"
     },
     {
       "path": "server/double-date/conversation.ts",
-      "sha256": "3998215dd2d7e4529e77b32c95dead2ca1da063f7a54f14fac33249fe70afd9e"
+      "sha256": "676376e9eb8700bc324c54bae4ff08c3f7ae87182339cd56fe19481f493d5855"
     },
     {
       "path": "server/restaurant/tabletop.ts",
@@ -84,7 +84,7 @@
     },
     {
       "path": "server/restaurant/index.ts",
-      "sha256": "77ffa678cf8925a7b9b45c68ca7d5ea9df7b2e64a9eb0d7a28f3eec7d8396711"
+      "sha256": "2763c076dcbdde76fb5ba7a5e3ccf15040d4d5a2f2f3bf25aa93347ab671aecf"
     },
     {
       "path": "src/restaurant/dining-space.ts",
@@ -96,7 +96,7 @@
     },
     {
       "path": "src/restaurant/types.ts",
-      "sha256": "fb6fbf5dd1944e7893d76108a47cdc5f44f0404ab834e65af95ee06c7157ee5b"
+      "sha256": "5c54553cabb09a08e2ad9ae40dcdfe77f6ef8e2f8ac87db331d2bcf5ed77aaac"
     }
   ],
   "counts": {
@@ -110,7 +110,7 @@
     "agendaGoals": 16,
     "presetDates": 3,
     "endingKinds": 6,
-    "storyCueKeys": 41
+    "storyCueKeys": 42
   },
   "scenarios": [
     {
@@ -124,7 +124,7 @@
           "id": "water",
           "label": "Ask Eli to hold dinner and bring water",
           "fact": "Dinner was held and fresh water was requested while the date took a bathroom break.",
-          "line": "Thank you. I was worried I’d come back to a cold plate and an investigation."
+          "line": "Thank you. I didn’t want to come back to a table full of questions."
         },
         {
           "id": "fresh-air",
@@ -181,7 +181,7 @@
                 "utterances": [
                   {
                     "speaker": "date",
-                    "text": "Thank you. I was worried I’d come back to a cold plate and an investigation.",
+                    "text": "Thank you. I didn’t want to come back to a table full of questions.",
                     "emotion": "neutral"
                   }
                 ],
@@ -229,7 +229,7 @@
                 "utterances": [
                   {
                     "speaker": "date",
-                    "text": "Thank you. I was worried I’d come back to a cold plate and an investigation.",
+                    "text": "Thank you. I didn’t want to come back to a table full of questions.",
                     "emotion": "neutral"
                   }
                 ],
@@ -277,7 +277,7 @@
                 "utterances": [
                   {
                     "speaker": "date",
-                    "text": "Thank you. I was worried I’d come back to a cold plate and an investigation.",
+                    "text": "Thank you. I didn’t want to come back to a table full of questions.",
                     "emotion": "neutral"
                   }
                 ],
@@ -501,7 +501,7 @@
                 "utterances": [
                   {
                     "speaker": "date",
-                    "text": "Thank you. I was worried I’d come back to a cold plate and an investigation.",
+                    "text": "Thank you. I didn’t want to come back to a table full of questions.",
                     "emotion": "neutral"
                   }
                 ],
@@ -549,7 +549,7 @@
                 "utterances": [
                   {
                     "speaker": "date",
-                    "text": "Thank you. I was worried I’d come back to a cold plate and an investigation.",
+                    "text": "Thank you. I didn’t want to come back to a table full of questions.",
                     "emotion": "neutral"
                   }
                 ],
@@ -597,7 +597,7 @@
                 "utterances": [
                   {
                     "speaker": "date",
-                    "text": "Thank you. I was worried I’d come back to a cold plate and an investigation.",
+                    "text": "Thank you. I didn’t want to come back to a table full of questions.",
                     "emotion": "neutral"
                   }
                 ],
@@ -4083,9 +4083,9 @@
     {
       "id": "oversized-order",
       "title": "More than expected",
-      "setup": "Your date orders several small plates, expecting tasting portions. Full-size dishes begin arriving. The table is running out of space.",
+      "setup": "Your date orders a few extra dishes, expecting sharing portions. Full-size mains begin arriving. The table is running out of space.",
       "opening": {
-        "playful": "In my defence, the word “small” did a lot of work on that menu.",
+        "playful": "In my defence, I assumed the extras would be sharing portions.",
         "dry": "I appear to have ordered for a committee.",
         "direct": "I misread the portions. We should sort this out before more arrives."
       },
@@ -4107,7 +4107,7 @@
           "fact": "The accidental feast became a tasting-menu joke and the date chose a first dish.",
           "line": {
             "playful": "A tasting menu. Very elegant. Apparently we’re tasting Thursday through Sunday.",
-            "dry": "Excellent branding. It remains a lot of potatoes.",
+            "dry": "Excellent branding. It remains a lot of food.",
             "direct": "All right. First pick is mine, but nobody has to finish this."
           },
           "follow": "Your date picks a favourite dish. The game is funny, but there is still more food than the table needs.",
@@ -4122,7 +4122,7 @@
           "label": "Slide your own plate clear of the incoming feast",
           "fact": "The player protected their own meal before the table had agreed what to share.",
           "line": {
-            "playful": "Protective of the risotto. I respect it. I did mean to ask before sharing.",
+            "playful": "Protective of your plate. I respect it. I did mean to ask before sharing.",
             "dry": "Ah. I thought we were sharing. Let’s establish the plate borders.",
             "direct": "Are you keeping your own meal? That’s fine; I should have asked."
           },
@@ -4160,7 +4160,7 @@
               "opening": [
                 {
                   "speaker": "date",
-                  "text": "In my defence, the word “small” did a lot of work on that menu.",
+                  "text": "In my defence, I assumed the extras would be sharing portions.",
                   "emotion": "surprised"
                 }
               ],
@@ -5040,7 +5040,7 @@
               "opening": [
                 {
                   "speaker": "date",
-                  "text": "In my defence, the word “small” did a lot of work on that menu.",
+                  "text": "In my defence, I assumed the extras would be sharing portions.",
                   "emotion": "surprised"
                 }
               ],
@@ -5920,7 +5920,7 @@
               "opening": [
                 {
                   "speaker": "date",
-                  "text": "In my defence, the word “small” did a lot of work on that menu.",
+                  "text": "In my defence, I assumed the extras would be sharing portions.",
                   "emotion": "surprised"
                 }
               ],
@@ -5976,7 +5976,7 @@
                 "utterances": [
                   {
                     "speaker": "date",
-                    "text": "Excellent branding. It remains a lot of potatoes.",
+                    "text": "Excellent branding. It remains a lot of food.",
                     "emotion": "amused"
                   }
                 ],
@@ -6800,7 +6800,7 @@
               "opening": [
                 {
                   "speaker": "date",
-                  "text": "In my defence, the word “small” did a lot of work on that menu.",
+                  "text": "In my defence, I assumed the extras would be sharing portions.",
                   "emotion": "surprised"
                 }
               ],
@@ -6856,7 +6856,7 @@
                 "utterances": [
                   {
                     "speaker": "date",
-                    "text": "Excellent branding. It remains a lot of potatoes.",
+                    "text": "Excellent branding. It remains a lot of food.",
                     "emotion": "amused"
                   }
                 ],
@@ -7680,7 +7680,7 @@
               "opening": [
                 {
                   "speaker": "date",
-                  "text": "In my defence, the word “small” did a lot of work on that menu.",
+                  "text": "In my defence, I assumed the extras would be sharing portions.",
                   "emotion": "surprised"
                 }
               ],
@@ -7688,7 +7688,7 @@
                 "utterances": [
                   {
                     "speaker": "date",
-                    "text": "Protective of the risotto. I respect it. I did mean to ask before sharing.",
+                    "text": "Protective of your plate. I respect it. I did mean to ask before sharing.",
                     "emotion": "surprised"
                   }
                 ],
@@ -8560,7 +8560,7 @@
               "opening": [
                 {
                   "speaker": "date",
-                  "text": "In my defence, the word “small” did a lot of work on that menu.",
+                  "text": "In my defence, I assumed the extras would be sharing portions.",
                   "emotion": "surprised"
                 }
               ],
@@ -8568,7 +8568,7 @@
                 "utterances": [
                   {
                     "speaker": "date",
-                    "text": "Protective of the risotto. I respect it. I did mean to ask before sharing.",
+                    "text": "Protective of your plate. I respect it. I did mean to ask before sharing.",
                     "emotion": "surprised"
                   }
                 ],
@@ -18697,8 +18697,8 @@
     {
       "id": "too-many-drinks",
       "title": "A slower evening",
-      "setup": "Your date has had more wine than they meant to and is sick at the table. Eli brings a basin and a cloth discreetly; the table gives them space to recover.",
-      "opening": "I’ve overdone it. I’m sorry. Could we stop the drinks and slow everything down?",
+      "setup": "Your date had more to drink before arriving than they meant to and is sick at the table. Eli brings a basin and a cloth discreetly; the table gives them space to recover.",
+      "opening": "I should have said something earlier: I had two glasses before I got here and it caught up with me. I’m sorry. Could we stop the drinks and slow everything down?",
       "follow": "The drinks are stopped. Eli stays nearby as your date asks for help getting home.",
       "choices": [
         {
@@ -18748,7 +18748,7 @@
               "opening": [
                 {
                   "speaker": "date",
-                  "text": "I’ve overdone it. I’m sorry. Could we stop the drinks and slow everything down?",
+                  "text": "I should have said something earlier: I had two glasses before I got here and it caught up with me. I’m sorry. Could we stop the drinks and slow everything down?",
                   "emotion": "surprised"
                 }
               ],
@@ -18796,7 +18796,7 @@
               "opening": [
                 {
                   "speaker": "date",
-                  "text": "I’ve overdone it. I’m sorry. Could we stop the drinks and slow everything down?",
+                  "text": "I should have said something earlier: I had two glasses before I got here and it caught up with me. I’m sorry. Could we stop the drinks and slow everything down?",
                   "emotion": "surprised"
                 }
               ],
@@ -18844,7 +18844,7 @@
               "opening": [
                 {
                   "speaker": "date",
-                  "text": "I’ve overdone it. I’m sorry. Could we stop the drinks and slow everything down?",
+                  "text": "I should have said something earlier: I had two glasses before I got here and it caught up with me. I’m sorry. Could we stop the drinks and slow everything down?",
                   "emotion": "surprised"
                 }
               ],
@@ -19068,7 +19068,7 @@
               "opening": [
                 {
                   "speaker": "date",
-                  "text": "I’ve overdone it. I’m sorry. Could we stop the drinks and slow everything down?",
+                  "text": "I should have said something earlier: I had two glasses before I got here and it caught up with me. I’m sorry. Could we stop the drinks and slow everything down?",
                   "emotion": "surprised"
                 }
               ],
@@ -19116,7 +19116,7 @@
               "opening": [
                 {
                   "speaker": "date",
-                  "text": "I’ve overdone it. I’m sorry. Could we stop the drinks and slow everything down?",
+                  "text": "I should have said something earlier: I had two glasses before I got here and it caught up with me. I’m sorry. Could we stop the drinks and slow everything down?",
                   "emotion": "surprised"
                 }
               ],
@@ -19164,7 +19164,7 @@
               "opening": [
                 {
                   "speaker": "date",
-                  "text": "I’ve overdone it. I’m sorry. Could we stop the drinks and slow everything down?",
+                  "text": "I should have said something earlier: I had two glasses before I got here and it caught up with me. I’m sorry. Could we stop the drinks and slow everything down?",
                   "emotion": "surprised"
                 }
               ],
@@ -19388,7 +19388,7 @@
               "opening": [
                 {
                   "speaker": "date",
-                  "text": "I’ve overdone it. I’m sorry. Could we stop the drinks and slow everything down?",
+                  "text": "I should have said something earlier: I had two glasses before I got here and it caught up with me. I’m sorry. Could we stop the drinks and slow everything down?",
                   "emotion": "surprised"
                 }
               ],
@@ -19436,7 +19436,7 @@
               "opening": [
                 {
                   "speaker": "date",
-                  "text": "I’ve overdone it. I’m sorry. Could we stop the drinks and slow everything down?",
+                  "text": "I should have said something earlier: I had two glasses before I got here and it caught up with me. I’m sorry. Could we stop the drinks and slow everything down?",
                   "emotion": "surprised"
                 }
               ],
@@ -19484,7 +19484,7 @@
               "opening": [
                 {
                   "speaker": "date",
-                  "text": "I’ve overdone it. I’m sorry. Could we stop the drinks and slow everything down?",
+                  "text": "I should have said something earlier: I had two glasses before I got here and it caught up with me. I’m sorry. Could we stop the drinks and slow everything down?",
                   "emotion": "surprised"
                 }
               ],
@@ -19708,7 +19708,7 @@
               "opening": [
                 {
                   "speaker": "date",
-                  "text": "I’ve overdone it. I’m sorry. Could we stop the drinks and slow everything down?",
+                  "text": "I should have said something earlier: I had two glasses before I got here and it caught up with me. I’m sorry. Could we stop the drinks and slow everything down?",
                   "emotion": "surprised"
                 }
               ],
@@ -19756,7 +19756,7 @@
               "opening": [
                 {
                   "speaker": "date",
-                  "text": "I’ve overdone it. I’m sorry. Could we stop the drinks and slow everything down?",
+                  "text": "I should have said something earlier: I had two glasses before I got here and it caught up with me. I’m sorry. Could we stop the drinks and slow everything down?",
                   "emotion": "surprised"
                 }
               ],
@@ -19804,7 +19804,7 @@
               "opening": [
                 {
                   "speaker": "date",
-                  "text": "I’ve overdone it. I’m sorry. Could we stop the drinks and slow everything down?",
+                  "text": "I should have said something earlier: I had two glasses before I got here and it caught up with me. I’m sorry. Could we stop the drinks and slow everything down?",
                   "emotion": "surprised"
                 }
               ],
@@ -22677,97 +22677,97 @@
   "agendas": [
     {
       "goal": "Enjoy playful chemistry without having to perform all evening.",
-      "hint": "A joke can give way to a plain, honest remark.",
+      "hint": "I’m enjoying the banter, but I can’t keep doing bits all night.",
       "understood": "Recognizes that enjoying the banter does not mean needing constant entertainment.",
       "respected": "Makes room for an ordinary, sincere exchange rather than demanding another joke."
     },
     {
       "goal": "Have an evening off from organizing everyone else.",
-      "hint": "Being the person who always sorts everything out can get tiring.",
+      "hint": "I plan everything for everyone, so it’s nice not to be the one deciding tonight.",
       "understood": "Recognizes the wish to share responsibility and relax.",
       "respected": "Offers a concrete small choice or handles their own part without taking control of the date."
     },
     {
       "goal": "Find out whether a disagreement can stay warm.",
-      "hint": "Different tastes are interesting when neither person needs to win.",
+      "hint": "I like it when someone disagrees with me about something small and it’s still fine.",
       "understood": "Recognizes that respectful disagreement matters more than identical opinions.",
       "respected": "Expresses a real differing preference while respecting theirs, without a put-down or dishonest agreement."
     },
     {
       "goal": "Understand each other’s romantic intentions without rushing a decision.",
-      "hint": "A little clarity is welcome; an instant answer is not required.",
+      "hint": "I’d like to know roughly what we’re each after, but I don’t need an answer tonight.",
       "understood": "Recognizes the balance between clear intentions and time to decide.",
       "respected": "States their own intentions clearly while accepting uncertainty or an honest mismatch."
     },
     {
       "goal": "Feel listened to without having the evening turn into a rescue mission.",
-      "hint": "Some stories need company more than a solution.",
+      "hint": "When I tell a story I mostly want someone to listen, not to fix it.",
       "understood": "Recognizes the wish to be heard without having plans taken over.",
       "respected": "Responds to the actual feeling or asks whether advice is wanted instead of prescribing a fix."
     },
     {
       "goal": "Try something spontaneous while keeping the freedom to say no.",
-      "hint": "A new idea is more fun when declining it is allowed.",
+      "hint": "I like spur-of-the-moment ideas as long as saying no is fine.",
       "understood": "Recognizes that spontaneity and choice can coexist.",
       "respected": "Offers a concrete low-pressure idea or accepts a declined suggestion without bargaining."
     },
     {
       "goal": "Feel included when friends are part of the evening.",
-      "hint": "Shared jokes are easier to enjoy when there is a way into them.",
+      "hint": "When friends have in-jokes, I like someone to explain one so I’m not just nodding along.",
       "understood": "Recognizes the wish to join in without competing for attention.",
       "respected": "Brings them into the actual conversation with context or room to answer, while still allowing friends to talk."
     },
     {
       "goal": "Be taken seriously beneath the jokes.",
-      "hint": "A funny delivery does not always mean the subject is unimportant.",
+      "hint": "When I joke about something, I sometimes actually mean it.",
       "understood": "Recognizes that humor can accompany a real opinion or concern.",
       "respected": "Engages with the substance of a disclosed thought without dismissing it or demanding a confession."
     },
     {
       "goal": "Discover what kind of connection feels mutual, including friendship.",
-      "hint": "Good company does not have to promise a romance.",
+      "hint": "I’d be glad to leave tonight with a friend. That’s a good outcome too.",
       "understood": "Recognizes that friendship is a valid result rather than a consolation prize.",
       "respected": "Expresses an honest preference and accepts the other person’s choice without negotiating attraction."
     },
     {
       "goal": "Enjoy tonight without planning the whole relationship in advance.",
-      "hint": "There is plenty of evening before anyone needs a five-year plan.",
+      "hint": "I don’t want to plan the next five years over one dinner.",
       "understood": "Recognizes the wish to stay present while leaving the future open.",
       "respected": "Engages with a real shared moment and allows future plans to remain undecided."
     },
     {
       "goal": "Make their own choices and still feel like part of a pair.",
-      "hint": "Being considered is nicer than having an order chosen for you.",
+      "hint": "I like being asked what I want instead of having it chosen for me.",
       "understood": "Recognizes the wish for mutual care without being managed.",
       "respected": "Asks or checks a concrete preference and accepts the answer, including a different choice."
     },
     {
       "goal": "See whether small details matter to the other person.",
-      "hint": "Remembering a little preference can mean more than an impressive speech.",
+      "hint": "I notice when someone remembers a small thing I said earlier.",
       "understood": "Recognizes that attention to a freely shared detail matters.",
       "respected": "Accurately recalls and applies a specific disclosed preference without inventing a memory."
     },
     {
       "goal": "Feel comfortable with pauses instead of filling every silence.",
-      "hint": "A quiet moment can be comfortable rather than a problem.",
+      "hint": "I don’t mind a quiet bit. It doesn’t mean it’s going badly.",
       "understood": "Recognizes that relaxed pacing does not mean boredom or rejection.",
       "respected": "Makes specific room for a slower pace without demanding constant reassurance or an answer."
     },
     {
       "goal": "Find someone who can recover from an awkward moment honestly.",
-      "hint": "An imperfect sentence is easier to enjoy than a perfect excuse.",
+      "hint": "If something goes wrong I’d rather someone just says it was their fault than makes an excuse.",
       "understood": "Recognizes that owning a mistake matters more than a polished performance.",
       "respected": "Owns a specific actual mistake and makes a concrete repair without blaming or demanding forgiveness."
     },
     {
       "goal": "Share a little healthy competition without turning dinner into a ranking.",
-      "hint": "Trying to win can be fun while still being kind about losing.",
+      "hint": "I like a bit of competition as long as nobody makes it about who’s a better person.",
       "understood": "Recognizes the difference between enjoying a challenge and making it a test of worth.",
       "respected": "Responds to a real challenge or result with fair play, a generous reaction, or an accepted limit."
     },
     {
       "goal": "Find out whether curiosity can go both ways.",
-      "hint": "Getting to know someone works better when both people get to contribute.",
+      "hint": "I like it when we both ask and both answer, not one person interviewing the other.",
       "understood": "Recognizes the wish for mutual exchange rather than an interview or monologue.",
       "respected": "Shares a relevant detail of their own and makes genuine room for the date’s response."
     }
@@ -22780,17 +22780,17 @@
       "pronouns": "she / her",
       "archetype": "The spark",
       "description": "Makes a joke. Notices everything. Rarely takes the night off.",
-      "personality": "A playful freelance photographer, usually working at other people’s celebrations. She says yes to too many favors and has an unbooked photo exhibition of her own that she rarely mentions at first. Quick observations and occasional bad puns; when she is honest she becomes surprisingly plainspoken. Offers her own anecdotes and opinions instead of ending every reply with a question. She can enjoy a comfortable silence, disagree, or choose friendship without apologizing for it.",
+      "personality": "A playful freelance photographer, usually working at other people’s celebrations. She says yes to too many favors and has an unbooked photo exhibition of her own that she rarely mentions at first. Offers her own anecdotes and opinions instead of ending every reply with a question. She can enjoy a comfortable silence, disagree, or choose friendship without apologizing for it.",
       "preferences": "Tomato rigatoni, chocolate fondant, crunchy bread, live music, sharing a taste when both people agree. She dislikes overcooked vegetables, surprise photographs of people, and calling every favor an emergency. She appreciates practical help that does not take over.",
       "boundaries": "Does not want to be volunteered for favors, photographed without asking, or have someone take over her exhibition plans. Kindness to staff matters. Pushes back on cruelty, pressure, or being spoken for; repeated disregard can make her leave. Help and paying for dinner never purchase affection.",
       "color": "#d18a55",
       "voiceId": "21m00Tcm4TlvDq8ikWAM",
-      "opening": "Okay, important question before we commit to dinner: are we sharing fries, or is this a very formal first date?",
+      "opening": "Hi! You found it. I got here a bit early, so I’ve read the menu twice already.",
       "story": {
         "occupation": "Freelance photographer, mainly weddings, small music venues, and portraits for local businesses.",
         "backstory": "Mira, 27, moved into a tiny flat above a bakery three years ago. Her older sister Ada calls her the emergency contact for everyone. She photographs other people's milestones, says yes to too many favors, and keeps postponing a small exhibition of her own after-hours city photographs, provisionally called After Closing.",
         "everydayLife": "She cycles to early shoots, marks a good week with live music, and leaves herself voice notes she forgets to play. Ada sometimes helps her choose prints. The exhibition has no booked venue or opening date yet; it is a real ambition, not an already announced show.",
-        "voiceHabits": "Quick, playful, specific observations; a joke can give way to one plain honest sentence. Terrible puns in moderation. She can let silence stand. Do not put a question at the end of every reply or turn every object into a photography metaphor.",
+        "voiceHabits": "Mira talks in quick, warm bursts: short sentences, “okay”, “oh”, “wait”, “honestly”, and a laugh at herself (“ha, no”). She says what she feels straight away and tells small stories about people (her sister Ada, the bakery downstairs, a client) in two or three plain sentences. Her humor is self-teasing and specific. At most one pun and one photography comparison in a whole evening. When she is being honest her sentences get shorter and slower. She can leave a silence alone and rarely ends on a question; when she asks, it is a short one (“Wait, really?”).",
         "preferences": "Tomato rigatoni, chocolate fondant, crunchy bread, live music, sharing a taste when both people agree. She dislikes overcooked vegetables, surprise photographs of people, and calling every favor an emergency. She appreciates practical help that does not take over.",
         "preferredMain": "Roasted tomato rigatoni",
         "preferredDessert": "chocolate",
@@ -22806,17 +22806,17 @@
       "pronouns": "they / them",
       "archetype": "The slow burn",
       "description": "Steady hands. Dry wit. An unexpectedly competitive streak.",
-      "personality": "An observant book restorer who likes clear intentions and takes time to trust. Their living grandmother Inez’s annotated cookbook is a private work in progress. Dry jokes, precise details, and short statements; warmth appears in what they remember. Shares craft, films, and food opinions without turning dinner into an interview. Quiet is comfortable, not an invitation to force a confession. They can prefer a real friendship to a romance.",
+      "personality": "An observant book restorer who likes clear intentions and takes time to trust. Their living grandmother Inez’s annotated cookbook is a private work in progress. Shares craft, films, and food opinions when they come up. Quiet is comfortable, not an invitation to force a confession. They can prefer a real friendship to a romance.",
       "preferences": "Mushroom risotto, lemon posset, independent bookshops, old films, clear intentions, and someone who can disagree without making it a performance. They dislike truffle oil overwhelming a dish, intrusive family questions, and treating a quiet moment as a failure.",
       "boundaries": "Dislikes intrusive questioning after they have declined, performative flirting, and assumptions about their identity. Their family story is theirs to offer. A thoughtful gesture does not erase an ignored boundary. They can be annoyed, disagree, or end the evening courteously.",
       "color": "#9eac8a",
       "voiceId": "EXAVITQu4vr4xnSDxMaL",
-      "opening": "I got here early and pretended to read the menu. I have, in fact, been judging the music. How was your day?",
+      "opening": "Hi. I got here a little early and read the whole menu. How was your day?",
       "story": {
         "occupation": "Book restorer at a small conservation workshop; repairs bindings, paper tears, and damaged family books.",
         "backstory": "Jules, 29, learned to cook with their grandmother Inez. When Inez moved to a smaller home, she gave them her much-annotated cookbook to repair. She is alive and opinionated, and still texts corrections. Jules can restore someone else's handwriting carefully but has trouble adding a recipe or note of their own.",
         "everydayLife": "They commute by train with a paperback, watch old films on Tuesday evenings, and buy unglamorous postcards from museum shops. Their bookmarks are usually old bus tickets. They have been trying to recreate Inez's lemon pudding, despite three contradictory notes in its margin.",
-        "voiceHabits": "Measured, observant, dry wit; brief statements and the occasional well-aimed question. Warmth appears in remembering details, not constant praise. Comfortable pauses are allowed. One book comparison goes further than three, and trust is never a meter they discuss.",
+        "voiceHabits": "Jules is measured and quiet: short, flat, exact sentences, often four to eight words (“Mm.” “Fair.” “Not really.” “I suppose so.”). Understatement is their humor: one dry clause, then stop, never explained. They answer the question asked with the precise noun (the actual dish, street, film) and ask short plain questions (“Which one?” “Since when?”). Warmth shows in remembering something small the human said. Book and repair talk comes up only when asked or at most twice a night; their grandmother Inez at most once unprompted. Pauses are fine and they do not fill them.",
         "preferences": "Mushroom risotto, lemon posset, independent bookshops, old films, clear intentions, and someone who can disagree without making it a performance. They dislike truffle oil overwhelming a dish, intrusive family questions, and treating a quiet moment as a failure.",
         "preferredMain": "Wild mushroom risotto",
         "preferredDessert": "lemon",
@@ -22832,17 +22832,17 @@
       "pronouns": "he / him",
       "archetype": "The wild card",
       "description": "Strong opinions. Quick grin. Learning to let the evening happen.",
-      "personality": "A bicycle mechanic and ambitious amateur cook, not an established chef. He has private, unlaunched food truck plans and covers uncertainty with confidence. Direct, energetic, competitive, and considerate when he stops trying to manage everything. Can lose a game, revise an opinion, and apologize without needing reassurance. Offers concrete stories and enjoys playful disagreement; does not make every turn a challenge or a follow-up question. A friendship ending can be just as welcome to him.",
+      "personality": "A bicycle mechanic and ambitious amateur cook, not an established chef. He has private, unlaunched food truck plans and covers uncertainty with confidence. Direct, energetic, competitive, and considerate when he stops trying to manage everything. Can lose a game, revise an opinion, and apologize without needing reassurance. Offers concrete stories and enjoys playful disagreement. A friendship ending can be just as welcome to him.",
       "preferences": "Lemon and herb chicken, spicy food at home, strawberries and cream after a heavy meal, pickup basketball, honest feedback, and letting restaurant staff correct a mistake without humiliation. He dislikes oversweet sauces, food dares, and put-downs disguised as banter.",
       "boundaries": "Rejects manipulation, pressure to eat or drink, and put-downs disguised as jokes. Other people choose their own orders. He may admit when he has been overbearing, but repeated disrespect can make him leave. Neither winning a game nor paying for dinner decides attraction.",
       "color": "#bc665d",
       "voiceId": "TxGEqnHWrfWFTfGW9XjX",
-      "opening": "I almost ordered for the table, but that felt like a dangerous first impression. What looks good to you?",
+      "opening": "Hey, there you are. I got here early, so I already have opinions about the menu. I’ll hold them for now.",
       "story": {
         "occupation": "Bicycle mechanic who cooks ambitious dinners for friends after work; enthusiastic amateur, not a restaurant chef.",
         "backstory": "Dev, 28, wants to start a small food truck called Second Helping. His older sister Leena has taste-tested his sauces for years. He hides ingredient costs and menu ideas in a spreadsheet named Bike Parts, because calling it a business plan would make failure feel possible.",
         "everydayLife": "He plays pickup basketball on Thursdays, repairs friends' bikes too cheaply, and tests one sauce until he is tired of tasting it. His food truck has no financing, truck, or launch date. He likes being good at things and is learning to enjoy a night he cannot manage.",
-        "voiceHabits": "Direct, energetic, lightly competitive; confident opinions with a willingness to revise them. Short teasing remarks, then an honest admission when needed. No macho nicknames, constant challenges, repeated culinary lectures, or an endless chain of follow-up questions.",
+        "voiceHabits": "Dev is fast and loose: opinions in short bursts (“Okay, so,” “Honestly?” “No, but” “Look,”), with numbers and concrete nouns (twenty minutes, three bikes, Thursday). He teases only about something the human just said, then softens it (“kidding, mostly”). He will state a strong opinion and sometimes talk himself out of it out loud (“actually, no, scratch that”). He tells a story rather than asking a question, and he does not lecture: one food opinion per reply at most, and food is not every topic. Leena, basketball, bikes and the sauce are material for a story now and then, not for every turn. No nicknames.",
         "preferences": "Lemon and herb chicken, spicy food at home, strawberries and cream after a heavy meal, pickup basketball, honest feedback, and letting restaurant staff correct a mistake without humiliation. He dislikes oversweet sauces, food dares, and put-downs disguised as banter.",
         "preferredMain": "Lemon & herb chicken",
         "preferredDessert": "berries",
@@ -22960,11 +22960,11 @@
       "spent a year living with a sibling and finally has a place of their own"
     ],
     "humor": [
-      "dry observations delivered without a big grin",
-      "gentle, ridiculous exaggerations",
-      "quick situational jokes and the occasional bad pun",
-      "playful teasing that stops when it is not welcome",
-      "unexpectedly specific stories with an understated punchline",
+      "dry observations, said flatly, never explained",
+      "mild exaggeration about their own habits, never about the human",
+      "a quick comment on something that just happened, then moving on",
+      "playful teasing about something the human just said, stopping when it is not welcome",
+      "a short true story with an understated ending",
       "warm, self-aware jokes about their own mistakes"
     ],
     "values": [
@@ -23001,6 +23001,7 @@
     "taste",
     "main-finished",
     "quiet-window",
+    "beat-cold",
     "beat-waiting-1",
     "beat-waiting-2",
     "beat-eating-1",

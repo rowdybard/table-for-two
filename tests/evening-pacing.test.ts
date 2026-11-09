@@ -4,10 +4,12 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { EveningDirector } from '../server/restaurant/evening';
 import { validateCommand } from '../server/restaurant';
 import { emptyUsage } from '../server/restaurant/scene';
+import { tableFacts } from '../server/restaurant/table-facts';
 import { MENU } from '../src/restaurant/content';
 import { DESSERTS, EVENING_PACE, createEvening } from '../src/restaurant/evening';
-import { BEAT_CUES, CHARACTER_STORIES } from '../src/restaurant/story';
+import { BEAT_COLD, BEAT_CUES, CHARACTER_STORIES } from '../src/restaurant/story';
 import type { DateId, DinnerState } from '../src/restaurant/types';
+import { recordedAtTable } from './helpers/turn-note';
 
 before(async () => { await RAPIER.init(); });
 
@@ -21,6 +23,12 @@ const quiet = { allowIncidents: false, allowScenarios: false } as const;
 function run(state: DinnerState, director: EveningDirector, seconds: number, options: Parameters<EveningDirector['step']>[1] = quiet) { for (let i = 0; i < seconds; i++) { state.elapsed += 1; director.step(1, options); } }
 const keys = (state: DinnerState) => state.evening.cues.map(cue => cue.key);
 const count = (state: DinnerState, key: string) => keys(state).filter(item => item === key).length;
+/** One real exchange: the human speaks, the date answers with a statement, and the reply is finished. */
+function converse(director: EveningDirector, said = 'It has been a long week.', reply = 'That sounds like a lot. I hope tonight is easier.') {
+  director.noteHumanTurn(said);
+  director.social({ utterances: [{ speaker: 'date', text: reply, emotion: 'warm' }], emotion: 'warm', action: 'none', memory: 'We talked.', social: { signal: 'none', reason: '', wantsToLeave: false } }, said);
+  director.replyEnded();
+}
 function order(state: DinnerState, director: EveningDirector) { state.order = MENU[0]; director.ordered(); }
 function serveMain(state: DinnerState, director: EveningDirector) { order(state, director); run(state, director, EVENING_PACE.mainKitchen); assert.equal(state.evening.main.status, 'served'); }
 
@@ -76,7 +84,7 @@ test('dessert: the date picks their favourite when nobody chooses, declines when
       run(state, director, EVENING_PACE.dessertDecision - 1); assert.equal(state.evening.dessert.status, 'none');
       run(state, director, 1); assert.equal(state.evening.dessert.status, 'waiting'); assert.equal(state.evening.dessert.chosenBy, 'date');
       assert.equal(state.evening.dessert.choice, CHARACTER_STORIES[dateId].preferredDessert); assert.equal(count(state, 'dessert-date-choice'), 1);
-      assert.ok(state.memory.includes(DESSERTS.find(dessert => dessert.id === state.evening.dessert.choice)!.name.toLowerCase()), 'the date’s pick is remembered for the conversation');
+      assert.ok(tableFacts(state).some(fact => fact.includes(DESSERTS.find(dessert => dessert.id === state.evening.dessert.choice)!.name.toLowerCase())), 'the date’s pick is a table fact the model cannot overwrite');
       run(state, director, EVENING_PACE.dessertKitchen); assert.equal(state.evening.dessert.status, 'served'); assert.equal(count(state, 'dessert-served'), 1);
       run(state, director, EVENING_PACE.dessertTalk); assert.ok(state.evening.sharedActivities.includes('dessert')); assert.ok(state.evening.moments.some(moment => moment.id === 'dessert')); assert.equal(count(state, 'dessert-shared'), 1);
       run(state, director, EVENING_PACE.dessertCourse - EVENING_PACE.dessertTalk - 1); assert.equal(state.evening.dessert.status, 'served');
@@ -113,18 +121,25 @@ test('dessert: the date picks their favourite when nobody chooses, declines when
   } finally { held.free(); }
 });
 
-test('the date breaks long silences with authored lines: paced by the variation, distinct, remembered, never a human turn, and capped', () => {
+test('the date breaks long silences with authored lines: paced by the variation, distinct, never remembered, never a human turn, and capped', () => {
   for (const variation of [0, 2]) {
     const state = seatedDinner('mira', variation), director = new EveningDirector(state);
     try {
-      serveMain(state, director); const served = state.elapsed, silence = EVENING_PACE.beatSilence + variation * 17;
-      run(state, director, silence - 1); assert.equal(state.evening.beats, 0);
-      run(state, director, 1); assert.equal(state.evening.beats, 1); assert.equal(state.evening.cues.at(-1)!.key, BEAT_CUES.eating[0]); assert.equal(state.evening.cues.at(-1)!.utterances[0].speaker, 'date');
-      assert.ok(state.memory.includes('broke a silence')); assert.equal(state.evening.dialogueTurns, 0); assert.equal(state.usage.claudeRequests, 0);
-      // The next line waits for both the beat spacing and a fresh silence after the first one.
-      const gap = Math.max(EVENING_PACE.beatSpacing, silence);
-      run(state, director, gap - 1); assert.equal(state.evening.beats, 1, 'two beats keep their distance');
-      run(state, director, 1); assert.equal(state.evening.beats, 2); assert.equal(state.evening.cues.at(-1)!.key, BEAT_CUES.eating[1]);
+      director.seated(); converse(director); order(state, director);
+      // While the kitchen works the silence is shorter than the cook's 45 seconds, so the waiting line is reachable.
+      run(state, director, EVENING_PACE.beatSilenceWaiting - 1); assert.equal(state.evening.beats, 0);
+      run(state, director, 1); assert.equal(state.evening.beats, 1); assert.equal(state.evening.cues.at(-1)!.key, BEAT_CUES.waiting[0]); assert.equal(state.evening.cues.at(-1)!.utterances[0].speaker, 'date');
+      assert.equal(state.evening.dialogueTurns, 1, 'an authored beat is never a human turn'); assert.equal(state.usage.claudeRequests, 0);
+      assert.ok(!state.memory.includes('silence') && !tableFacts(state).some(fact => /silence/i.test(fact)), 'an authored line is not a memory');
+      const waitingBeatAt = state.elapsed, silence = EVENING_PACE.beatSilence + variation * 17;
+      run(state, director, EVENING_PACE.mainKitchen - waitingBeatAt); assert.equal(state.evening.main.status, 'served'); const served = state.elapsed;
+      // The next line waits for both the beat spacing and a fresh silence after the food arrives.
+      const first = Math.max(served + silence, waitingBeatAt + EVENING_PACE.beatSpacing);
+      run(state, director, first - state.elapsed - 1); assert.equal(state.evening.beats, 1, 'two beats keep their distance');
+      run(state, director, 1); assert.equal(state.evening.beats, 2); assert.equal(state.evening.cues.at(-1)!.key, BEAT_CUES.eating[0]);
+      const second = first + Math.max(EVENING_PACE.beatSpacing, silence);
+      run(state, director, second - state.elapsed - 1); assert.equal(state.evening.beats, 2);
+      run(state, director, 1); assert.equal(state.evening.beats, 3); assert.equal(state.evening.cues.at(-1)!.key, BEAT_CUES.eating[1]);
       assert.ok(state.elapsed - served < EVENING_PACE.mainCourse, 'both eating beats fit inside an untouched main course');
       run(state, director, EVENING_PACE.mainCourse); assert.equal(state.evening.main.status, 'finished');
       const afterClear = state.evening.beats;
@@ -137,10 +152,44 @@ test('the date breaks long silences with authored lines: paced by the variation,
   }
   const talkative = seatedDinner(), director = new EveningDirector(talkative);
   try {
-    serveMain(talkative, director); run(talkative, director, EVENING_PACE.beatSilence - 5);
-    director.social({ utterances: [{ speaker: 'date', text: 'Tell me about that.', emotion: 'warm' }], emotion: 'warm', action: 'none', memory: 'We talked.', social: { signal: 'none', reason: '', wantsToLeave: false } }, 'I was saying something.');
+    director.seated(); order(talkative, director); run(talkative, director, EVENING_PACE.beatSilenceWaiting - 5);
+    converse(director, 'I was saying something.', 'Go on, I am listening.');
     run(talkative, director, 10); assert.equal(talkative.evening.beats, 0, 'a real exchange resets the silence');
     talkative.evening.beats = EVENING_PACE.beatsPerEvening; run(talkative, director, 150); assert.equal(count(talkative, BEAT_CUES.eating[0]), 0, 'the evening’s beats are finite');
+  } finally { director.free(); }
+});
+
+test('a table where nobody has spoken hears one plain invitation, and the ordinary beats take over once they answer', () => {
+  const state = seatedDinner(), director = new EveningDirector(state);
+  try {
+    director.seated(); order(state, director);
+    run(state, director, EVENING_PACE.beatSilenceWaiting - 1); assert.equal(state.evening.beats, 0);
+    run(state, director, 1); assert.equal(state.evening.beats, 1);
+    const cue = state.evening.cues.at(-1)!; assert.equal(cue.key, BEAT_COLD); assert.equal(cue.utterances.length, 1); assert.equal(cue.utterances[0].speaker, 'date');
+    assert.equal(state.evening.dialogueTurns, 0); assert.equal(state.usage.claudeRequests, 0);
+    assert.equal(director.pendingQuestion, cue.utterances[0].text, 'the invitation is an open question until the human answers');
+    converse(director, 'Mostly work, honestly.', 'That sounds like a lot.');
+    assert.equal(director.pendingQuestion, null, 'the answer closes it'); assert.equal(state.evening.dialogueTurns, 1);
+    run(state, director, 260);
+    assert.equal(count(state, BEAT_COLD), 1, 'the invitation is made once'); assert.equal(count(state, BEAT_CUES.eating[0]), 1, 'the ordinary silence breakers follow a real exchange');
+  } finally { director.free(); }
+  const silent = seatedDinner('jules'), mute = new EveningDirector(silent);
+  try {
+    mute.seated(); order(silent, mute); run(silent, mute, 400);
+    assert.equal(silent.evening.beats, 1, 'with nobody speaking, the date does not keep guessing at what they are thinking');
+    assert.deepEqual(silent.evening.cues.filter(cue => cue.key.startsWith('beat-')).map(cue => cue.key), [BEAT_COLD]);
+  } finally { mute.free(); }
+});
+
+test('the date does not break a silence they made themselves by asking a question', () => {
+  const state = seatedDinner(), director = new EveningDirector(state);
+  try {
+    director.seated(); order(state, director); run(state, director, 20);
+    converse(director, 'Hello.', 'Nice to meet you. What do you usually order here?');
+    run(state, director, 125); assert.equal(state.evening.main.status, 'served'); assert.equal(state.evening.beats, 0, 'the date asked, so the date waits');
+    converse(director, 'Probably the pasta.', 'Good choice.');
+    run(state, director, EVENING_PACE.beatSilence - 1); assert.equal(state.evening.beats, 0);
+    run(state, director, 1); assert.equal(state.evening.beats, 1); assert.equal(state.evening.cues.at(-1)!.key, BEAT_CUES.eating[0]);
   } finally { director.free(); }
 });
 
@@ -151,4 +200,30 @@ test('the server rejects the removed course shortcuts and table games while acce
   assert.equal(validateCommand({ type: 'evening', action: 'skip-dessert' }).type, 'evening');
   assert.equal(validateCommand({ type: 'interact', target: 'dessert' }).type, 'interact');
   assert.equal(validateCommand({ type: 'interact', target: 'bill' }).type, 'interact');
+});
+
+test('a live conversation is never talked over by a scripted silence breaker or aside', () => {
+  const state = seatedDinner(), director = new EveningDirector(state);
+  try {
+    director.seated(); order(state, director);
+    // The human keeps talking every 15 seconds from the order to well past the cleared plates.
+    for (let i = 0; i * 15 < EVENING_PACE.mainKitchen + EVENING_PACE.mainCourse + 60; i++) { director.noteHumanTurn('Go on.'); run(state, director, 15); }
+    assert.equal(state.evening.beats, 0, 'no silence breaker interrupts an ongoing conversation');
+    // Eli still serves and clears on his clock, but the date's pre-written asides are held back mid-exchange.
+    assert.equal(state.evening.main.status, 'finished');
+    for (const key of ['main-served', 'main-finished']) {
+      const cues = state.evening.cues.filter(cue => cue.key === key); assert.equal(cues.length, 1, key);
+      assert.deepEqual(cues[0].utterances.map(line => line.speaker), ['waiter'], key);
+    }
+  } finally { director.free(); }
+  const silent = seatedDinner(), quietDirector = new EveningDirector(silent);
+  try {
+    quietDirector.seated(); serveMain(silent, quietDirector); run(silent, quietDirector, EVENING_PACE.beatSilence + 40);
+    assert.ok(silent.evening.cues.some(cue => cue.key === BEAT_COLD), 'a genuinely quiet table still gets its authored line');
+  } finally { quietDirector.free(); }
+  const cold = seatedDinner(), coldDirector = new EveningDirector(cold);
+  try {
+    coldDirector.seated(); cold.evening.stance = 'guarded'; serveMain(cold, coldDirector); run(cold, coldDirector, EVENING_PACE.beatSilence + 120);
+    assert.equal(cold.evening.beats, 0, 'a guarded date does not chirp a warm scripted line into the silence');
+  } finally { coldDirector.free(); }
 });

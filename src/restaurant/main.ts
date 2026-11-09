@@ -1,9 +1,10 @@
 import './style.css';
 import { DATES, EVENT_COPY, getDate } from './content';
-import type { AudioPlayback, ClaudeModel, DateId, DinnerCommand, DinnerState, ProviderStatus, SceneUtterance, TurnEvent } from './types';
+import type { AudioPlayback, ClaudeModel, DateId, DinnerCommand, DinnerState, ProviderStatus, SceneUtterance, TurnEvent, TurnVia } from './types';
 import { markup } from './ui';
 import { RestaurantRenderer } from './RestaurantRenderer';
 import { LocalRecognition } from './LocalRecognition';
+import { RECEIPT_TIMEOUT_MS, TURN_WAIT_MS, cueYieldsToHuman, settled, shouldDropBackchannel, timeoutSignal, waitWhile } from './turn-endpointing';
 import { SpeechPlayer } from './SpeechPlayer';
 import { createEvening } from './evening';
 import { EveningInterface } from './EveningInterface';
@@ -200,7 +201,8 @@ function applyState(next: DinnerState) {
         generationEpoch++; turnAbort?.abort(); speech.stop(); speechQueue = Promise.resolve(); pendingSpeeches = 0; busy = false; btn('send-turn').disabled = false;
       }
       ambience.cue(cue.key);
-      for (const line of cue.utterances) queueUtterance(line, activeGeneration, generationEpoch);
+      // Routine pacing waits for a human who is mid-sentence; health, boundary, incident and farewell cues keep the floor.
+      for (const line of cue.utterances) queueUtterance(line, activeGeneration, generationEpoch, true, cueYieldsToHuman(cue.key));
     }
   }
   saveSessionReference();
@@ -269,7 +271,8 @@ function recordDelivery(generation: number, utterance: SceneUtterance, completed
   }
   const path = sessionPath() + '/playback', sessionToken = token;
   playbackReceipts = playbackReceipts.then(async () => {
-    await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` }, body: JSON.stringify({ generation, speaker: utterance.speaker, text: utterance.text, completed, playedSeconds }) });
+    // A stalled receipt must not hold every later receipt, or the next spoken turn, behind it.
+    await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` }, body: JSON.stringify({ generation, speaker: utterance.speaker, text: utterance.text, completed, playedSeconds }), signal: timeoutSignal(RECEIPT_TIMEOUT_MS) });
   }).catch(() => {});
 }
 const speech = new SpeechPlayer({
@@ -294,7 +297,15 @@ const recognition = new LocalRecognition({
     if (target !== listeningTarget || !listeningPreview.sample(now)) { listeningTarget = target; listeningPreview.start(now, target); }
     listeningPreview.partial(text, now);
   },
-  onTurn(text) { clearListeningPreview(); if (!micEnabled || state.phase !== 'playing' || visibleModal()) return; lastPartial = ''; void sendTurn(text); },
+  onTurn(text) {
+    clearListeningPreview();
+    if (!micEnabled || state.phase !== 'playing' || visibleModal()) return;
+    lastPartial = '';
+    // A bare "mm-hm" or "yeah" while the date is still talking is listening, not taking the floor.
+    if (shouldDropBackchannel(text, { speaking: !!playback.speaker, caption: playback.caption })) return;
+    void sendTurn(text, undefined, 'voice');
+  },
+  isListeningOnly(text) { return shouldDropBackchannel(text, { speaking: !!playback.speaker, caption: playback.caption }); },
   onSpeechStart() {
     if (micEnabled && doubleClient.active) tableAttention = { actor: doubleClient.credentials!.memberId, until: performance.now() + 4000 };
     if (micEnabled && (busy || playback.speaker || pendingSpeeches)) void interrupt();
@@ -345,11 +356,19 @@ async function interrupt() {
   interruption = (doubleClient.active ? doubleClient.interrupt() : request<{ state: DinnerState }>(sessionPath() + '/interrupt', {}).then(result => { applyState(result.state); })).catch(() => { /* Next request reports connection failures. */ }).finally(() => { interruptPending = false; });
   await interruption;
 }
-function queueUtterance(utterance: SceneUtterance, generation: number, epoch: number, logLine = true) {
+/** Hold a scripted line while the recognizer is still collecting the human's sentence (at most six seconds). */
+async function humanHasFloor(epoch: number) {
+  await waitWhile(() => epoch === generationEpoch && micEnabled && recognition.holdsHumanSpeech());
+}
+function queueUtterance(utterance: SceneUtterance, generation: number, epoch: number, logLine = true, yieldToHuman = false) {
   if (logLine) log(speakerName(utterance.speaker, utterance.actorId), utterance.text);
   pendingSpeeches++;
   speechQueue = speechQueue.then(async () => {
     if (epoch !== generationEpoch || !joined || state.phase !== 'playing') return;
+    if (yieldToHuman) {
+      await humanHasFloor(epoch);
+      if (epoch !== generationEpoch || !joined || state.phase !== 'playing') return;
+    }
     if (doubleClient.active && utterance.lineId) {
       const current = doubleRoom?.lines.find(line => line.id === utterance.lineId);
       if (!current || current.interrupted) return;
@@ -367,25 +386,29 @@ function queueUtterance(utterance: SceneUtterance, generation: number, epoch: nu
     await speech.play(utterance, signal => doubleClient.active && utterance.lineId ? doubleClient.speech(utterance.lineId, generation, signal) : fetch(sessionPath() + '/speech', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ generation, utterance }), signal }));
   }).catch(error => { if (epoch === generationEpoch && (error as Error).name !== 'AbortError') { caption(utterance); clearCaptionLater(6000); toast((error as Error).message); } }).finally(() => { if (epoch === generationEpoch) pendingSpeeches = Math.max(0, pendingSpeeches - 1); });
 }
-async function sendTurn(raw: string, explicitTarget?: ConversationTarget) {
+async function sendTurn(raw: string, explicitTarget?: ConversationTarget, via: TurnVia = 'typed') {
   const text = raw.trim();
   const resetEpoch = modelResetEpoch;
   if (!text || !joined || state.phase !== 'playing' || visibleModal() || modelResetPending) return false;
   if (!doubleClient.active && !scenePresenceAvailable(state)) { toast('Give your date a moment. They’ll be back at the table shortly.'); return false; }
   if (text.length > 2000) { toast('Keep each turn under 2,000 characters.'); return false; }
-  await unlockAudio();
-  await interruption;
+  // Each wait is bounded so a slow unlock, interrupt or receipt cannot leave the mic feeling dead.
+  // The server invalidates the previous generation when the turn arrives, so carrying on is safe.
+  let stalled = false;
+  const bounded = async (pending: Promise<unknown>) => { if (!(await settled(pending, TURN_WAIT_MS))) stalled = true; };
+  await bounded(unlockAudio());
+  await bounded(interruption);
   if (!joined || state.phase !== 'playing' || visibleModal() || modelResetPending || resetEpoch !== modelResetEpoch) return false;
-  if (busy || pendingSpeeches || playback.speaker) await interrupt();
+  if (busy || pendingSpeeches || playback.speaker) await bounded(interrupt());
   const submissionEpoch = generationEpoch;
-  await playbackReceipts;
-  if (!joined || state.phase !== 'playing' || visibleModal() || submissionEpoch !== generationEpoch || interruptPending || modelResetPending || resetEpoch !== modelResetEpoch) return false;
+  await bounded(playbackReceipts);
+  if (!joined || state.phase !== 'playing' || visibleModal() || submissionEpoch !== generationEpoch || (interruptPending && !stalled) || modelResetPending || resetEpoch !== modelResetEpoch) return false;
   if (doubleClient.active) {
     let target = explicitTarget ?? renderer.getConversationTarget(state);
     const aimedDate = doubleRoom?.dates.find(date => date.id === target);
     if (aimedDate && (aimedDate.stance === 'leaving' || doubleRoom?.views[aimedDate.humanId].phase === 'ended')) target = 'table';
     turnStartedAt = performance.now(); firstAudioMs = null;
-    const submitted = doubleClient.turn(text, target);
+    const submitted = doubleClient.turn(text, target, via);
     doubleTurnSubmissions.add(submitted);
     try { await submitted; return true; }
     catch (error) { toast((error as Error).message, 10000); return false; }
@@ -398,7 +421,7 @@ async function sendTurn(raw: string, explicitTarget?: ConversationTarget) {
   turnStartedAt = performance.now(); firstAudioMs = null;
   let accepted = false;
   try {
-    const response = await fetch(sessionPath() + '/turn', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ turnId: crypto.randomUUID(), text, model: preferences.model }), signal: turnAbort.signal });
+    const response = await fetch(sessionPath() + '/turn', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ turnId: crypto.randomUUID(), text, model: preferences.model, via }), signal: turnAbort.signal });
     if (!response.ok) {
       const error = await response.json().catch(() => ({})) as { error?: string; message?: string };
       throw new Error(error.error || error.message || `Conversation unavailable (${response.status})`);
@@ -818,7 +841,7 @@ el<HTMLFormElement>('conversation-form').addEventListener('submit', event => {
   }
   const target = doubleClient.active ? el<HTMLSelectElement>('conversation-target').value as ConversationTarget : undefined;
   typedSubmissionPending = true; input('conversation-input').value = ''; closeTypedInput(); updateTypedSubmit();
-  void sendTurn(text, target).then(sent => {
+  void sendTurn(text, target, 'typed').then(sent => {
     if (submission === typedSubmissionEpoch && !sent && !input('conversation-input').value.trim()) {
       input('conversation-input').value = text;
       if (state.phase === 'playing' && !visibleModal()) showTypedInput();

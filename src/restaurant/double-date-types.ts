@@ -59,7 +59,7 @@ export type DoubleRoomCommand =
   | { type: 'voice-enable'; enabled: boolean }
   | { type: 'voice-signal'; epoch: number; signal: VoiceSignal };
 export interface DoubleTurnRequest {
-  turnId: string; text: string; target: ConversationTarget;
+  turnId: string; text: string; target: ConversationTarget; via?: 'voice' | 'typed';
 }
 export interface DoubleDatePresentation {
   scenario?: DoubleScenario;

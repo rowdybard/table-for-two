@@ -63,3 +63,60 @@ test('temporary restore failure preserves reconnect credentials without reportin
   try { assert.equal(await client.restore(), false); assert.equal(JSON.parse(env.stored.get(storageKey)!).token, membership.token); assert.deepEqual(messages, []); assert.deepEqual(errors, ['Provider maintenance.']); }
   finally { client.dispose(); env.restore(); }
 });
+
+test('turn posts how the words arrived only when the caller says so', async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const env = environment(async (input, init) => {
+    if (init?.method !== 'POST') return json({ state: room, signals: [] });
+    if (String(input).endsWith('/turn')) { bodies.push(JSON.parse(String(init.body))); return json({ state: room }, 202); }
+    return json(membership, 201);
+  });
+  const client = new DoubleDateClient(callbacks());
+  try {
+    await client.create('Alex', 'claude-haiku-5-5', 2);
+    await client.turn('I am a night nurse.', 'd1', 'voice');
+    await client.turn('I am a night nurse.', 'table', 'typed');
+    await client.turn('Hello.', 'table');
+    assert.equal(bodies.length, 3);
+    assert.deepEqual(bodies.map(body => Object.keys(body).sort()), [['target', 'text', 'turnId', 'via'], ['target', 'text', 'turnId', 'via'], ['target', 'text', 'turnId']]);
+    assert.deepEqual(bodies.map(body => body.via), ['voice', 'typed', undefined]);
+    assert.deepEqual(bodies.map(body => body.target), ['d1', 'table', 'table']);
+    assert.equal(new Set(bodies.map(body => body.turnId)).size, 3, 'every turn gets its own ID');
+  } finally { client.dispose(); env.restore(); }
+});
+
+test('a playback receipt carries a timeout signal and is abandoned when the server never answers', async () => {
+  let signal: AbortSignal | undefined | null;
+  const env = environment(async (input, init) => {
+    if (init?.method !== 'POST') return json({ state: room, signals: [] });
+    if (String(input).endsWith('/playback')) {
+      signal = init.signal;
+      return new Promise<Response>((_resolve, reject) => init.signal?.addEventListener('abort', () => reject(init.signal!.reason ?? new DOMException('Aborted', 'AbortError')), { once: true }));
+    }
+    return json(membership, 201);
+  });
+  const client = new DoubleDateClient(callbacks());
+  const keepAlive = setInterval(() => {}, 1000); // AbortSignal.timeout does not keep Node alive.
+  try {
+    await client.create('Alex', 'claude-haiku-5-5', 2);
+    const started = performance.now();
+    await assert.rejects(client.receipt('line-1', 0, true, 1.2, 30), (error: Error) => ['TimeoutError', 'AbortError'].includes(error.name));
+    assert.ok(signal instanceof AbortSignal && signal.aborted);
+    assert.ok(performance.now() - started < 2000);
+  } finally { clearInterval(keepAlive); client.dispose(); env.restore(); }
+});
+
+test('a playback receipt that lands in time is unaffected by its timeout', async () => {
+  const receipts: Record<string, unknown>[] = [];
+  const env = environment(async (input, init) => {
+    if (init?.method !== 'POST') return json({ state: room, signals: [] });
+    if (String(input).endsWith('/playback')) { receipts.push(JSON.parse(String(init.body))); assert.ok(init.signal instanceof AbortSignal); assert.equal(init.signal.aborted, false); return json({ state: room }); }
+    return json(membership, 201);
+  });
+  const client = new DoubleDateClient(callbacks());
+  try {
+    await client.create('Alex', 'claude-haiku-5-5', 2);
+    await client.receipt('line-1', 3, false, 0.4);
+    assert.deepEqual(receipts, [{ lineId: 'line-1', generation: 3, completed: false, playedSeconds: 0.4 }]);
+  } finally { client.dispose(); env.restore(); }
+});

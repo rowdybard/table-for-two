@@ -9,6 +9,7 @@ import { setActorSeated } from '../restaurant/actor-controller';
 import { createSharedTabletopState, createTabletopState } from '../../src/restaurant/tabletop';
 import { diningOffsetZ } from '../../src/restaurant/dining-space';
 import { ensureScenarioCare } from '../restaurant/scenario-effects';
+import { clampMemory } from '../restaurant/memory';
 import { EVENING_PACE } from '../../src/restaurant/evening';
 
 const ids: DoubleHumanId[] = ['h1', 'h2'];
@@ -207,7 +208,10 @@ export class DoubleTableScene {
       const view = this.state.views[human];
       view.evening.incident = view.phase !== 'ended' && view.evening.stance !== 'leaving' && source.evening.incident ? { ...source.evening.incident } : null;
       view.events = [...source.events]; view.evening.resolutions = { ...source.evening.resolutions }; view.evening.lastInterruptionAt = source.evening.lastInterruptionAt;
-      for (const moment of source.evening.moments) if (['wrong-order', 'spilled-drink', 'disruptive-diner'].includes(moment.id) && !view.evening.moments.some(item => item.id === moment.id)) view.evening.moments.push({ ...moment });
+      for (const moment of source.evening.moments) if (['wrong-order', 'spilled-drink', 'disruptive-diner'].includes(moment.id)) {
+        moment.owner ??= this.incidentOwner!; // written in the owner's second person, so only their pair's view of the table tells it
+        if (!view.evening.moments.some(item => item.id === moment.id)) view.evening.moments.push({ ...moment });
+      }
     }
     if (!source.evening.incident) { this.lastIncidentAt = source.elapsed; this.incidentOwner = null; }
     if (this.incidentOwner) this.state.incidentOwner = this.incidentOwner; else delete this.state.incidentOwner;
@@ -216,11 +220,16 @@ export class DoubleTableScene {
   /** Private agenda context is sent to the model, never included in room snapshots. */
   agendaContext(human: DoubleHumanId) { return this.directors.get(human)!.agenda.promptContext(); }
   boundaryContext(human: DoubleHumanId) { return this.directors.get(human)!.boundaries.promptContext(); }
+  /** Someone at the table spoke, so no date fills a silence or drops an aside over them. */
+  noteHumanTurn(text = '', speaker?: DoubleHumanId) { for (const director of this.directors.values()) director.noteHumanTurn(text, speaker); }
+  /** A question this pair's date asked their own friend that is still waiting for an answer. */
+  pendingQuestion(human: DoubleHumanId) { return this.directors.get(human)!.pendingQuestion; }
+  replyEnded() { for (const director of this.directors.values()) director.replyEnded(); }
   clearPendingBoundaries() { for (const director of this.directors.values()) { director.boundaries.clearPending(); director.chemistry.clearPending(); } }
   redirectConversation(human: DoubleHumanId) { this.directors.get(human)!.redirectConversation(false); }
   social(human: DoubleHumanId, turn: SceneTurn, humanText = '', speaker: DoubleHumanId = human) {
     const view = this.state.views[human];
-    view.emotion = turn.emotion; view.memory = turn.memory; this.directors.get(human)!.social(turn, humanText, { humanId: speaker, paired: speaker === human, name: this.state.members.find(member => member.id === speaker)?.name });
+    view.emotion = turn.emotion; view.memory = clampMemory(turn.memory, view.memory); this.directors.get(human)!.social(turn, humanText, { humanId: speaker, paired: speaker === human, name: this.state.members.find(member => member.id === speaker)?.name });
   }
   viewEnding(human: DoubleHumanId, show: boolean) {
     if (this.state.views[human].phase !== 'ended') throw new Error('Finish your date before viewing its ending.');

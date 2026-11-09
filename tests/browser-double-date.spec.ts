@@ -7,6 +7,7 @@ import { attachDoubleDateServer } from '../server/double-date';
 import type { ClaudeRequest, SpeechRequest } from '../server/restaurant/providers';
 import type { DoubleDateRoomState, DoubleRoomCredentials } from '../src/restaurant/double-date-types';
 import type { DinnerState } from '../src/restaurant/types';
+import { doubleContext } from './helpers/double-note';
 import { captureRestaurantScene, restaurantEvening, restaurantInterrupted, restaurantScenario, resolveRestaurantScenario, waitForRestaurantScene } from './restaurant-browser-helpers';
 
 let http: Server, restaurant: Awaited<ReturnType<typeof attachRestaurantServer>>;
@@ -32,10 +33,10 @@ const speech: SpeechAdapter = { async *stream(request, signal) {
 } };
 const claude: ClaudeAdapter = { async *stream(request, signal) {
   requests.push(request);
-  const payload = JSON.parse(request.messages.at(-1)!.content);
-  const text: string = payload.humanTurn.text;
-  const repair = text.includes('all of us'), excluded = payload.characters.some((actor: { publicFriendOnlyTurns: number }) => actor.publicFriendOnlyTurns >= 3);
-  const actor = ['d1', 'd2'].includes(payload.humanTurn.target) ? payload.humanTurn.target : payload.characters.find((candidate: { availableForDialogue?: boolean }) => candidate.availableForDialogue !== false)?.id ?? 'd1';
+  // The request is prose now: who spoke, to whom and what they said come from the last paragraph of the note.
+  const context = doubleContext(request), text = context.humanTurn.text;
+  const repair = text.includes('all of us'), excluded = context.characters.some(actor => actor.friendOnlyTurns >= 3);
+  const actor = ['d1', 'd2'].includes(context.humanTurn.target) ? context.humanTurn.target : context.characters.find(candidate => candidate.available)?.id ?? 'd1';
   const result = {
     utterances: text === 'a quiet beat' ? [] : [{ speaker: actor, text: `I heard you: ${text}`, emotion: repair ? 'warm' : excluded ? 'annoyed' : 'amused' }],
     dateUpdates: ['d1', 'd2'].map(actorId => ({ actorId, emotion: repair ? 'warm' : excluded ? 'annoyed' : 'amused', memory: `The table discussed ${text}.`, social: { signal: repair ? 'repair' : 'none', reason: repair ? 'Both dates were invited back into the conversation.' : '', wantsToLeave: false } })),
@@ -388,10 +389,12 @@ test('shared table turns: one request, both identities, exclusion and repair, pr
     await say(p.a, 'mushrooms are underrated', 'd1');
     await expect.poll(async () => (await room(p.b)).lines.some(line => line.text === 'I heard you: mushrooms are underrated')).toBe(true);
     expect(requests.length - count).toBe(1);
-    const context = JSON.parse(requests.at(-1)!.messages.at(-1)!.content);
-    expect(context.humanTurn).toEqual({ speaker: 'h1', target: 'd1', text: 'mushrooms are underrated' });
-    expect(context.characters.map((actor: { id: string; name: string }) => [actor.id, actor.name])).toEqual([['d1','Mira'],['d2','Jules']]);
-    expect(context.characters.every((actor: { biography: unknown; personality: string; boundaries: string }) => actor.biography && actor.personality && actor.boundaries)).toBe(true);
+    const context = doubleContext(requests.at(-1)!);
+    expect(context.humanTurn).toMatchObject({ speaker: 'h1', target: 'd1', text: 'mushrooms are underrated' });
+    expect(context.characters.map(actor => [actor.id, actor.dateName])).toEqual([['d1','Mira'],['d2','Jules']]);
+    // Both date sheets (life, personality, boundaries) are in the cached system prompt, not repeated in every note.
+    for (const sheet of ['d1 is Mira', 'd2 is Jules']) expect(requests.at(-1)!.system).toContain(sheet);
+    expect(requests.at(-1)!.system).toContain('Personality:'); expect(requests.at(-1)!.system).toContain('Boundaries:');
     await expect(p.b.locator('#conversation-log')).toContainText('mushrooms are underrated');
     const spoken = (await room(p.a)).lines.find(line => line.text === 'I heard you: mushrooms are underrated')!;
     for (const id of ['a','b'] as const) await expect.poll(() => p.receipts[id].some(receipt => receipt.lineId === spoken.id && receipt.completed), { timeout: 15000 }).toBe(true);
@@ -580,11 +583,12 @@ test('a finished date can stay as a wingman, help the active pair and return fro
     const count = requests.length;
     await say(p.a, 'Jules, would you like another quiet minute?', 'table');
     expect(requests.length - count).toBe(1);
-    const context = JSON.parse(requests.at(-1)!.messages.at(-1)!.content);
+    const context = doubleContext(requests.at(-1)!);
     expect(context.humanTurn.target).toBe('table');
-    expect(context.characters.find((actor: { id: string }) => actor.id === 'd1').availableForDialogue).toBe(false);
-    expect(context.characters.find((actor: { id: string }) => actor.id === 'd2').availableForDialogue).toBe(true);
-    expect(context.room.sharedClock).toBeGreaterThan(helped.views.h1.elapsed + 1);
+    expect(context.characters.find(actor => actor.id === 'd1')!.available).toBe(false);
+    expect(context.characters.find(actor => actor.id === 'd2')!.available).toBe(true);
+    // The note states the evening's age in whole minutes, from the shared clock.
+    expect(context.minutes).toBeGreaterThanOrEqual(Math.floor(helped.views.h1.elapsed / 60));
     await expect(p.a.locator('#conversation-target option[value="d1"]')).toHaveCount(0);
     expect((await room(p.a)).views.h1.memory).toBe(departedMemory);
     await pauseFromRestaurant(p.b); await p.b.locator('#finish-date').click();
@@ -673,9 +677,9 @@ test('complete double evening: both dinners, a shared dessert, one check for the
         const oldMemory = (await room(p.a)).views.h1.memory, count = requests.length;
         await say(p.a, 'Jules, I hope the rest of your evening is lovely', 'd2');
         expect(requests.length - count).toBe(1);
-        const context = JSON.parse(requests.at(-1)!.messages.at(-1)!.content);
-        expect(context.characters.find((actor: { id: string }) => actor.id === 'd1').availableForDialogue).toBe(false);
-        expect(context.characters.find((actor: { id: string }) => actor.id === 'd2').availableForDialogue).toBe(true);
+        const context = doubleContext(requests.at(-1)!);
+        expect(context.characters.find(actor => actor.id === 'd1')!.available).toBe(false);
+        expect(context.characters.find(actor => actor.id === 'd2')!.available).toBe(true);
         expect((await room(p.a)).views.h1.memory).toBe(oldMemory);
       }
     }

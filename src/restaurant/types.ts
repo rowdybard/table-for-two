@@ -20,7 +20,8 @@ export type EveningAction = 'taste' | 'order-dessert' | 'skip-dessert' | 'settle
 export const EVENING_ACTIONS: readonly EveningAction[] = ['taste', 'order-dessert', 'skip-dessert', 'settle-bill', 'farewell', 'inspect-ticket', 'return-order', 'keep-order', 'wipe', 'steady-glass', 'ask-quiet', 'let-it-go', 'apologize', 'offer-taste', 'toast', 'request-water', 'check-in', 'resume-dinner'];
 export type DateStance = 'curious' | 'comfortable' | 'guarded' | 'hurt' | 'leaving';
 export interface EveningCue { id: string; key: string; utterances: SceneUtterance[] }
-export interface EveningMoment { id: string; title: string; description: string }
+/** `owner` (a shared room's human id) marks a moment written for one friend's pair that was copied to the other's view. */
+export interface EveningMoment { id: string; title: string; description: string; owner?: string }
 export interface EveningEnding { kind: 'another-evening' | 'new-friend' | 'second-chance' | 'quiet-goodbye' | 'early-exit' | 'walked-away'; title: string; description: string; dateLine: string }
 export interface EveningState {
   tabletop?: import('./tabletop').TabletopState;
@@ -68,7 +69,9 @@ export type DinnerCommand =
   | { type: 'scenario'; choice: string }
   | { type: 'pause'; paused: boolean }
   | { type: 'finish' };
-export interface TurnRequest { turnId: string; text: string; model: ClaudeModel }
+/** `via` says how the words reached the date: an on-device speech transcript or typed text. */
+export type TurnVia = 'voice' | 'typed';
+export interface TurnRequest { turnId: string; text: string; model: ClaudeModel; via?: TurnVia }
 export type TurnEvent =
   | { type: 'start'; generation: number }
   | { type: 'utterance'; generation: number; index: number; utterance: SceneUtterance }

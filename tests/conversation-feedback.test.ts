@@ -9,6 +9,8 @@ import type { DinnerState, SceneTurn, TurnEvent } from '../src/restaurant/types'
 import { DOLPHIN_MODEL, HORDE_MODEL } from '../src/restaurant/types';
 import type { DoubleDateRoomState, DoubleRoomResponse } from '../src/restaurant/double-date-types';
 import { MENU } from '../src/restaurant/content';
+import { humanLine, noteOf, signalFor } from './helpers/turn-note';
+import { doubleContext, doubleNote } from './helpers/double-note';
 
 const encode = JSON.stringify;
 const events = (text: string): TurnEvent[] => text.trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
@@ -153,7 +155,7 @@ test('queued Double speech cannot retrospectively cross a warning that was heard
   const ready = deferred(), release = deferred(), requests: ClaudeRequest[] = [];
   const refusal = 'Please stop making those comments at the table.';
   const adapter: ClaudeAdapter = { async *stream(request, signal) {
-    requests.push(request); const index = requests.length, human = JSON.parse(request.messages.at(-1)!.content).humanTurn;
+    requests.push(request); const index = requests.length, human = doubleContext(request).humanTurn;
     const result = { utterances: [{ speaker: 'd1', text: index === 1 ? refusal : 'I need you to listen to what I asked.', emotion: 'annoyed' }], dateUpdates: [
       { actorId: 'd1', emotion: 'annoyed', memory: 'We spoke at dinner.', social: { signal: index === 1 ? 'none' : 'pressure', reason: 'The same topic was raised.', wantsToLeave: index > 1,
         boundary: { kind: index === 1 ? 'set' : 'repeat', topic: 'sexual-talk', refusal, evidence: human.text } } },
@@ -177,8 +179,8 @@ test('queued Double speech cannot retrospectively cross a warning that was heard
   const afterQueue = await until(() => api.roomState(h1), state => !state.processing && state.usage.claudeRequests === 2);
   assert.equal(afterQueue.views.h1.evening.stance, 'curious', 'the queued utterance predated delivery and earns no disregard');
   assert.equal(afterQueue.views.h1.evening.farewell.ending, null);
-  const queuedPayload = JSON.parse(requests[1].messages.at(-1)!.content);
-  assert.equal(queuedPayload.characters.find((actor: { id: string }) => actor.id === 'd1').boundaryContext.boundaries.some((boundary: { delivered: boolean }) => boundary.delivered), false);
+  const queued = doubleNote(requests[1]);
+  assert.doesNotMatch(queued, /heard you say/, 'the warning was not delivered when the queued turn was submitted');
   await submit('actual-repeat-one');
   const firstRepeat = await until(() => api.roomState(h1), state => !state.processing && state.usage.claudeRequests === 3);
   assert.equal(firstRepeat.views.h1.evening.stance, 'guarded');
@@ -194,11 +196,11 @@ test('Dolphin availability never bypasses Haiku-first play, earned reciprocal ch
   const adapter: ClaudeAdapter = { async *stream(request) {
     anthropicRequests.push(request);
     assert.equal(request.model, 'claude-haiku-5-5');
-    const index = anthropicRequests.length, context = JSON.parse(request.messages.at(-1)!.content), privateAgenda = context.scene.evening.dateAgenda;
-    const signal = privateAgenda.evidenceReady ? privateAgenda.nextMilestone ?? 'none' : 'none';
+    const index = anthropicRequests.length, note = noteOf(request);
+    const signal = signalFor(note);
     const text = index === 1 ? firstClue : index === 2 ? secondClue : index === 3 ? 'You noticed why a little room matters to me.' : index === 4 ? 'You listened carefully. I appreciate that.' : index === 5 ? 'That smile of yours is making this dinner rather distracting.' : 'Now you have me wondering what your next excuse to see me will be.';
     const result: SceneTurn = { ...dateTurn, utterances: [{ speaker: 'date', text, emotion: index >= 5 ? 'flirtatious' : 'warm' }], emotion: index >= 5 ? 'flirtatious' : 'warm',
-      social: { ...neutral, signal: index >= 4 ? 'kindness' : 'none' }, agenda: { signal, evidence: signal === 'none' ? '' : context.playerSaid, clue: index <= 2 ? text : '' } };
+      social: { ...neutral, signal: index >= 4 ? 'kindness' : 'none' }, agenda: { signal, evidence: signal === 'none' ? '' : humanLine(note), clue: index <= 2 ? text : '' } };
     yield { type: 'usage', usage: { inputTokens: 100, outputTokens: 100 } };
     yield { type: 'text', text: encode(result) };
   } };
@@ -250,12 +252,12 @@ test('automatic Horde routing follows each unlocked topic and its delivered foll
   const firstClue = 'I want time to make my own choices tonight.', secondClue = 'I would like to decide about another date after dinner.';
   const anthropic: ClaudeAdapter = { async *stream(request) {
     anthropicRequests.push(request); assert.equal(request.model, 'claude-haiku-5-5');
-    const index = anthropicRequests.length, context = JSON.parse(request.messages.at(-1)!.content), agenda = context.scene.evening.dateAgenda;
-    const signal = agenda.evidenceReady ? agenda.nextMilestone ?? 'none' : 'none';
+    const index = anthropicRequests.length, note = noteOf(request);
+    const signal = signalFor(note);
     const text = index === 1 ? firstClue : index === 2 ? secondClue : index === 3 ? 'You noticed why a little room matters to me.' : index === 4 ? 'You listened carefully. I appreciate that.' : index === 5 ? 'That smile of yours is making this dinner rather distracting.' : 'Now you have me wondering what your next excuse to see me will be.';
     yield { type: 'usage', usage: { inputTokens: 100, outputTokens: 100 } };
     yield { type: 'text', text: encode({ ...dateTurn, utterances: [{ speaker: 'date', text, emotion: index >= 5 ? 'flirtatious' : 'warm' }], emotion: index >= 5 ? 'flirtatious' : 'warm',
-      social: { ...neutral, signal: index >= 4 ? 'kindness' : 'none' }, agenda: { signal, evidence: signal === 'none' ? '' : context.playerSaid, clue: index <= 2 ? text : '' } }) };
+      social: { ...neutral, signal: index >= 4 ? 'kindness' : 'none' }, agenda: { signal, evidence: signal === 'none' ? '' : humanLine(note), clue: index <= 2 ? text : '' } }) };
   } };
   const horde: ClaudeAdapter = { async *stream(request) {
     hordeRequests.push(request); assert.equal(request.model, HORDE_MODEL);
@@ -347,7 +349,7 @@ test('a Double host selects Horde privately and the very next guest and host dia
   const requested: ClaudeRequest[] = [];
   const adapter = (model: ClaudeRequest['model']): ClaudeAdapter => ({ async *stream(request) {
     requested.push(request); assert.equal(request.model, model);
-    const context = JSON.parse(request.messages.at(-1)!.content), speaker = context.humanTurn.speaker === 'h2' ? 'd2' : 'd1';
+    const context = doubleContext(request), speaker = context.humanTurn.speaker === 'h2' ? 'd2' : 'd1';
     yield { type: 'usage', usage: { inputTokens: 100, outputTokens: 100 } };
     yield { type: 'text', text: encode({ utterances: [{ speaker, text: 'I would enjoy hearing more about that.', emotion: 'warm' }],
       dateUpdates: ['d1', 'd2'].map(actorId => ({ actorId, emotion: 'warm', memory: '', social: neutral, agenda: { signal: 'none', evidence: '', clue: '' } })),
@@ -372,7 +374,7 @@ test('a Double host selects Horde privately and the very next guest and host dia
   const afterHost = await until(() => api.roomState(h1), state => !state.processing && state.usage.claudeRequests === 3);
   assert.equal(afterHost.error, undefined); assert.equal(afterHost.views.h1.conversationModel, HORDE_MODEL);
   assert.deepEqual(requested.map(request => request.model), ['claude-haiku-5-5', HORDE_MODEL, HORDE_MODEL]);
-  assert.deepEqual(requested.map(request => JSON.parse(request.messages.at(-1)!.content).humanTurn.speaker), ['h1', 'h2', 'h1']);
+  assert.deepEqual(requested.map(request => doubleContext(request).humanTurn.speaker), ['h1', 'h2', 'h1']);
   assert.equal(afterHost.usage.claudeCost, before.usage.claudeCost); assert.equal(afterHost.lines.some(line => line.text.includes('/model')), false);
   for (const view of Object.values(afterHost.views)) assert.equal(view.evening.chemistry?.unlocked, false);
 });
@@ -422,7 +424,7 @@ test('Double reset is host only, clears Horde errors and drops pending and queue
   });
   const claude: ClaudeAdapter = { async *stream(request) {
     requested.push(request); assert.equal(request.model, 'claude-haiku-5-5');
-    const context = JSON.parse(request.messages.at(-1)!.content), speaker = context.humanTurn.speaker === 'h2' ? 'd2' : 'd1';
+    const context = doubleContext(request), speaker = context.humanTurn.speaker === 'h2' ? 'd2' : 'd1';
     yield { type: 'usage', usage: { inputTokens: 100, outputTokens: 100 } };
     yield { type: 'text', text: encode(tableReply(speaker, 'A normal conversation at dinner.', 'A shared preference at dinner.')) };
   } };
@@ -461,7 +463,7 @@ test('Double reset is host only, clears Horde errors and drops pending and queue
   assert.equal(after.error, undefined); assert.equal(after.views.h2.conversationModel, 'claude-haiku-5-5');
   assert.equal(after.lines.some(line => line.text === 'A stale queued Horde answer must not be heard.'), false);
   assert.deepEqual(requested.map(request => request.model), ['claude-haiku-5-5', HORDE_MODEL, HORDE_MODEL, 'claude-haiku-5-5']);
-  assert.equal(JSON.parse(requested.at(-1)!.messages.at(-1)!.content).humanTurn.text, 'Let us continue dinner.');
+  assert.equal(doubleContext(requested.at(-1)!).humanTurn.text, 'Let us continue dinner.');
   for (const view of Object.values(after.views)) assert.equal(view.memory, 'A shared preference at dinner.');
 });
 
@@ -471,8 +473,8 @@ test('Horde as the free default starts Solo, Blind and Double without paid keys 
     requests.push(request); assert.equal(request.model, HORDE_MODEL);
     yield { type: 'usage', usage: { inputTokens: 1_000_000, outputTokens: 100 } };
     if (unavailable) throw new DateApiError(502, 'horde_provider', 'The volunteer workers are unavailable.');
-    const context = JSON.parse(request.messages.at(-1)!.content);
-    yield { type: 'text', text: encode(context.humanTurn ? {
+    const double = request.system.startsWith('Direct an adult double date'); // a Double room has its own system prompt; Solo and Blind share the date's
+    yield { type: 'text', text: encode(double ? {
       utterances: [{ speaker: 'd1', text: 'I am glad we have a table together.', emotion: 'warm' }],
       dateUpdates: ['d1', 'd2'].map(actorId => ({ actorId, emotion: 'warm', memory: '', social: neutral, agenda: { signal: 'none', evidence: '', clue: '' } })),
     } : dateTurn) };
@@ -546,8 +548,8 @@ test('Double routing unlocks Dolphin per couple while the other couple and manua
   });
   const anthropic: ClaudeAdapter = { async *stream(request) {
     anthropicRequests.push(request); assert.equal(request.model, 'claude-haiku-5-5');
-    const context = JSON.parse(request.messages.at(-1)!.content), speaker = context.humanTurn.speaker as 'h1' | 'h2';
-    const actor = context.characters.find((item: { humanId: string }) => item.humanId === speaker), index = anthropicRequests.length;
+    const context = doubleContext(request), speaker = context.humanTurn.speaker as 'h1' | 'h2';
+    const actor = context.characters.find(item => item.humanId === speaker)!, index = anthropicRequests.length;
     const signal = actor.agenda.evidenceReady ? actor.agenda.nextMilestone ?? 'none' : 'none';
     const text = speaker === 'h2' ? 'I would enjoy making my own choices at this table.' : index === 1 ? firstClue : index === 2 ? secondClue : index === 3 ? 'You noticed why a little space matters to me.' : index === 4 ? 'You listened. That matters more than an impressive speech.' : index === 5 ? 'Your grin is making this a pleasantly distracting dinner.' : 'You have me thinking of another excuse to see you smile.';
     yield { type: 'usage', usage: { inputTokens: 120, outputTokens: 100 } };
@@ -555,7 +557,7 @@ test('Double routing unlocks Dolphin per couple while the other couple and manua
   } };
   const dolphin: ClaudeAdapter = { async *stream(request) {
     dolphinRequests.push(request); assert.equal(request.model, DOLPHIN_MODEL);
-    const context = JSON.parse(request.messages.at(-1)!.content); assert.equal(context.humanTurn.speaker, 'h1');
+    const context = doubleContext(request); assert.equal(context.humanTurn.speaker, 'h1');
     yield { type: 'usage', usage: { inputTokens: 125, outputTokens: 100 } };
     yield { type: 'text', text: encode(tableResult('h1', 'I would like to hear what you have in mind for another evening.', 'warm', { signal: 'none', evidence: '', clue: '' })) };
   } };
@@ -585,7 +587,7 @@ test('Double routing unlocks Dolphin per couple while the other couple and manua
   assert.equal(h2Next.status, 202);
   const after = await until(() => api.roomState(h2), state => !state.processing && state.usage.claudeRequests === 8);
   assert.equal(anthropicRequests.length, 7); assert.equal(dolphinRequests.length, 1);
-  assert.equal(JSON.parse(anthropicRequests.at(-1)!.messages.at(-1)!.content).humanTurn.speaker, 'h2');
+  assert.equal(doubleContext(anthropicRequests.at(-1)!).humanTurn.speaker, 'h2');
   assert.equal(after.views.h1.evening.chemistry?.unlocked, true); assert.equal(after.views.h2.evening.chemistry?.unlocked, false);
   const forced = await api.request(api.roomPath(h1) + '/command', h1.token, { type: 'set-model', model: DOLPHIN_MODEL });
   assert.equal(forced.status, 409); assert.equal((await forced.json()).code, 'dolphin_locked', 'a host cannot switch the whole room after earning only their own unlock');
@@ -606,8 +608,8 @@ test('Double automatic topic routing respects each couple’s unlock, delivered 
   });
   const anthropic: ClaudeAdapter = { async *stream(request) {
     anthropicRequests.push(request); assert.equal(request.model, 'claude-haiku-5-5');
-    const context = JSON.parse(request.messages.at(-1)!.content), speaker = context.humanTurn.speaker as 'h1' | 'h2';
-    const actor = context.characters.find((item: { humanId: string }) => item.humanId === speaker), index = anthropicRequests.length;
+    const context = doubleContext(request), speaker = context.humanTurn.speaker as 'h1' | 'h2';
+    const actor = context.characters.find(item => item.humanId === speaker)!, index = anthropicRequests.length;
     const signal = actor.agenda.evidenceReady ? actor.agenda.nextMilestone ?? 'none' : 'none';
     const text = speaker === 'h2' ? 'I would enjoy making my own choices at this table.' : index === 1 ? firstClue : index === 2 ? secondClue : index === 3 ? 'You noticed why a little space matters to me.' : index === 4 ? 'You listened. That matters more than an impressive speech.' : index === 5 ? 'Your grin is making this a pleasantly distracting dinner.' : 'You have me thinking of another excuse to see you smile.';
     yield { type: 'usage', usage: { inputTokens: 120, outputTokens: 100 } };
@@ -615,7 +617,7 @@ test('Double automatic topic routing respects each couple’s unlock, delivered 
   } };
   const horde: ClaudeAdapter = { async *stream(request) {
     hordeRequests.push(request); assert.equal(request.model, HORDE_MODEL);
-    assert.equal(JSON.parse(request.messages.at(-1)!.content).humanTurn.speaker, 'h1');
+    assert.equal(doubleContext(request).humanTurn.speaker, 'h1');
     yield { type: 'usage', usage: { inputTokens: 1_000_000, outputTokens: 100 } };
     if (hordeFails) throw new DateApiError(502, 'horde_provider', 'The volunteer workers are unavailable.');
     yield { type: 'text', text: encode(result('h1', 'We can talk about attraction and sexual fantasies after dinner.', 'warm', { signal: 'none', evidence: '', clue: '' })) };
@@ -692,7 +694,7 @@ for (const mode of ['ai-date', 'blind-date'] as const) test(`${mode}: a redirect
   assert.ok(JSON.stringify(requests[0].messages).includes(blocked));
   assert.equal(JSON.stringify(requests[1].messages).includes(blocked), false);
   assert.ok(JSON.stringify(requests[1].messages).includes('[A provider-limited topic was redirected back to dinner. No personal boundary strike occurred.]'));
-  assert.equal(JSON.parse(requests[1].messages.at(-1)!.content).playerSaid, ordinary);
+  assert.equal(humanLine(noteOf(requests[1])), ordinary);
   const state = await api.soloState(session); assertUnpunished(state);
   assert.equal(state.usage.claudeRequests, 2);
   assert.equal(state.evening.cues.filter(cue => cue.key === 'table-check').length, 1);
@@ -717,7 +719,7 @@ test('Double private history resets a provider-limited topic while preserving th
   assert.equal(state.error, undefined); assert.equal(requests.length, 2);
   assert.equal(JSON.stringify(requests[1].messages).includes(blocked), false);
   assert.ok(JSON.stringify(requests[1].messages).includes('[A provider-limited topic was redirected back to dinner. No personal boundary strike occurred.]'));
-  const current = JSON.parse(requests[1].messages.at(-1)!.content).humanTurn;
+  const current = doubleContext(requests[1]).humanTurn;
   assert.equal(current.text, ordinary); assert.equal(current.speaker, 'h2');
   assert.ok(state.lines.some(line => line.speaker === 'h1' && line.text === blocked), 'only the private model history is sanitized');
   assert.ok(state.lines.some(line => line.speaker === 'h2' && line.text === ordinary));

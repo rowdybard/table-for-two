@@ -362,7 +362,7 @@ test('Haiku is the default, private model commands survive reload and reset rest
     localStorage.setItem('table-for-two-settings', JSON.stringify({ model: 'claude-sonnet-5-5', speech: false, ambience: false }));
     sessionStorage.setItem('test-model-migration-seeded', 'true');
   });
-  const turnPosts: { text: string; model: ClaudeModel }[] = [], sessionModels: ClaudeModel[] = [], resetPosts: string[] = [];
+  const turnPosts: { text: string; model: ClaudeModel; via?: string }[] = [], sessionModels: ClaudeModel[] = [], resetPosts: string[] = [];
   page.on('request', request => {
     if (request.method() !== 'POST') return;
     const path = new URL(request.url()).pathname;
@@ -412,6 +412,8 @@ test('Haiku is the default, private model commands survive reload and reset rest
   expect(calls.length).toBe(before + 3); expect(turnPosts).toHaveLength(3);
   await speak('Let us keep talking.', 'claude-haiku-5-5', 4);
   expect(turnPosts.map(turn => turn.model)).toEqual(['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']);
+  // Every one of these was typed, and the client says so (spoken turns say "voice"). Added with the turn-provenance work; not run in the authoring environment.
+  expect(turnPosts.map(turn => turn.via)).toEqual(['typed', 'typed', 'typed', 'typed']);
   const beforeHordeCost = (await state(page)).usage.claudeCost;
   await modelCommand(page, '/model horde');
   await expect(page.locator('#toast')).toHaveText('AI Horde selected for the next turn.');

@@ -9,6 +9,7 @@ import { createBlindDate, getBlindDateCue } from '../src/restaurant/blind-date';
 import { getDate, MENU } from '../src/restaurant/content';
 import { CHARACTER_STORIES, STORY_CUE_KEYS } from '../src/restaurant/story';
 import type { DinnerState, SceneTurn, TurnEvent } from '../src/restaurant/types';
+import { humanLine, noteOf, rightNow } from './helpers/turn-note';
 
 const result: SceneTurn = { utterances: [{ speaker: 'date', text: 'That reminds me of an evening after work.', emotion: 'warm' }, { speaker: 'waiter', text: 'I will give you a moment with the menu.', emotion: 'warm' }], emotion: 'warm', action: 'none', memory: 'The human asked about work.', social: { signal: 'curiosity', reason: 'The human listened to a personal detail.', wantsToLeave: false } };
 async function boot(options: RestaurantOptions = {}) {
@@ -50,7 +51,7 @@ test('one blind turn uses its seeded biography, preserves cast selection, bills 
   const turn = { turnId: 'one-turn', text: 'What do you enjoy about your work?', model: 'claude-haiku-5-5' };
   const text = await (await api.request(path + '/turn', turn, token)).text(), events = text.trim().split('\n').map(line => JSON.parse(line) as TurnEvent);
   assert.deepEqual(events.filter(event => event.type === 'utterance').map(event => event.utterance.speaker), ['date', 'waiter']); assert.equal(requests.length, 1); assert.ok(requests[0].system.includes(identity.biography.occupation)); assert.ok(requests[0].system.includes(identity.personality)); assert.ok(requests[0].system.includes(identity.boundaries)); assert.equal(requests[0].system.includes(CHARACTER_STORIES[state.dateId].occupation), false);
-  const context = JSON.parse(requests[0].messages.at(-1)!.content); assert.ok(context.optionalReusableLines.every((line: any) => line.speaker !== 'date'));
+  const note = noteOf(requests[0]); assert.equal(humanLine(note), 'What do you enjoy about your work?'); assert.equal(note.includes('optionalReusableLines'), false, 'no stock lines are offered in place of a real reply'); assert.match(rightNow(note), /just met at the entrance/);
   assert.equal(await (await api.request(path + '/turn', turn, token)).text(), text); assert.equal(requests.length, 1);
   const snapshot = (await (await api.request(path, undefined, token)).json()).state as DinnerState; assert.equal(snapshot.blindDate?.seed, identity.seed); assert.equal(snapshot.usage.claudeRequests, 1); assert.equal(snapshot.usage.inputTokens, 100); assert.equal(snapshot.usage.outputTokens, 60); assert.ok(snapshot.usage.totalCost > 0);
 });

@@ -5,6 +5,7 @@ import type { RestaurantScenarioState } from '../../src/restaurant/scenario-type
 import type { ScenarioChoiceResult } from '../../src/restaurant/scenarios';
 import { applyScenarioEffects, refreshScenarioBill } from './scenario-effects';
 import { appendScenarioCue } from './scenario-cues';
+import { noteTableFact } from './table-facts';
 export { appendScenarioCue } from './scenario-cues';
 
 // Medical response checked against FARE's emergency guidance; involuntary tics against NHS information.
@@ -21,7 +22,9 @@ export function applyScenarioToView(view: DinnerState, scenario: RestaurantScena
   view.evening.scenario = scenario; view.evening.lastInterruptionAt = view.elapsed;
   applyScenarioEffects(view, scenario, result);
   const fact = `${by}: ${result.fact}`;
-  view.memory = `${view.memory}\n${fact}`.trim().slice(-1000);
+  // Table facts live apart from the notebook the model rewrites, so a later turn cannot erase them. Solo and
+  // Double both read them from there; nothing is appended to the notebook, which holds only what the date learned.
+  noteTableFact(view, fact);
   appendScenarioCue(view, `${scenario.id}-${scenario.decisions.length}`, result.utterances);
   const reaction = result.utterances.find(line => line.speaker === 'date');
   if (reaction && view.phase !== 'ended' && view.evening.stance !== 'leaving') view.emotion = reaction.emotion;
