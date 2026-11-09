@@ -6,6 +6,7 @@ import { attachRestaurantServer, type ClaudeAdapter, type RestaurantOptions } fr
 import { MENU } from '../src/restaurant/content';
 import type { DinnerCommand, DinnerState, SceneTurn, SceneUtterance, TurnEvent } from '../src/restaurant/types';
 import type { ClaudeRequest } from '../server/restaurant/providers';
+import { humanLine, noteOf, recordedAtTable } from './helpers/turn-note';
 
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 const staleLine: SceneUtterance = { speaker: 'date', text: 'Before anything changed, I had another thought.', emotion: 'flirtatious' };
@@ -66,18 +67,18 @@ test('a successful authored care action cancels pending stale dialogue, while mo
     assert.equal((await api.request('/playback', { generation, speaker: staleLine.speaker, text: staleLine.text, completed: false, playedSeconds: .25 })).status, 200);
     const changed = await (await api.command({ type: 'evening', action: 'request-water' })).json();
     assert.equal(changed.state.generation, generation + 1); assert.equal(held.aborted, true); assert.equal(held.calls, 1);
-    assert.match(changed.state.memory, /Asked Eli for fresh water/);
+    assert.match(recordedAtTable(changed.state), /Asked Eli for fresh water/);
     held.release.resolve();
     const events = decode(await completion);
     assert.ok(events.some(event => event.type === 'error' && event.code === 'interrupted'));
     const state = await api.snapshot();
-    assert.match(state.memory, /Asked Eli for fresh water/); assert.notEqual(state.emotion, 'flirtatious');
+    assert.match(recordedAtTable(state), /Asked Eli for fresh water/); assert.notEqual(state.memory, staleTurn.memory, 'the stale completion never replaces the notebook'); assert.notEqual(state.emotion, 'flirtatious');
     assert.equal(state.usage.inputTokens, 45); assert.equal(state.usage.cacheReadTokens, 7); assert.ok(state.usage.outputTokens > 0); assert.equal(state.usage.claudeRequests, 1);
     assert.equal((await api.request('/speech', { generation, utterance: staleLine })).status, 409);
     const next = await api.request('/turn', { turnId: 'after-water', text: 'Thanks. Let’s carry on.', model: 'claude-haiku-5-5' });
     await next.text();
     const history = held.requests[1].messages.map(message => message.content).join('\n');
-    assert.match(history, /interrupted partway/); assert.match(history, /Asked Eli for fresh water/);
+    assert.match(history, /Mira: Before anything changed, I had another thought\. \(cut off: the human heard only “Before”\)/, 'the partly played line names what was heard'); assert.match(history, /Asked Eli for fresh water/);
     assert.equal(held.calls, 2, 'only the two completed human turns call Claude');
   }
 });
@@ -116,7 +117,7 @@ test('valid model social repair and boundary cues do not interrupt their own com
   const texts = ['Shall I choose your food?', 'I am ordering for you anyway.', 'You are right. I accept that your order is your choice.', 'Would you like help choosing?', 'I am choosing your dinner against your wishes.', 'I am still choosing for you despite your answer.'];
   const claude: ClaudeAdapter = { async *stream(request) {
     const kind = reactions[calls++], signal = kind === 'set' ? 'none' : kind === 'repeat' ? 'pressure' : 'repair';
-    const humanText = JSON.parse(request.messages.at(-1)!.content).playerSaid;
+    const humanText = humanLine(noteOf(request));
     yield { type: 'text', text: JSON.stringify({ utterances: [{ speaker: 'date', text: kind === 'set' ? refusal : `An actual ${signal} response.`, emotion: 'defensive' }], emotion: 'defensive', action: 'none', memory: `Completed reaction ${calls}.`, social: { signal, reason: `An actual ${signal} moment.`, wantsToLeave: calls === reactions.length, boundary: { kind, topic: 'food-drink', refusal, evidence: humanText } } }) };
   } };
   const api = await boot(claude); t.after(() => api.close());

@@ -9,6 +9,7 @@ import type { DinnerState, SceneTurn, TurnEvent } from '../src/restaurant/types'
 import { DOLPHIN_MODEL, HORDE_MODEL } from '../src/restaurant/types';
 import type { DoubleDateRoomState, DoubleRoomResponse } from '../src/restaurant/double-date-types';
 import { MENU } from '../src/restaurant/content';
+import { humanLine, noteOf, signalFor } from './helpers/turn-note';
 
 const encode = JSON.stringify;
 const events = (text: string): TurnEvent[] => text.trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
@@ -194,11 +195,11 @@ test('Dolphin availability never bypasses Haiku-first play, earned reciprocal ch
   const adapter: ClaudeAdapter = { async *stream(request) {
     anthropicRequests.push(request);
     assert.equal(request.model, 'claude-haiku-5-5');
-    const index = anthropicRequests.length, context = JSON.parse(request.messages.at(-1)!.content), privateAgenda = context.scene.evening.dateAgenda;
-    const signal = privateAgenda.evidenceReady ? privateAgenda.nextMilestone ?? 'none' : 'none';
+    const index = anthropicRequests.length, note = noteOf(request);
+    const signal = signalFor(note);
     const text = index === 1 ? firstClue : index === 2 ? secondClue : index === 3 ? 'You noticed why a little room matters to me.' : index === 4 ? 'You listened carefully. I appreciate that.' : index === 5 ? 'That smile of yours is making this dinner rather distracting.' : 'Now you have me wondering what your next excuse to see me will be.';
     const result: SceneTurn = { ...dateTurn, utterances: [{ speaker: 'date', text, emotion: index >= 5 ? 'flirtatious' : 'warm' }], emotion: index >= 5 ? 'flirtatious' : 'warm',
-      social: { ...neutral, signal: index >= 4 ? 'kindness' : 'none' }, agenda: { signal, evidence: signal === 'none' ? '' : context.playerSaid, clue: index <= 2 ? text : '' } };
+      social: { ...neutral, signal: index >= 4 ? 'kindness' : 'none' }, agenda: { signal, evidence: signal === 'none' ? '' : humanLine(note), clue: index <= 2 ? text : '' } };
     yield { type: 'usage', usage: { inputTokens: 100, outputTokens: 100 } };
     yield { type: 'text', text: encode(result) };
   } };
@@ -250,12 +251,12 @@ test('automatic Horde routing follows each unlocked topic and its delivered foll
   const firstClue = 'I want time to make my own choices tonight.', secondClue = 'I would like to decide about another date after dinner.';
   const anthropic: ClaudeAdapter = { async *stream(request) {
     anthropicRequests.push(request); assert.equal(request.model, 'claude-haiku-5-5');
-    const index = anthropicRequests.length, context = JSON.parse(request.messages.at(-1)!.content), agenda = context.scene.evening.dateAgenda;
-    const signal = agenda.evidenceReady ? agenda.nextMilestone ?? 'none' : 'none';
+    const index = anthropicRequests.length, note = noteOf(request);
+    const signal = signalFor(note);
     const text = index === 1 ? firstClue : index === 2 ? secondClue : index === 3 ? 'You noticed why a little room matters to me.' : index === 4 ? 'You listened carefully. I appreciate that.' : index === 5 ? 'That smile of yours is making this dinner rather distracting.' : 'Now you have me wondering what your next excuse to see me will be.';
     yield { type: 'usage', usage: { inputTokens: 100, outputTokens: 100 } };
     yield { type: 'text', text: encode({ ...dateTurn, utterances: [{ speaker: 'date', text, emotion: index >= 5 ? 'flirtatious' : 'warm' }], emotion: index >= 5 ? 'flirtatious' : 'warm',
-      social: { ...neutral, signal: index >= 4 ? 'kindness' : 'none' }, agenda: { signal, evidence: signal === 'none' ? '' : context.playerSaid, clue: index <= 2 ? text : '' } }) };
+      social: { ...neutral, signal: index >= 4 ? 'kindness' : 'none' }, agenda: { signal, evidence: signal === 'none' ? '' : humanLine(note), clue: index <= 2 ? text : '' } }) };
   } };
   const horde: ClaudeAdapter = { async *stream(request) {
     hordeRequests.push(request); assert.equal(request.model, HORDE_MODEL);
@@ -471,8 +472,8 @@ test('Horde as the free default starts Solo, Blind and Double without paid keys 
     requests.push(request); assert.equal(request.model, HORDE_MODEL);
     yield { type: 'usage', usage: { inputTokens: 1_000_000, outputTokens: 100 } };
     if (unavailable) throw new DateApiError(502, 'horde_provider', 'The volunteer workers are unavailable.');
-    const context = JSON.parse(request.messages.at(-1)!.content);
-    yield { type: 'text', text: encode(context.humanTurn ? {
+    const double = noteOf(request).startsWith('{'); // a Double room still sends JSON; Solo and Blind send the prose note
+    yield { type: 'text', text: encode(double ? {
       utterances: [{ speaker: 'd1', text: 'I am glad we have a table together.', emotion: 'warm' }],
       dateUpdates: ['d1', 'd2'].map(actorId => ({ actorId, emotion: 'warm', memory: '', social: neutral, agenda: { signal: 'none', evidence: '', clue: '' } })),
     } : dateTurn) };
@@ -692,7 +693,7 @@ for (const mode of ['ai-date', 'blind-date'] as const) test(`${mode}: a redirect
   assert.ok(JSON.stringify(requests[0].messages).includes(blocked));
   assert.equal(JSON.stringify(requests[1].messages).includes(blocked), false);
   assert.ok(JSON.stringify(requests[1].messages).includes('[A provider-limited topic was redirected back to dinner. No personal boundary strike occurred.]'));
-  assert.equal(JSON.parse(requests[1].messages.at(-1)!.content).playerSaid, ordinary);
+  assert.equal(humanLine(noteOf(requests[1])), ordinary);
   const state = await api.soloState(session); assertUnpunished(state);
   assert.equal(state.usage.claudeRequests, 2);
   assert.equal(state.evening.cues.filter(cue => cue.key === 'table-check').length, 1);
