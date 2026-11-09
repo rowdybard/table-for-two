@@ -8,6 +8,7 @@ import { createNightExterior } from './NightExterior';
 import { RestaurantPropKit } from './RestaurantPropKit';
 import { dessertLayout, TabletopProps } from './TabletopProps';
 import type { DinnerState } from '../types';
+import { PENDANTS } from './VenueContract';
 
 const box = new THREE.BoxGeometry(1, 1, 1);
 const cylinder = new THREE.CylinderGeometry(1, 1, 1, 24);
@@ -356,15 +357,23 @@ export function createRestaurantScene(): RestaurantSet {
   }
   [[-5.9, -6.3], [5.9, -6.3], [-5.95, 5.9], [5.9, 5.9]].forEach((p, i) => plant(p[0]!, p[1]!, i));
 
-  function pendant(x: number, z: number) {
-    b.tube(dark, x, 3.2, z, .012, .55);
-    b.tube(brass, x, 2.9, z, .08, .1);
+  function pendant(x: number, z: number, builder = b) {
+    builder.tube(dark, x, 3.2, z, .012, .55);
+    builder.tube(brass, x, 2.9, z, .08, .1);
     const shade = new THREE.LatheGeometry([[.09, .20], [.15, .19], [.24, .12], [.30, .015], [.30, 0]].map(([r, y]) => new THREE.Vector2(r, y)), 40);
-    b.add(shade, ceramic, x, 2.64, z);
+    builder.add(shade, ceramic, x, 2.64, z);
     shade.dispose();
-    b.tube(glow, x, 2.65, z, .285, .018);
+    builder.tube(glow, x, 2.65, z, .285, .018);
   }
-  for (const p of [[0, -1.15], [-3.5, -3.5], [3.5, -3.5], [-3.38, 1.2], [3.38, 1.2]]) pendant(p[0]!, p[1]!);
+  // The pendant over the dining table lives in the dining station, so it travels with the quiet-table move
+  // together with its spotlight and halo. Its own lamp sits inside the shade, so the fixture casts nothing.
+  const tablePendant = new Builder();
+  pendant(PENDANTS[0][0], PENDANTS[0][1], tablePendant);
+  tablePendant.bake();
+  tablePendant.root.traverse(object => { if (object instanceof THREE.Mesh) object.castShadow = false; });
+  tablePendant.root.name = 'dining-table-pendant';
+  diningRoot.add(tablePendant.root);
+  for (const p of PENDANTS.slice(1)) pendant(p[0], p[1]);
 
   // Table props stay separate from the baked room so their appearance can follow dinner state.
   const tabletop = new TabletopProps();
