@@ -179,7 +179,7 @@ export class EveningDirector {
   }
   /** The authored lines for a cue, in this date's voice and for the evening as it stands. */
   private lines(key: string, context?: StoryCueContext) {
-    const cueContext = { resolution: this.state.evening.stance, ...context };
+    const cueContext = { resolution: this.state.evening.stance, variation: this.state.evening.variation, ...context };
     return this.blind ? getBlindDateCue(this.blind, key, cueContext) : getStoryCue(key, this.state.dateId, cueContext);
   }
   /** Little has been earned yet, or the evening has cooled: scripted lines stay plain rather than confiding or warm. */

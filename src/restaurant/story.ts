@@ -80,8 +80,20 @@ export interface StoryCueContext {
   humanDish?: string;
   /** How many bites the human took from the main course before Eli cleared it. */
   bites?: number;
+  /** The evening's own variation (0 to 2), so the same date does not say the same opening remarks every evening. */
+  variation?: number;
 }
 const date = (text: string, emotion: Emotion = 'warm'): SceneUtterance => ({ speaker: 'date', text, emotion });
+/**
+ * What each date says as the human sits down. The line in `CUES` is variation 0 (its stored voice clip stays valid); the evening's
+ * variation picks one of these two others instead, so a second evening with the same date does not start with the same remark.
+ * None asks a question: the human has not said anything yet, and a hanging question would wait for an answer.
+ */
+const SEATED_ALTERNATES: Record<DateId, readonly [string, string]> = {
+  mira: ['Okay. Phone away, shoulders down. I’m officially off the clock.', 'This is a good chair. I can see the whole room without feeling like part of it.'],
+  jules: ['Right. Napkin, water, menu. I think that’s everything the evening requires.', 'Good. I was braced for the table by the kitchen door.'],
+  dev: ['Okay, we made it to the table. That’s the hard part done.', 'Good seats. I’d say we’re ahead of schedule, which never happens to me.'],
+};
 const waiter = (text: string, emotion: Emotion = 'warm'): SceneUtterance => ({ speaker: 'waiter', text, emotion });
 
 const CUES: Record<DateId, Record<Exclude<StoryCueKey, 'order-nudge'>, SceneUtterance>> = {
@@ -283,6 +295,7 @@ export function getStoryCue(key: string, dateId: DateId, context: StoryCueContex
   const quiet = isGuardedStance(context.resolution) ? GUARDED[dateId][cue] : undefined;
   const plain = !quiet && context.reserved ? RESERVED[dateId][cue] : undefined;
   let line = quiet ? date(quiet, 'neutral') : plain ? date(plain) : { ...base };
+  if (cue === 'seated' && !plain && !isGuardedStance(context.resolution) && (context.variation ?? 0) % 3 > 0) line = date(SEATED_ALTERNATES[dateId][(context.variation as number) % 3 - 1], base.emotion);
   const extra: SceneUtterance[] = [];
   if (cue === 'ordered' && !quiet && context.humanDish) {
     const own = context.dish ?? CHARACTER_STORIES[dateId].preferredMain;
@@ -334,4 +347,6 @@ export const STORY_CUE_VARIANTS: { id: string; context: StoryCueContext }[] = [
   ...Object.keys(MAIN_DELIVERY).map((humanDish, index) => ({ id: `ordered-${index}`, context: { humanDish } })),
   { id: 'bites-0', context: { bites: 0 } },
   { id: 'bites-1', context: { bites: 1 } },
+  { id: 'variation-1', context: { variation: 1 } },
+  { id: 'variation-2', context: { variation: 2 } },
 ];

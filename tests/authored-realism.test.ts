@@ -202,6 +202,18 @@ test('a care action is a notebook moment, not a second copy in the memory a mode
   assert.equal(state.memory, '');
 });
 
+test('the sit-down remark changes from one evening to the next, and the original line stays the first variation', () => {
+  for (const date of DATES) {
+    const lines = [0, 1, 2].map(variation => getStoryCue('seated', date.id, { variation })[0].text);
+    assert.equal(new Set(lines).size, 3, `${date.id}: three evenings, three different remarks`);
+    assert.equal(lines[0], getStoryCue('seated', date.id)[0].text, `${date.id}: no variation is the original line, so its stored voice clip is still the one played`);
+    for (const line of lines) assert.doesNotMatch(line, /\?/, `${date.id}: the human has said nothing yet, so the remark leaves no question hanging`);
+    assert.equal(getStoryCue('seated', date.id, { variation: 2, resolution: 'guarded' })[0].text, getStoryCue('seated', date.id, { resolution: 'guarded' })[0].text, 'a guarded date stays plain whichever evening it is');
+    const heard = [0, 1, 2].map(variation => { const state = seatedDinner(date.id, variation), director = new EveningDirector(state); director.seated(); return lastCue(state, 'seated')!.utterances.find(line => line.speaker === 'date')!.text; });
+    assert.deepEqual(heard, lines, `${date.id}: the director plays the remark for its own evening`);
+  }
+});
+
 test('the greeting is the opening the model is seeded with, and only a greeting that asks something waits for an answer', () => {
   for (const date of DATES) {
     const welcome = getStoryCue('welcome', date.id);
@@ -255,7 +267,7 @@ test('every authored line the director can now play is enumerated for the option
     assert.ok(AUTHORED_UTTERANCES.some(line => line.cue === BEAT_COLD && line.dateId === date.id), `${date.id} has a cold beat row`);
     const contexts = [
       ...DESSERTS.map(dessert => ({ choice: dessert.id, named: true })), { reserved: true }, { bites: 0 }, { bites: 1 }, { bites: 3 }, { resolution: 'guarded' },
-      ...MENU.map(humanDish => ({ humanDish })), ...MENU.map(dish => ({ dish })),
+      ...MENU.map(humanDish => ({ humanDish })), ...MENU.map(dish => ({ dish })), { variation: 1 }, { variation: 2 },
     ];
     for (const key of STORY_CUE_KEYS) for (const context of contexts) for (const line of getStoryCue(key, date.id, context)) assert.ok(spoken.has(`${line.speaker}|${line.text}`), `${date.id}/${key}/${JSON.stringify(context)}: "${line.text}" is not in the enumeration`);
   }
@@ -278,4 +290,6 @@ test('a blind date plays the same rules in its own seeded voice', () => {
   assert.match(getBlindDateCue(identity, 'ordered', { humanDish: other })[0].text, /^Nice, /);
   assert.match(getBlindDateCue(identity, 'main-finished', { bites: 0 })[0].text, /take these away/);
   assert.notEqual(getBlindDateCue(identity, 'dessert-shared', { reserved: true })[0].text, getBlindDateCue(identity, 'dessert-shared')[0].text);
+  const seated = [0, 1, 2].map(variation => getBlindDateCue(identity, 'seated', { variation })[0].text);
+  assert.equal(new Set(seated).size, 3, 'a blind date’s sit-down remark also changes with the evening'); assert.equal(seated[0], getBlindDateCue(identity, 'seated')[0].text);
 });
