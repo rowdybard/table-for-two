@@ -779,7 +779,7 @@ test('complete double evening: both dinners, a shared dessert, one check for the
     await expect(p.a.locator('#title-start')).toBeVisible({ timeout: 15000 });
     await expect(p.a.locator('#arrival-screen')).toHaveAttribute('data-screen', 'title');
     expect(await credentials(p.a)).toBeNull();
-    await p.a.reload(); await expect(p.a.locator('#title-start')).toBeVisible();
+    await p.a.reload(); await expect(p.a.locator('#title-start')).toBeVisible({ timeout: 15000 });
     await expect(p.a.locator('#dinner-hud')).toBeHidden();
     await p.a.keyboard.press('Enter'); await expect(p.a.locator('#mode-menu')).toBeVisible();
     expect(p.errors).toEqual([]);

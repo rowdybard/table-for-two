@@ -211,7 +211,10 @@ test('complete authored evening: a wrong plate, a spill, dinner, a shared desser
   const downloadEvent = page.waitForEvent('download'); await page.locator('#save-postcard').click(); const download = await downloadEvent;
   expect(download.suggestedFilename()).toBe('table-for-two-mira.png');
   await captureRestaurantScene(page, '.qa/full-evening-ending.png');
-  await page.locator('#new-date').click(); await expect(page.locator('#past-evenings')).toBeVisible();
+  await page.locator('#new-date').click();
+  // Play again reloads the title, so wait for the same initialized menu as arrival.
+  await expect(page.locator('#title-start')).toBeFocused({ timeout: 15000 });
+  await expect(page.locator('#past-evenings')).toBeVisible();
   await page.locator('#past-evenings').click(); await expect(page.locator('#past-evenings-list')).toContainText('Mira');
   expect(errors).toEqual([]);
 });

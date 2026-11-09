@@ -53,8 +53,10 @@ async function openSettingsFromPause(page: Page) {
   await expect(page.locator('#pause-talk')).toBeDisabled();
   await expect(page.locator('#resume-date')).toBeEnabled();
   await expect(page.locator('#resume-date')).toBeFocused();
-  for (let step = 0; step < 4; step++) await page.keyboard.press('ArrowDown');
-  await expect(page.locator('#pause-settings')).toBeFocused();
+  for (const id of ['pause-talk', 'pause-journal', 'pause-settings']) {
+    await page.keyboard.press('ArrowDown');
+    await expect(page.locator(`#${id}`)).toBeFocused();
+  }
   await page.keyboard.press('Enter');
   await expect(page.locator('#settings-dialog')).toBeVisible();
 }
