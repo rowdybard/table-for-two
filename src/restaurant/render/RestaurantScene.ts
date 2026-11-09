@@ -9,6 +9,7 @@ import { RestaurantPropKit } from './RestaurantPropKit';
 import { dessertLayout, TabletopProps } from './TabletopProps';
 import type { DinnerState } from '../types';
 import { PENDANTS } from './VenueContract';
+import { createFloorShade } from './PlaceSettingShadows';
 
 const box = new THREE.BoxGeometry(1, 1, 1);
 const cylinder = new THREE.CylinderGeometry(1, 1, 1, 24);
@@ -289,6 +290,11 @@ export function createRestaurantScene(): RestaurantSet {
     chair(x, .2, Math.PI, doubleFurniture);
   }
   soloFurniture.bake(); doubleFurniture.bake(); doubleFurniture.root.visible = false;
+  // The table spotlight casts no shadow, so a soft floor shade grounds the pedestal table instead.
+  for (const [builder, radius] of [[soloFurniture, .9], [doubleFurniture, 1.3]] as const) {
+    const shade = createFloorShade(radius * 1.45, .5); shade.position.set(0, .006, -1.15);
+    builder.root.add(shade); b.materials.push(shade.material);
+  }
   diningRoot.add(soloFurniture.root, doubleFurniture.root);
   for (const x of [-3.5, 3.5]) {
     table(x, -3.5, .8);

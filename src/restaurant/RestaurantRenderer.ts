@@ -209,8 +209,8 @@ export class RestaurantRenderer {
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     // three orders opaque draws by material id, so ~25 programs alternate and every switch re-uploads all
     // light uniforms. Grouping by the program each material last used keeps the same pixels with far fewer switches.
-    const properties = this.renderer.properties;
-    const programOf = (item: RenderItem) => (properties.get(item.material) as { currentProgram?: { id: number } }).currentProgram?.id ?? 0;
+    // Read renderer.properties at sort time: a context restore replaces it.
+    const programOf = (item: RenderItem) => (this.renderer.properties.get(item.material) as { currentProgram?: { id: number } }).currentProgram?.id ?? 0;
     this.renderer.setOpaqueSort((a: RenderItem, b: RenderItem) => a.groupOrder - b.groupOrder || a.renderOrder - b.renderOrder
       || programOf(a) - programOf(b) || a.material.id - b.material.id || a.materialVariant - b.materialVariant || a.z - b.z || a.id - b.id);
     this.renderer.setClearColor('#172536');

@@ -205,6 +205,27 @@ test('materials carry the venue tags, and nothing on the table renders into a sh
   assert.equal(flame.parent, f.tabletop.lamp); assert.equal((flame.material as THREE.MeshBasicMaterial).toneMapped, false);
 });
 
+test('a floor shade grounds the pedestal table in both layouts, since the table spot casts no shadow', () => {
+  const shades: THREE.Mesh[] = [];
+  f.set.diningRoot.traverse(o => { if (o.name === 'table-floor-shade') shades.push(o as THREE.Mesh); });
+  assert.equal(shades.length, 2);
+  const down = new THREE.Raycaster(new THREE.Vector3(0, 1, -1.15), new THREE.Vector3(0, -1, 0));
+  for (const [double, radius] of [[false, .9], [true, 1.3]] as const) {
+    f.set.setDoubleDate(double);
+    const visibleShades = shades.filter(shade => shown(shade));
+    assert.equal(visibleShades.length, 1, `one shade for the ${double ? 'Double' : 'solo'} table`);
+    const shade = visibleShades[0]!, half = (shade.geometry as THREE.PlaneGeometry).parameters.width / 2;
+    // Centred under the table in diningRoot (so it rides the quiet-table move), just above the floor tiles' top at .0015.
+    assert.equal(shade.parent!.parent, f.set.diningRoot);
+    assert.deepEqual([shade.position.x, shade.position.z], [0, -1.15]);
+    assert.ok(shade.position.y > .0015 && shade.position.y < .01);
+    assert.ok(half > radius, 'the shade reaches past the tabletop edge');
+    assert.ok(!shade.castShadow && (shade.material as THREE.Material).transparent && !(shade.material as THREE.Material).depthWrite);
+    assert.equal(down.intersectObject(shade).length, 0, 'the shade never takes a crosshair hit');
+  }
+  f.set.setDoubleDate(false);
+});
+
 test('child-index contracts used by the browser specs hold', () => {
   const tp = f.tabletop, shared = tp.root.children[2]!;
   assert.deepEqual(shared.children, [tp.carafe, tp.lamp, tp.vase, tp.basket, tp.shakers[0], tp.shakers[1]]);

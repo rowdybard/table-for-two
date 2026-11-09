@@ -47,6 +47,35 @@ void main() {
   #include <colorspace_fragment>
 }`;
 
+const floorFragmentShader = /* glsl */`
+uniform vec3 tint;
+uniform float strength;
+varying vec2 vSpot;
+void main() {
+  float alpha = strength * (1.0 - smoothstep(0.3, 1.0, length(vSpot)));
+  if (alpha < 0.003) discard;
+  gl_FragColor = vec4(tint, alpha);
+  #include <colorspace_fragment>
+}`;
+
+/**
+ * A soft shade on the floor under a pedestal table, `radius` metres across from its centre. The table
+ * spotlight casts no shadow, so without it the brightest part of the spot's floor pool would sit under
+ * the tabletop. One small transparent draw, no texture.
+ */
+export function createFloorShade(radius: number, strength: number) {
+  const geometry = new THREE.PlaneGeometry(2 * radius, 2 * radius); geometry.rotateX(-Math.PI / 2);
+  const material = new THREE.ShaderMaterial({
+    name: 'table-floor-shade', uniforms: { tint: { value: new THREE.Color('#1c1012') }, strength: { value: strength } },
+    vertexShader: /* glsl */`varying vec2 vSpot;\nvoid main() { vSpot = uv * 2.0 - 1.0; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: floorFragmentShader, transparent: true, depthWrite: false, toneMapped: false,
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = 'table-floor-shade'; mesh.renderOrder = -1; mesh.userData.decor = true;
+  mesh.castShadow = false; mesh.receiveShadow = false; mesh.raycast = () => {};
+  return mesh;
+}
+
 interface Source { object: THREE.Object3D; tag: ContactShadowSource }
 
 /**
