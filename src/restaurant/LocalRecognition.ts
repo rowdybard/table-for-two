@@ -1,3 +1,5 @@
+import { commitDelay, isFillerOnly } from './turn-endpointing';
+
 interface RecognitionCallbacks {
   onPartial(text: string): void;
   onTurn(text: string): void;
@@ -189,16 +191,32 @@ export class LocalRecognition {
     this.callbacks.onSpeechStart();
   }
 
+  private joinedText(): string {
+    return [...this.lines.values()].join(' ').replace(/\s+/g, ' ').trim();
+  }
+
+  /**
+   * True while the recognizer holds an unfinished human turn: a segment has started or closed but
+   * nothing has been committed yet. The date's own voice coming back through the mic does not count.
+   */
+  holdsHumanSpeech(): boolean {
+    if (!this.active || this.paused || this.lines.size === 0) return false;
+    const text = this.joinedText();
+    return !text || !this.isEcho(text);
+  }
+
   private scheduleCommit(): void {
     clearTimeout(this.commitTimer);
-    // Only complete VAD segments are committed; interim updates are display-only.
+    // Only complete VAD segments are committed; interim updates are display-only. Text that reads as
+    // finished commits after 550 ms as always; an obvious fragment waits longer for the rest of the
+    // sentence (a new speech segment cancels the wait). Hesitation sounds alone are never a turn.
     this.commitTimer = setTimeout(() => {
       if (!this.active || this.paused || [...this.lines.keys()].some(id => !this.completed.has(id))) return;
-      const text = [...this.lines.values()].join(' ').replace(/\s+/g, ' ').trim();
+      const text = this.joinedText();
       const echo = this.isEcho(text);
       this.resetTurn();
-      if (text && !echo) this.callbacks.onTurn(text);
-    }, 550);
+      if (text && !echo && !isFillerOnly(text)) this.callbacks.onTurn(text);
+    }, commitDelay(this.joinedText()));
   }
 
   private resetTurn(): void {

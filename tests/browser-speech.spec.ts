@@ -124,6 +124,90 @@ test('real audio drives mouth amplitude, while stop aborts pending synthesis and
   expect(pageErrors).toEqual([]);
 });
 
+// Added with the adaptive-endpointing work; written without a browser available, so not yet run.
+test('an unfinished sentence waits for its ending, finished ones do not, and hesitation sounds never become a turn', async ({ page }) => {
+  const errors: string[] = [], requests: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('request', request => requests.push(request.url()));
+  await page.goto(base);
+  await page.waitForFunction(() => (window as unknown as SpeechWindow).__speechClasses);
+  await page.locator('#activate').click();
+  const result = await page.evaluate(async () => {
+    const { LocalRecognition } = (window as unknown as SpeechWindow).__speechClasses;
+    let worker: FakeWorker | undefined;
+    class FakeWorker {
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror = null;
+      epoch = 0;
+      constructor() { worker = this; }
+      postMessage(message: { type: string; epoch?: number }) {
+        if (message.type === 'load') queueMicrotask(() => this.emit('ready'));
+        if (message.type === 'reset') this.epoch = message.epoch ?? this.epoch;
+        if (message.type === 'audio') queueMicrotask(() => this.emit('ack'));
+      }
+      emit(type: string, id?: string, text?: string) {
+        this.onmessage?.(new MessageEvent('message', { data: { type, text, id, epoch: this.epoch } }));
+      }
+      terminate() { this.onmessage = null; }
+    }
+    window.Worker = FakeWorker as unknown as typeof Worker;
+    const fixtureAudio = new AudioContext(), media = fixtureAudio.createMediaStreamDestination().stream;
+    navigator.mediaDevices.getUserMedia = async () => media;
+    const turns: string[] = [], failures: string[] = [];
+    const recognition = new LocalRecognition({ onSpeechStart() {}, onPartial() {}, onTurn(text) { turns.push(text); }, onStatus() {}, onError(message) { failures.push(message); } });
+    const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    const until = async (condition: () => boolean, ms = 3000) => { for (let waited = 0; waited < ms && !condition(); waited += 5) await wait(5); };
+    try {
+      await recognition.start();
+      const idleHolds = recognition.holdsHumanSpeech();
+
+      // A finished-looking sentence still commits on the original short pause.
+      worker!.emit('speech', 'a', ''); worker!.emit('partial', 'a', 'I really love sushi.');
+      const holdingWhileSpeaking = recognition.holdsHumanSpeech();
+      worker!.emit('line', 'a', 'I really love sushi.');
+      await wait(800);
+      const finishedAfter800 = [...turns];
+      await until(() => !recognition.holdsHumanSpeech(), 500);
+
+      // A thinking pause after "was" is not the end of the turn: the player carries on in a new segment.
+      worker!.emit('speech', 'b', ''); worker!.emit('partial', 'b', 'My graduating class was'); worker!.emit('line', 'b', 'My graduating class was');
+      await wait(1000);
+      const fragmentAfter1000 = [...turns];
+      worker!.emit('speech', 'c', ''); worker!.emit('partial', 'c', 'less than seventy people.'); worker!.emit('line', 'c', 'less than seventy people.');
+      await until(() => turns.length === 2, 2500);
+      const continued = [...turns];
+
+      // A fragment the player abandons is still sent once the longer wait has passed.
+      worker!.emit('speech', 'd', ''); worker!.emit('partial', 'd', 'I was going to say that'); worker!.emit('line', 'd', 'I was going to say that,');
+      await wait(1000);
+      const abandonedAfter1000 = turns.length;
+      await until(() => turns.length === 3, 2500);
+
+      // Hesitation sounds alone are never a turn.
+      const beforeFiller = turns.length;
+      for (const [index, text] of ['Um.', 'uh', 'Hmm...', 'er, um'].entries()) {
+        worker!.emit('speech', `f${index}`, ''); worker!.emit('partial', `f${index}`, text); worker!.emit('line', `f${index}`, text);
+        await until(() => !recognition.holdsHumanSpeech(), 2500);
+      }
+      return { idleHolds, holdingWhileSpeaking, finishedAfter800, fragmentAfter1000, continued, abandonedAfter1000, turns, beforeFiller, holdsAfterFiller: recognition.holdsHumanSpeech(), failures };
+    } finally {
+      recognition.dispose(); await fixtureAudio.close();
+    }
+  });
+  expect(result.idleHolds).toBe(false);
+  expect(result.holdingWhileSpeaking).toBe(true);
+  expect(result.finishedAfter800).toEqual(['I really love sushi.']);
+  expect(result.fragmentAfter1000).toEqual(['I really love sushi.']);
+  expect(result.continued).toEqual(['I really love sushi.', 'My graduating class was less than seventy people.']);
+  expect(result.abandonedAfter1000).toBe(2);
+  expect(result.turns).toEqual(['I really love sushi.', 'My graduating class was less than seventy people.', 'I was going to say that,']);
+  expect(result.turns).toHaveLength(result.beforeFiller);
+  expect(result.holdsAfterFiller).toBe(false);
+  expect(result.failures).toEqual([]);
+  expect(requests.some(url => /api\.anthropic\.com|\/api\/date\/.*\/turn|elevenlabs/.test(url))).toBe(false);
+  expect(errors).toEqual([]);
+});
+
 test('revised recognition partials remain local until one completed player turn', async ({ page }) => {
   const errors: string[] = [], requests: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
