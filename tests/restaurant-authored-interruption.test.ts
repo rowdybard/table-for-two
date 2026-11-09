@@ -66,12 +66,13 @@ test('a successful authored care action cancels pending stale dialogue, while mo
     assert.equal((await api.request('/playback', { generation, speaker: staleLine.speaker, text: staleLine.text, completed: false, playedSeconds: .25 })).status, 200);
     const changed = await (await api.command({ type: 'evening', action: 'request-water' })).json();
     assert.equal(changed.state.generation, generation + 1); assert.equal(held.aborted, true); assert.equal(held.calls, 1);
-    assert.match(changed.state.memory, /Asked Eli for fresh water/);
+    assert.ok((changed.state.evening.moments as { description: string }[]).some(moment => /Asked Eli for fresh water/.test(moment.description)), 'the care moment is in the notebook, not copied into the model-owned memory');
+    assert.doesNotMatch(changed.state.memory, /Asked Eli for fresh water/);
     held.release.resolve();
     const events = decode(await completion);
     assert.ok(events.some(event => event.type === 'error' && event.code === 'interrupted'));
     const state = await api.snapshot();
-    assert.match(state.memory, /Asked Eli for fresh water/); assert.notEqual(state.emotion, 'flirtatious');
+    assert.ok(state.evening.moments.some(moment => /Asked Eli for fresh water/.test(moment.description))); assert.notEqual(state.emotion, 'flirtatious');
     assert.equal(state.usage.inputTokens, 45); assert.equal(state.usage.cacheReadTokens, 7); assert.ok(state.usage.outputTokens > 0); assert.equal(state.usage.claudeRequests, 1);
     assert.equal((await api.request('/speech', { generation, utterance: staleLine })).status, 409);
     const next = await api.request('/turn', { turnId: 'after-water', text: 'Thanks. Let’s carry on.', model: 'claude-haiku-5-5' });
@@ -96,11 +97,19 @@ test('a timed health scene outranks held model completion and registers its cue 
   const response = await api.request('/turn', { turnId: 'before-health', text: 'Tell me about your week.', model: 'claude-haiku-5-5' });
   const completion = response.text(); await held.ready.promise;
   const generation = (await api.snapshot()).generation;
-  for (let i = 0; i < 10 && (await api.snapshot()).evening.scenario?.phase !== 'active'; i++) await api.advance();
+  // The story waits for the date to finish answering, but never longer than the reply cap: a held reply cannot block a health scene for good.
+  // A spilled glass is eligible at the same moment and goes first, so the table deals with it and the story follows.
+  for (let i = 0; i < 80 && (await api.snapshot()).evening.scenario?.phase !== 'active'; i++) {
+    if ((await api.snapshot()).evening.incident?.event === 'spilled-drink') {
+      for (let wipe = 0; wipe < 3; wipe++) { assert.equal((await api.command({ type: 'evening', action: 'wipe' })).status, 200); await api.advance(); }
+      assert.equal((await api.command({ type: 'evening', action: 'steady-glass' })).status, 200);
+    }
+    await api.advance();
+  }
   const state = await api.snapshot();
   assert.equal(state.evening.scenario?.id, 'allergic-reaction'); assert.equal(state.evening.scenario.phase, 'active');
   assert.equal(state.evening.scenario.effects.service, 'help'); assert.equal(state.emotion, 'surprised');
-  assert.equal(state.generation, generation + 1); assert.equal(held.aborted, true); assert.equal(held.calls, 1);
+  assert.ok(state.generation > generation, 'the authored scene opened a new generation'); assert.equal(held.aborted, true); assert.equal(held.calls, 1);
   const health = state.evening.cues.find(cue => cue.key === 'scenario-allergic-reaction-opening')!.utterances[0];
   assert.equal((await api.request('/speech', { generation, utterance: staleLine })).status, 409);
   const speech = await api.request('/speech', { generation: state.generation, utterance: health });
@@ -126,6 +135,7 @@ test('valid model social repair and boundary cues do not interrupt their own com
     assert.equal(events.some(event => event.type === 'error'), false);
     const state = await api.snapshot(); assert.equal(state.generation, i + 1); assert.equal(state.memory, `Completed reaction ${i + 1}.`);
     assert.equal(state.emotion, 'defensive');
+    if (reactions[i] === 'repair') assert.equal(state.evening.cues.some(cue => cue.key === 'repair'), false, 'the model already answered the apology, so no canned thank-you is stacked on it');
     if (reactions[i] === 'set') {
       const receipt = await api.request('/playback', { generation: state.generation, speaker: 'date', text: refusal, completed: true, playedSeconds: 2 });
       assert.equal(receipt.status, 200);
@@ -133,7 +143,7 @@ test('valid model social repair and boundary cues do not interrupt their own com
     }
   }
   const state = await api.snapshot();
-  assert.ok(state.evening.cues.some(cue => cue.key === 'repair'));
+  assert.equal(state.evening.cues.some(cue => cue.key === 'repair'), false);
   assert.equal(state.evening.farewell.ending?.kind, 'walked-away'); assert.equal(calls, reactions.length);
 });
 

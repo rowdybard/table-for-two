@@ -36,6 +36,8 @@ export const EVENING_PACE = Object.freeze({
   checkDelay: 12,
   /** Silence before the date offers an authored line, and the gap between two such lines. */
   beatSilence: 50,
+  /** Waiting for the food is the one stretch shorter than the kitchen's 45 seconds, so its silence is shorter too. */
+  beatSilenceWaiting: 30,
   beatSpacing: 80,
   beatsPerEvening: 4,
   /** Physical incidents belong to a course rather than to wall-clock minutes: the spill to the main (any calm moment before dessert arrives), the loud neighbour to dessert. */

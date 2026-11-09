@@ -5,7 +5,8 @@ import type { DateId, DinnerEvent, SceneUtterance } from './types';
 export interface AuthoredUtterance extends SceneUtterance { clipId: string; dateId?: DateId; event?: DinnerEvent; cue: string }
 /** Fixed lines can be voiced once by the optional pre-generation CLI and reused exactly. */
 const LEGACY_UTTERANCES: AuthoredUtterance[] = [
-  ...DATES.map(date => ({ clipId: `opening-${date.id}`, dateId: date.id, cue: 'opening' as const, speaker: 'date' as const, text: date.opening, emotion: 'neutral' as const })),
+  // The opening is the date's spoken welcome, so the two share one clip rather than two near-identical recordings.
+  ...DATES.map(date => ({ clipId: `opening-${date.id}`, dateId: date.id, cue: 'opening' as const, speaker: 'date' as const, text: date.opening, emotion: getStoryCue('welcome', date.id).find(line => line.speaker === 'date')?.emotion ?? 'neutral' })),
   { clipId: 'greeting-waiter', cue: 'greeting', speaker: 'waiter', text: 'Welcome in. Your table is ready whenever you are.', emotion: 'warm' },
   { clipId: 'greeting-date', cue: 'greeting', speaker: 'date', text: 'This is nice. Shall we grab our table?', emotion: 'warm' },
   { clipId: 'clap-delighted', cue: 'clap', speaker: 'date', text: 'Okay, that deserves a round of applause.', emotion: 'amused' },

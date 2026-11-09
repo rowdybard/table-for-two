@@ -1,6 +1,6 @@
 import { MENU } from './content';
 import { DESSERTS } from './evening';
-import { getStoryCue, type CharacterStory, type StoryCueContext } from './story';
+import { getStoryCue, guardedLine, isGuardedStance, spokenDessert, spokenDish, type CharacterStory, type StoryCueContext } from './story';
 import type { DateId, Emotion, SceneUtterance } from './types';
 
 export interface BlindDateIdentity {
@@ -69,30 +69,38 @@ export function createBlindDate(seed: string): BlindDateIdentity {
   return { version: 1, seed, dateId, traits, personality, preferences, boundaries, opening, biography };
 }
 
+/** Blind-date wording for a hurt or guarded date; other keys borrow the preset's plain lines, which carry no preset biography. */
+const BLIND_GUARDED: Record<string, string> = {
+  'dessert-shared': 'Thanks for sharing. I’m still a little quiet after earlier.',
+  'dessert-skipped': 'I’ll skip dessert. We can ask for the bill when you’re ready.',
+};
+
 /** Scripted physical moments must stay consistent with the randomized life too. */
 export function getBlindDateCue(identity: BlindDateIdentity, key: string, context: StoryCueContext = {}): SceneUtterance[] {
   const active = identity.traits.sociability > 65, dry = identity.traits.sociability < 35;
+  const dish = identity.biography.preferredMain.toLowerCase(), dessertName = DESSERTS.find(item => item.id === identity.biography.preferredDessert)?.name.toLowerCase() ?? 'dessert';
   const lines: Record<string, [string, Emotion?]> = {
     welcome: [identity.opening, 'warm'],
     seated: [dry ? 'Better. Now we can actually hear each other.' : 'Good table, good company. Let’s see what happens.', 'warm'],
-    ordered: [`I’m having the ${identity.biography.preferredMain.toLowerCase()}. That was the easiest decision I made today.`, 'amused'],
+    ordered: [context.humanDish && context.humanDish === identity.biography.preferredMain ? `Same as you, then: the ${dish}. We can compare notes.` : `${context.humanDish ? `Nice, ${spokenDish(context.humanDish)}. ` : ''}I’m having the ${dish}. That was the easiest decision I made today.`, 'amused'],
     'main-served': ['That smells good. I’m ready to stop looking at the menu and start eating.', 'warm'],
     taste: [dry ? 'Mm. Good choice.' : 'Okay, that was worth waiting for.', 'warm'],
-    'main-finished': ['I needed an evening away from work. I’m glad this one actually happened.', 'warm'],
+    'main-finished': ['I’m glad I came out tonight.', 'warm'],
     'quiet-window': [dry ? 'This is nice. We don’t have to fill every second.' : 'A little quieter here. I like this part of the evening.', 'warm'],
-    'beat-waiting-1': ['I promised myself I’d leave work at the door, so here’s a question instead: what’s the last thing you did just because you wanted to?', 'warm'],
-    'beat-waiting-2': [dry ? 'I’m happy with a quiet minute. I’d still like to know what you were thinking just now.' : 'Okay, I’ll break the silence first. What were you thinking about just now?', 'warm'],
+    'beat-cold': ['I’m happy to start if you’d rather, but I’d like to hear something about your week first. Anything will do.', 'warm'],
+    'beat-waiting-1': ['Okay, I’ll start. What’s the last thing you did just because you wanted to?', 'warm'],
+    'beat-waiting-2': [dry ? 'I’m happy with a quiet minute. Tell me if you’d rather talk.' : 'Okay, I’ll break the silence first. Pick any subject and I’ll follow.', 'warm'],
     'beat-eating-1': ['This is good. I was ready to be polite about it. What’s the meal you’d defend to anyone?', 'amused'],
-    'beat-eating-2': ['You’ve gone quiet in a thinking way, not a bored way. I hope. Tell me.', 'warm'],
-    'beat-after-1': ['I like an evening where nobody’s performing. This one has mostly been that.', 'warm'],
+    'beat-eating-2': ['You’ve gone quiet. Is that a good quiet? I’ll take either answer.', 'warm'],
+    'beat-after-1': ['I’m usually decided by now. I’m still working this one out.', 'warm'],
     'beat-after-2': ['Small question, honest answer: is this the kind of night you’d do again?', 'warm'],
-    'dessert-date-choice': [`If you’re happy to share, I’d pick the ${DESSERTS.find(item => item.id === identity.biography.preferredDessert)?.name.toLowerCase() ?? 'dessert'}. I’ll ask Eli.`, 'warm'],
+    'dessert-date-choice': [context.named && DESSERTS.some(item => item.id === context.choice) ? `${spokenDessert(context.choice!)} it is, then. I’ll ask Eli.` : `I’m going to order the ${dessertName}. There will be two spoons, if you’d like one.`, 'warm'],
     'dessert-ordered': ['Something to share sounds good. I can find a little room.', 'warm'],
     'dessert-served': ['That looks good. Two spoons. I like a dessert that assumes company.', 'warm'],
-    'dessert-shared': [['guarded', 'hurt', 'leaving'].includes(context.resolution ?? '') ? 'Thanks for sharing. I’m still a little quiet after earlier.' : 'I don’t usually say this on a first date, but there’s something I keep putting off that I actually care about. Tonight makes it feel less heavy.', 'warm'],
-    'dessert-skipped': [['guarded', 'hurt', 'leaving'].includes(context.resolution ?? '') ? 'I’ll skip dessert. We can ask for the bill when you’re ready.' : 'Fair enough. I’m happy taking our time with the rest of the evening.', 'neutral'],
+    'dessert-shared': [context.reserved ? 'This was worth saving room for.' : 'I don’t usually say this on a first date, but there’s something I keep putting off that I actually care about.', 'warm'],
+    'dessert-skipped': ['Fair enough. I’m happy taking our time with the rest of the evening.', 'neutral'],
     'bill-requested': ['I think that’s us. Let’s get this settled.', 'neutral'],
-    'bill-settled': ['Thanks. I’m glad we sorted that out without making it strange.', 'warm'],
+    'bill-settled': [context.choice === 'treat' ? 'Thank you. That was kind of you.' : context.choice === 'separate' ? 'Our own orders, then. That works for me.' : 'Thanks. I’m glad we sorted that out without making it strange.', 'warm'],
     'farewell-invite': ['Shall we walk to the door together?', 'warm'],
     'wrong-order': ['I don’t think this is what we ordered. Let’s check the ticket.', 'surprised'],
     'wrong-order-returned': ['Thanks for sorting that out. No need to make anyone feel worse about a wrong plate.', 'warm'],
@@ -108,16 +116,20 @@ export function getBlindDateCue(identity: BlindDateIdentity, key: string, contex
     'boundary-warning': ['I meant what I said. Please don’t keep pushing that.', 'annoyed'],
     'date-leaving': ['I’m going to leave now. Please respect that.', 'defensive'],
     'ending-another-evening': [active ? 'I had a good time. I’d like another evening with you, if you would too.' : 'I’d like to see you again. Tonight was good company.', 'warm'],
-    'ending-new-friend': ['I enjoyed your company. I’d be happy to keep in touch as friends.', 'warm'],
+    'ending-new-friend': [context.reserved ? 'It was good to meet you. I’m happy to leave it as friends. Take care.' : 'I enjoyed your company. I’d be happy to keep in touch as friends.', 'warm'],
     'ending-second-chance': ['We had an awkward moment, but I appreciated how you handled it afterward. I’d be open to trying again.', 'warm'],
     'ending-quiet-goodbye': ['Thank you for dinner. I don’t think I’m looking for another date, but I wish you well.', 'neutral'],
     'ending-early-exit': ['All right. Thanks for letting me know. Take care getting home.', 'neutral'],
     'ending-walked-away': ['I asked you to stop, and you kept pushing. I’m leaving. Take care.', 'defensive'],
   };
   const cast = getStoryCue(key, identity.dateId, context).filter(line => line.speaker !== 'date');
-  const chosen = lines[key];
+  // A hurt or guarded date speaks plainly here too, and Eli's lines still land.
+  const quiet = isGuardedStance(context.resolution) ? BLIND_GUARDED[key] ?? guardedLine(identity.dateId, key) : undefined;
+  const chosen: [string, Emotion?] | undefined = quiet ? [quiet, 'neutral'] : lines[key];
   if (!chosen) return cast;
   const dateLine: SceneUtterance = { speaker: 'date', text: chosen[0], emotion: chosen[1] ?? 'neutral' };
-  // Eli leads the course changes for blind dates too.
-  return ['main-finished', 'bill-requested'].includes(key) ? [...cast, dateLine] : [dateLine, ...cast];
+  // Little earned yet: Eli brings the check and the date says nothing about the evening.
+  if (key === 'bill-requested' && context.reserved && !quiet) return cast;
+  // Eli leads the course changes for blind dates too, and a plain thank-you follows the plate.
+  return ['main-finished', 'bill-requested'].includes(key) || quiet && ['main-served', 'dessert-served'].includes(key) ? [...cast, dateLine] : [dateLine, ...cast];
 }
