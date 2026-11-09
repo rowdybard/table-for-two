@@ -25,6 +25,7 @@ TypeScript, plain imperative Three.js, Vite, Node, Rapier and DOM game overlays.
 | Client entry, networking, input and playback | `src/restaurant/main.ts` |
 | First-person/selection/inspection camera and actor presentation | `src/restaurant/RestaurantRenderer.ts` |
 | Restaurant geometry, place settings, food and props | `src/restaurant/render/RestaurantScene.ts`, `TabletopProps.ts`, `EveningTable.ts` |
+| Venue lights, reflection map, glow halos and phone quality tier (`?quality=high\|low` forces one) | `src/restaurant/render/RestaurantLighting.ts`, `VenueEnvironment.ts`, `VenueGlow.ts`, `RenderQuality.ts`, shared constants in `VenueContract.ts` |
 | Prompt line (course choices, incidents, scenarios, gestures), receipt, notebook and endings | `src/restaurant/EveningInterface.ts` |
 | Shared pacing clocks and dessert list | `src/restaurant/evening.ts` |
 | Touch input | `MobileControls.ts`, `MobileInput.ts`, `TouchLookTap.ts`, `TouchButtonGesture.ts` |
@@ -98,7 +99,7 @@ pnpm exec playwright test tests/browser-restaurant.spec.ts tests/browser-evening
 
 Playwright currently uses installed Chrome and one worker. Browser specs that serve `dist` require a fresh production build. Several legacy integration tests use real clocks; do not run a heavy unit suite alongside WebGL/software rendering. Give one agent the browser/GPU at a time. Use `autoTick:false` and the internal runtime `tick()` methods for deterministic controller tests; these are not public debug endpoints. Never weaken ownership, receipt, spending or atomic rejection assertions just to make a route pass.
 
-Relevant focused tests include `atlas-fixes`, `scenario-consequences`, `full-evening`, `restaurant-scenarios`, `double-date-scene-regressions`, `tabletop`, agenda/boundary/chemistry tests, and the tabletop/encounter browser specs. Three.js changes require actual screenshots reviewed internally: DOM visibility alone misses floating meshes, hidden children and clipping. Physical iPhone, speech quality, live-provider latency and internet/NAT behavior still need separate real-world checks.
+Relevant focused tests include `tabletop-layout` (headless overlap audit of every place setting and moving prop; run it after any tabletop change), `venue-lighting-rig`, `render-quality`, `atlas-fixes`, `scenario-consequences`, `full-evening`, `restaurant-scenarios`, `double-date-scene-regressions`, `tabletop`, agenda/boundary/chemistry tests, and the tabletop/encounter browser specs. Three.js changes require actual screenshots reviewed internally: DOM visibility alone misses floating meshes, hidden children and clipping. Physical iPhone, speech quality, live-provider latency and internet/NAT behavior still need separate real-world checks.
 
 Paid comparison/clip utilities default to dry runs. Do not run `--run`/`--generate`, live auditions or ElevenLabs synthesis without authorization. Mock providers in automated tests.
 

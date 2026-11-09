@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
+import { STATIC_SHADOW_LAYER } from './VenueContract';
 
 const models = {
   plant: '/restaurant-props/potted_plant_02.glb',
@@ -38,7 +39,8 @@ export class RestaurantPropKit {
       mesh.position.set(-center.x * scale, -bounds.min.y * scale, -center.z * scale);
       mesh.scale.setScalar(scale);
       mesh.traverse(object => {
-        if (object instanceof THREE.Mesh) { object.castShadow = true; object.receiveShadow = true; }
+        // Model props cast into the static key-light shadow, which renders only its own layer.
+        if (object instanceof THREE.Mesh) { object.castShadow = true; object.receiveShadow = true; object.layers.enable(STATIC_SHADOW_LAYER); }
       });
       mesh.userData.asset = models[kind];
       anchor.add(mesh); fallback.visible = false;
