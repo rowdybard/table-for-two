@@ -5,7 +5,7 @@ import {
   SCENARIOS, TABLE_TOP, applyFrame, auditFlats, auditQuietTable, auditShadows, auditTargets, auditTransition, browserFixtureChecks, buildState,
   collectProps, createLayoutFixture, forkSides, mods as m, napkinClearances, restedCutlerySupport, runScenarios, shadowProblem, shown, type Finding, type LayoutFixture, type Mod, type Scenario,
 } from './fixtures/tabletop-layout-harness';
-import { CONTACT_SHADOW_MAX, DYNAMIC_SHADOW_LAYER, VENUE_ENV } from '../src/restaurant/render/VenueContract';
+import { CONTACT_SHADOW_MAX, VENUE_ENV } from '../src/restaurant/render/VenueContract';
 import { PLACE_SETTING, SPILLED_GLASS } from '../src/restaurant/render/TabletopProps';
 
 let f: LayoutFixture;
@@ -113,6 +113,14 @@ test('contact shadows sync from their own mesh before it draws, never from scene
   mesh.onBeforeRender(undefined as never, f.scene, undefined as never, mesh.geometry, mesh.material as THREE.Material, null as never);
   mesh.getMatrixAt(index, matrix); at.setFromMatrixPosition(matrix.premultiply(mesh.matrixWorld));
   assert.ok(Math.abs(at.x - carafe.getWorldPosition(new THREE.Vector3()).x) < 1e-6);
+  // A still table uploads nothing: the instance buffers are flagged only when a blob changes.
+  const versions = () => [mesh.instanceMatrix.version, (mesh.geometry.getAttribute('instanceOpacity') as THREE.InstancedBufferAttribute).version];
+  const before = versions();
+  mesh.onBeforeRender(undefined as never, f.scene, undefined as never, mesh.geometry, mesh.material as THREE.Material, null as never);
+  assert.deepEqual(versions(), before);
+  carafe.position.x -= .1; f.scene.updateMatrixWorld(true);
+  mesh.onBeforeRender(undefined as never, f.scene, undefined as never, mesh.geometry, mesh.material as THREE.Material, null as never);
+  assert.ok(versions()[0]! > before[0]!);
   applyFrame(f, state);
 });
 
@@ -177,20 +185,19 @@ test('a knocked glass rolls over on its edge instead of swinging its foot throug
   assert.ok(Math.abs(f.tabletop.playerGlass.rotation.z - SPILLED_GLASS.tilt) < 1e-9 && Math.abs(f.tabletop.playerGlass.position.y - SPILLED_GLASS.y) < 1e-9);
 });
 
-test('materials carry the venue tags, and casters join the table spotlight layer', () => {
+test('materials carry the venue tags, and nothing on the table renders into a shadow map', () => {
   const visit = (root: THREE.Object3D, fn: (mesh: THREE.Mesh, material: THREE.MeshStandardMaterial) => void) => root.traverse(o => { if (o instanceof THREE.Mesh && !o.userData.target) for (const mat of ([] as THREE.Material[]).concat(o.material)) fn(o, mat as THREE.MeshStandardMaterial); });
   const issues: string[] = [];
   for (const root of [f.tabletop.root, f.table.root]) visit(root, (mesh, mat) => {
     const name = `${mesh.geometry.type}/${mat.type}`;
     if (mat.metalness === 1 && mat.userData.venueEnv !== VENUE_ENV.metal) issues.push(`${name}: metal without venueEnv.metal`);
     if (mat.transparent && mat.opacity <= .3 && mat.side === THREE.DoubleSide && mat.depthWrite === false && (mat as THREE.Material).type === 'MeshStandardMaterial' && !mat.userData.venueGlass) issues.push(`${name}: glass without venueGlass`);
-    if (mesh.castShadow && !mesh.layers.isEnabled(DYNAMIC_SHADOW_LAYER)) issues.push(`${name}: casts outside the spotlight layer`);
-    if (mesh.castShadow && mat.transparent) issues.push(`${name}: transparent caster`);
+    // Contact blobs ground the props; a per-frame shadow pass for them cost frames for little.
+    if (mesh.castShadow) issues.push(`${name}: casts a shadow-map shadow`);
   });
-  // Food receives but never casts; plates, cutlery and the lamp base cast.
   for (const course of f.table.meals) for (const group of course) group.traverse(o => { if ((o as THREE.Mesh).isMesh && o.castShadow) issues.push('food casts a shadow'); });
   const place = f.tabletop.placeGroups[0]!;
-  assert.ok((place.plate.children[0] as THREE.Mesh).castShadow && place.cutlery.children.every(c => c.castShadow) && place.napkin.children.every(c => (c as THREE.Mesh).receiveShadow));
+  assert.ok((place.plate.children[0] as THREE.Mesh).receiveShadow && place.napkin.children.every(c => (c as THREE.Mesh).receiveShadow));
   assert.ok(f.tabletop.menu.receiveShadow && f.table.napkin.receiveShadow);
   assert.deepEqual(issues, []);
   // The lamp bulb stays the lamp's child and does not tone-map, for the lighting's halo to follow.

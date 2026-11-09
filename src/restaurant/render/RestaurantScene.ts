@@ -433,7 +433,7 @@ export function createRestaurantScene(): RestaurantSet {
 
   const targets: THREE.Object3D[] = [];
   function target(name: string, x: number, y: number, z: number, sx: number, sy: number, sz: number) {
-    const hit = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, colorWrite: false }));
+    const hit = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), new THREE.MeshBasicMaterial({ visible: false, transparent: true, opacity: 0, depthWrite: false, colorWrite: false }));
     hit.position.set(x, y, z);
     hit.userData.target = name;
     (name === 'exit' ? b.root : diningRoot).add(hit);

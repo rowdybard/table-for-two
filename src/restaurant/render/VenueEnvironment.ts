@@ -137,6 +137,9 @@ const glassHooked = new WeakSet<THREE.Material>();
 export function installVenueGlass(material: THREE.Material): boolean {
   if (glassHooked.has(material) || !(material as THREE.MeshStandardMaterial).isMeshStandardMaterial) return false;
   glassHooked.add(material);
+  // Thin glass at low opacity: one pass instead of three's back-then-front pair, which drew every glass
+  // twice and re-resolved its program twice per frame. The fresnel below shades either face alike.
+  material.forceSinglePass = true;
   const previous = material.onBeforeCompile;
   const previousKey = material.customProgramCacheKey;
   const inheritedKey = previousKey === THREE.Material.prototype.customProgramCacheKey;

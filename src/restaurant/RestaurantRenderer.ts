@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { RenderItem } from 'three/src/renderers/webgl/WebGLRenderLists.js';
 import { RESTAURANT, getDate } from './content';
 import type { AudioPlayback, DateId, DateStance, DinnerCommand, DinnerState, Emotion } from './types';
 import { calmEnoughForListening, type ListeningPreview } from './ListeningPreview';
@@ -51,6 +52,10 @@ export class RestaurantRenderer {
   private readonly cameraTarget = new THREE.Vector3();
   private readonly gaze = new THREE.Vector3();
   private readonly center = new THREE.Vector2();
+  /** True from a render until the next update(): world matrices are what is on screen, so raycasts need not recompute them. */
+  private sceneMatricesFresh = false;
+  /** The crosshair interaction, computed at most once per frame for a given state snapshot. */
+  private centerInteraction: { state: DinnerState; hit: RestaurantInteraction | null } | null = null;
   private readonly resizeObserver: ResizeObserver;
   private yaw = 0;
   private pitch = -.025;
@@ -155,6 +160,7 @@ export class RestaurantRenderer {
   private renderScene() {
     this.faceFill.position.copy(this.faceFillOffset).applyQuaternion(this.camera.quaternion).add(this.camera.position);
     this.renderer.render(this.scene, this.camera);
+    this.sceneMatricesFresh = true;
     if (!this.ready && this.compiled && !this.disposed) { this.ready = true; this.canvas.setAttribute('aria-busy', 'false'); }
   }
 
@@ -201,6 +207,12 @@ export class RestaurantRenderer {
     this.renderer.toneMappingExposure = 1.10;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    // three orders opaque draws by material id, so ~25 programs alternate and every switch re-uploads all
+    // light uniforms. Grouping by the program each material last used keeps the same pixels with far fewer switches.
+    const properties = this.renderer.properties;
+    const programOf = (item: RenderItem) => (properties.get(item.material) as { currentProgram?: { id: number } }).currentProgram?.id ?? 0;
+    this.renderer.setOpaqueSort((a: RenderItem, b: RenderItem) => a.groupOrder - b.groupOrder || a.renderOrder - b.renderOrder
+      || programOf(a) - programOf(b) || a.material.id - b.material.id || a.materialVariant - b.materialVariant || a.z - b.z || a.id - b.id);
     this.renderer.setClearColor('#172536');
     this.characterEnvironment = createCharacterEnvironment(this.renderer);
     this.canvas = this.renderer.domElement;
@@ -302,7 +314,7 @@ export class RestaurantRenderer {
   }
 
   private createActorTarget(actor: RestaurantActor, actorId?: ConversationTarget) {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(.55, 1.07, .42), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, colorWrite: false }));
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(.55, 1.07, .42), new THREE.MeshBasicMaterial({ visible: false, transparent: true, opacity: 0, depthWrite: false, colorWrite: false }));
     mesh.position.set(0, 1.16, .025);
     mesh.userData.target = 'date';
     mesh.userData.actorId = actorId;
@@ -438,6 +450,8 @@ export class RestaurantRenderer {
     if (this.disposed) return;
     dt = Math.min(Math.max(dt, 0), .1);
     this.time += dt;
+    this.sceneMatricesFresh = false;
+    this.centerInteraction = null;
     if (state.phase !== 'playing') this.listeningPreview = null;
     this.set.update(this.time, this.reducedMotion.matches);
     this.lighting.update(state, dt, this.time, this.reducedMotion.matches, this.presentation === 'gameplay');
@@ -603,7 +617,25 @@ export class RestaurantRenderer {
     return this.getInteraction(state, new THREE.Vector2((clientX - rect.left) / rect.width * 2 - 1, 1 - (clientY - rect.top) / rect.height * 2));
   }
 
+  /** The camera may turn between frames; the rest of the scene only moves in update(). */
+  private refreshRayMatrices() {
+    this.camera.updateMatrixWorld();
+    if (this.sceneMatricesFresh) return;
+    this.scene.updateMatrixWorld(true);
+    this.sceneMatricesFresh = true;
+  }
+
   getInteraction(state: DinnerState, point = this.center): RestaurantInteraction | null {
+    if (point !== this.center) return this.findInteraction(state, point);
+    // The frame loop asks twice (touch prompt and crosshair); both get the same answer.
+    const cached = this.centerInteraction;
+    if (cached && cached.state === state) return cached.hit;
+    const hit = this.findInteraction(state, point);
+    this.centerInteraction = { state, hit };
+    return hit;
+  }
+
+  private findInteraction(state: DinnerState, point: THREE.Vector2): RestaurantInteraction | null {
     if (this.disposed || this.presentation === 'selection' || state.phase !== 'playing') return null;
     const interactionEvening = state.doubleDate?.role === 'wingman' ? state.doubleDate.otherView?.evening ?? state.evening : state.evening;
     const seat = state.doubleDate ? DOUBLE_TABLE.seats[state.doubleDate.localHumanId] : RESTAURANT.seat;
@@ -611,8 +643,7 @@ export class RestaurantRenderer {
       ?? state.participants.find(participant => participant.kind === 'human')?.position;
     const nearSeat = !!humanPosition && Math.hypot(humanPosition[0] - seat[0], humanPosition[2] - seat[2] - diningOffsetZ(state)) <= 2.1;
     const nearEntrance = !!humanPosition && Math.hypot(humanPosition[0] - RESTAURANT.entrance[0], humanPosition[2] - RESTAURANT.entrance[2]) <= RESTAURANT.entranceRadius;
-    this.camera.updateMatrixWorld();
-    this.scene.updateMatrixWorld(true);
+    this.refreshRayMatrices();
     this.ray.setFromCamera(point, this.camera);
     const actors = this.conversationActors(state);
     const objects = [...this.set.targets.filter(target => {
@@ -665,7 +696,7 @@ export class RestaurantRenderer {
   /** Attribute speech to the person in the crosshair; otherwise address the table. */
   getConversationTarget(state: DinnerState): ConversationTarget {
     if (!state.doubleDate || this.presentation === 'selection') return 'table';
-    this.camera.updateMatrixWorld(); this.scene.updateMatrixWorld(true);
+    this.refreshRayMatrices();
     this.ray.setFromCamera(this.center, this.camera);
     const actors = this.conversationActors(state);
     const hit = this.ray.intersectObjects(actors, false).find(candidate => candidate.distance < 4);

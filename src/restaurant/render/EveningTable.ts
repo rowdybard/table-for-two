@@ -3,7 +3,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MENU } from '../content';
 import type { DinnerState } from '../types';
-import { castSpotShadow, receiveSpotShadow, tagContactShadow } from './PlaceSettingShadows';
+import { receiveShadows, tagContactShadow } from './PlaceSettingShadows';
 import { createProceduralMaterial } from './ProceduralMaterials';
 import { CLEARED_GLASS_DOUBLE, dessertLayout, SPILLED_GLASS } from './TabletopProps';
 import { VENUE_ENV } from './VenueContract';
@@ -165,7 +165,7 @@ export class EveningTable {
         for (let i=0;i<7;i++){const a=i*2.399+.3,r=.025+(i%4)*.018,h=.018+.034*Math.sqrt(Math.max(0,1-(r/.11)**2));const slice=mesh(group,mushroomGeometry,brown,Math.cos(a)*r,h,Math.sin(a)*r*.9);slice.rotation.set(-Math.PI/2,0,a);slice.userData.bite=i*2;}
       }
       const herb = mesh(group, herbGeometry, leaf, .025, meal===0?.052:meal===1?.055:.049, .018); herb.rotation.y = -.3; herb.userData.course = true;
-      receiveSpotShadow(group); group.visible = false; this.meals[plate]!.push(group); this.root.add(group);
+      receiveShadows(group); group.visible = false; this.meals[plate]!.push(group); this.root.add(group);
     }
     // One shared dessert plate with two spoons. Each dessert is its own small build; spoonfuls take pieces away.
     const plateGeometry=new THREE.CylinderGeometry(.125,.118,.012,28),dollopGeometry=new THREE.SphereGeometry(1,12,8),mintGeometry=garnishLeaf(.012,.006,.003);
@@ -176,10 +176,10 @@ export class EveningTable {
     ramekin.userData.venueGlass=true;ramekin.userData.venueEnv=VENUE_ENV.glass;
     const shortbread=food('#dcc08a','crumb'),strawberry=food('#b8322f','sauce'),zest=mat('#e9d35c',.6);
     const makeDessert=(root:THREE.Group,variants:THREE.Group[])=>{
-      const plate=mesh(root,plateGeometry,cream,0,.006,0);plate.userData.centralTray=true;castSpotShadow(plate);receiveSpotShadow(plate);
+      const plate=mesh(root,plateGeometry,cream,0,.006,0);plate.userData.centralTray=true;receiveShadows(plate);
       tagContactShadow(plate,{rx:.15,rz:.15,opacity:.5,y0:.006});
       for(let side=0;side<2;side++){const spoon=new THREE.Group();spoon.position.set(side?.1:-.1,.012,side?.035:-.035);spoon.rotation.y=side?-.5:2.65;
-        castSpotShadow(mesh(spoon,spoonGeometry,gold,0,0,0));root.add(spoon);}
+        mesh(spoon,spoonGeometry,gold,0,0,0);root.add(spoon);}
       // Lemon posset: a glass ramekin of set cream, a shortbread finger and a curl of zest.
       const lemon=new THREE.Group();const cup=mesh(lemon,new THREE.CylinderGeometry(.036,.03,.04,20,1,true),ramekin,0,.032,0);cup.userData.course=true;
       const fill=mesh(lemon,new THREE.CylinderGeometry(.034,.029,.03,20),posset,0,.027,0);fill.userData.course=true;
@@ -193,7 +193,7 @@ export class EveningTable {
       const berries=new THREE.Group();const creamDollop=mesh(berries,dollopGeometry,softCream,0,.0275,0);creamDollop.scale.set(.03,.016,.026);creamDollop.userData.course=true;
       for(let i=0;i<6;i++){const a=i*1.05,berry=mesh(berries,dollopGeometry,strawberry,Math.cos(a)*.052,.0235,Math.sin(a)*.052);berry.scale.set(.016,.012,.013);berry.rotation.y=a;berry.userData.bite=i%4;}
       // Every piece is authored from the plate's top (.012), so the variants sit at the plate origin.
-      for(const group of [lemon,fondant,berries]){receiveSpotShadow(group);group.visible=false;root.add(group);variants.push(group);}
+      for(const group of [lemon,fondant,berries]){receiveShadows(group);group.visible=false;root.add(group);variants.push(group);}
       this.root.add(root);
     };
     makeDessert(this.dessert,this.dessertVariants[0]!);makeDessert(this.otherDessert,this.dessertVariants[1]!);
@@ -225,14 +225,14 @@ export class EveningTable {
         const garnishMesh=mesh(food,herbGeometry,leaf,0,.048,.01);garnishMesh.scale.setScalar(.65);
       }
       mesh(carton,cartonBase,cartonMaterial,0,.035,0);mesh(carton,cartonLid,cartonMaterial,0,.066,0);mesh(carton,cartonBand,cream,0,.073,0);
-      castSpotShadow(serving.children[0]!,serving.children[1]!,carton);receiveSpotShadow(root);tagContactShadow(root,{rx:.12,rz:.12,opacity:.5});
+      receiveShadows(root);tagContactShadow(root,{rx:.12,rz:.12,opacity:.5});
       root.visible=false;this.extraOrders.push({root,serving,carton,dishes});
     }
     const cleanFabric=own(createProceduralMaterial('linen','#e4d7be',{roughness:1,bumpScale:.0004}));
     mesh(this.cleanupCloth,new RoundedBoxGeometry(.105,.008,.075,2,.004),cleanFabric,0,.786,0);
     mesh(this.cleanupCloth,new RoundedBoxGeometry(.087,.004,.034,2,.002),cleanFabric,0,.793,-.017);
     this.cleanupStain=mesh(this.cleanupCloth,new THREE.CircleGeometry(.017,16),wine,0,.796,.012);this.cleanupStain.rotation.x=-Math.PI/2;
-    receiveSpotShadow(this.cleanupCloth);tagContactShadow(this.cleanupCloth,{rx:.066,rz:.048,opacity:.4});
+    receiveShadows(this.cleanupCloth);tagContactShadow(this.cleanupCloth,{rx:.066,rz:.048,opacity:.4});
     this.cleanupCloth.visible=false;this.root.add(this.cleanupCloth);
     for (let pair = 0; pair < 2; pair++) {
       const bite = new THREE.Group();
@@ -240,7 +240,7 @@ export class EveningTable {
         const morsel = mesh(bite, new THREE.SphereGeometry(1, 10, 8), material, 0, 0, 0);
         morsel.scale.set(.025, .012, .019);
       }
-      receiveSpotShadow(bite); bite.visible = false; this.offeredBites.push(bite); this.root.add(bite);
+      receiveShadows(bite); bite.visible = false; this.offeredBites.push(bite); this.root.add(bite);
     }
     const glass = own(new THREE.MeshStandardMaterial({ color: '#d8e7e2', roughness: .05, transparent: true, opacity: .14, depthWrite: false, side: THREE.DoubleSide }));
     glass.userData.venueGlass = true; glass.userData.venueEnv = VENUE_ENV.glass;
@@ -255,7 +255,7 @@ export class EveningTable {
     const bellBase = mesh(this.root, new THREE.CylinderGeometry(.049, .055, .012, 20), gold, .61, .788, -1.13);
     const bell = mesh(this.root, new THREE.SphereGeometry(1, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), gold, .61, .793, -1.13); bell.scale.set(.04, .033, .04);
     const bellKnob = mesh(this.root, new THREE.CylinderGeometry(.008, .008, .016, 10), gold, .61, .835, -1.13);
-    castSpotShadow(bellBase, bell, bellKnob); tagContactShadow(bellBase, { rx: .065, rz: .065, opacity: .45, y0: .006 });
+    tagContactShadow(bellBase, { rx: .065, rz: .065, opacity: .45, y0: .006 });
     // A plain linen napkin at the player's place: it wipes a spill and folds, nothing more.
     const linen = own(createProceduralMaterial('linen', '#ebe2cc', { roughness: 1, bumpScale: .0004 }));
     this.napkin = mesh(this.root, new THREE.PlaneGeometry(.16, .16), linen, .39, .783, -.50); this.napkin.rotation.x = -Math.PI / 2; this.napkin.rotation.z = -.12; this.napkin.receiveShadow = true;
@@ -269,7 +269,7 @@ export class EveningTable {
     const ticketTexture = new THREE.CanvasTexture(ticketCanvas); this.ticketTexture = ticketTexture; ticketTexture.colorSpace = THREE.SRGBColorSpace;
     const ticketMat = new THREE.MeshStandardMaterial({ map: ticketTexture, roughness: 1 }); this.materials.push(ticketMat);
     const ticket = mesh(this.ticket, new THREE.PlaneGeometry(.13, .2), ticketMat, .34, .783, -1.03); ticket.rotation.set(-Math.PI / 2, 0, -.16); ticket.receiveShadow = true; this.root.add(this.ticket);
-    const target = (name: string, x: number, y: number, z: number, sx: number, sy: number, sz: number) => { const m = mesh(this.root, new THREE.BoxGeometry(sx, sy, sz), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, colorWrite: false, depthWrite: false }), x, y, z); m.userData.target = name; this.targets.push(m); };
+    const target = (name: string, x: number, y: number, z: number, sx: number, sy: number, sz: number) => { const m = mesh(this.root, new THREE.BoxGeometry(sx, sy, sz), new THREE.MeshBasicMaterial({ visible: false, transparent: true, opacity: 0, colorWrite: false, depthWrite: false }), x, y, z); m.userData.target = name; this.targets.push(m); };
     target('ticket', .34, .85, -1.03, .17, .1, .24); target('napkin', .30, .85, -.5, .24, .1, .24);
     target('dessert', .06, .86, -1.16, .3, .14, .3); target('service-bell', .61, .85, -1.13, .13, .15, .13); target('window', -6.43, 1.8, -.8, .16, 1.65, 2.6);
     target('meal', 0, .875, -.64, .34, .15, .34);
