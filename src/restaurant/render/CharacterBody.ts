@@ -15,7 +15,7 @@ export interface BodyPerformance {
    * Seated hand overrides in the body's own space (index 0 is the -x hand), blended over the resting pose by
    * weight. Used for the date's business at the table: bites, sips, a hand at the chin.
    */
-  arms?: readonly { target: THREE.Vector3; orientation: THREE.Quaternion; weight: number }[];
+  arms?: readonly { target: THREE.Vector3; orientation: THREE.Quaternion; weight: number; bend?: THREE.Vector3 }[];
   /** Small vertical shake of the shoulders (a laugh), metres. */
   bounce?: number;
   /** Props held in the +x hand. */
@@ -378,6 +378,7 @@ class TailoredBody implements CharacterBodyRig {
   private gait = 0;
   private walkBlend = 0;
   private lean = 0;
+  private readonly bendScratch = new THREE.Vector3();
   private seed: number;
   private disposed = false;
 
@@ -507,7 +508,7 @@ class TailoredBody implements CharacterBodyRig {
     for (let i = 0; i < this.arms.length; i++) {
       const arm = this.arms[i]!, side = i ? 1 : -1;
       const gesture = performance.speaking ? Math.max(0, Math.sin(time * 2.3 + i * .9)) * (.035 + Math.min(1, performance.amplitude) * .025) : 0;
-      let target: THREE.Vector3, handOrientation: THREE.Quaternion;
+      let target: THREE.Vector3, handOrientation: THREE.Quaternion, bend: THREE.Vector3 | undefined;
       if (this.seated) {
         const carries = (performance.beatHand ?? 1) === 0 || (performance.beatHand ?? 1) === side;
         const beat = carries && !performance.guarded ? (performance.beat ?? 0) : 0;
@@ -518,6 +519,7 @@ class TailoredBody implements CharacterBodyRig {
         if (override && override.weight > .001) {
           const w = Math.min(1, override.weight);
           target.lerp(override.target, w); handOrientation.slerp(override.orientation, w);
+          if (override.bend) bend = this.bendScratch.set(side * .47, -.55, -.69).lerp(override.bend, w);
         }
       } else {
         const swing = Math.sin(this.gait + i * Math.PI) * .075 * this.walkBlend;
@@ -541,7 +543,7 @@ class TailoredBody implements CharacterBodyRig {
       target.applyMatrix4(transform.clone().invert());
       const bodyOrientation = new THREE.Quaternion().setFromRotationMatrix(transform);
       handOrientation.premultiply(bodyOrientation.invert());
-      poseChain(arm, target, new THREE.Vector3(side * (this.seated ? .47 : .36), -.55, -.69), handOrientation, phone ? 0 : this.seated ? .10 : .72);
+      poseChain(arm, target, bend ?? new THREE.Vector3(side * (this.seated ? .47 : .36), -.55, -.69), handOrientation, phone ? 0 : this.seated ? .10 : .72);
     }
     for (let i = 0; i < this.legs.length; i++) {
       const leg = this.legs[i]!, side = i ? 1 : -1;

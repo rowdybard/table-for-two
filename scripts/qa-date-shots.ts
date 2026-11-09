@@ -62,11 +62,13 @@ async function main() {
       if (only.length && !only.includes(name)) continue;
       const page: Page = await browser.newPage({ viewport: { width: 720, height: 480 } });
       page.on('pageerror', error => console.error(name, error.message));
-      await page.goto(`http://127.0.0.1:${port}/__date_fixture?date=${shot.date ?? 'mira'}`);
+      await page.goto(`http://127.0.0.1:${port}/__date_fixture?date=${shot.date ?? "mira"}${process.env.QA_QUALITY ? `&quality=${process.env.QA_QUALITY}` : ""}`);
       await page.waitForFunction(() => !!(window as unknown as W).dateFixture, null, { timeout: 120_000 });
       const state = shot.state();
       await page.evaluate(s => (window as unknown as W).dateFixture.setState(s), state);
-      if (shot.behaviour) await page.evaluate(b => (window as unknown as W).dateFixture.setBehaviour(b), shot.behaviour);
+      // Holds (listening, thinking) apply from the start; a forced gesture starts after the settle, so `after` lands mid-gesture.
+      const { force, ...holds } = shot.behaviour ?? {};
+      if (Object.keys(holds).length) await page.evaluate(b => (window as unknown as W).dateFixture.setBehaviour(b), holds);
       if (shot.playback) await page.evaluate(p => (window as unknown as W).dateFixture.setPlayback(p), shot.playback);
       await page.waitForFunction(() => (window as unknown as W).dateFixture.advance(.2), null, { timeout: 180_000, polling: 500 });
       await page.evaluate(seconds => (window as unknown as W).dateFixture.advance(seconds), shot.seconds);
@@ -74,6 +76,7 @@ async function main() {
         const next = structuredClone(state); next.elapsed += shot.seconds; shot.then(next);
         await page.evaluate(s => (window as unknown as W).dateFixture.setState(s), next);
       }
+      if (force) await page.evaluate(b => (window as unknown as W).dateFixture.setBehaviour(b), { ...holds, force });
       if (shot.after) await page.evaluate(seconds => (window as unknown as W).dateFixture.advance(seconds), shot.after);
       const [from, at, fov] = shot.view ?? [SEAT, FACE, 34];
       const png = await page.evaluate(([f, a, v]) => (window as unknown as W).dateFixture.view(f as number[], a as number[], v as number), [from, at, fov ?? 34] as const);

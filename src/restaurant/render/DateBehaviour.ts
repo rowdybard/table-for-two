@@ -37,7 +37,8 @@ export interface DateBehaviourInput {
 }
 
 /** One arm's override: where the hand goes (actor space), how the hand is turned, and how much it wins. */
-export interface ArmOverride { target: THREE.Vector3; orientation: THREE.Quaternion; weight: number }
+/** `bend` is the preferred elbow direction (the IK pole), e.g. forward and down for an elbow on the table. */
+export interface ArmOverride { target: THREE.Vector3; orientation: THREE.Quaternion; weight: number; bend?: THREE.Vector3 }
 
 export interface DateBehaviourOutput {
   /** Index 0 is the date's right hand (actor -x), index 1 the left (actor +x), as in the body rig. */
@@ -98,11 +99,12 @@ export class DateBehaviour {
   private lastSip = -1000;
   private readonly scratch = new THREE.Vector3();
   private readonly mouth = new THREE.Vector3();
+  private readonly elbow = [new THREE.Vector3(), new THREE.Vector3()] as const;
 
   constructor(seed: number) { this.rand = randomStream(seed * 4099 + 3); this.nextIdle = 6 + this.rand() * 6; }
 
   /** Start a gesture now, for the QA harness or a deterministic test. */
-  force(kind: DateGesture, time: number) { if (kind === 'chin' || kind === 'think') this.hold = { kind, start: time, side: 1, releasing: -1 }; else this.clip = { kind, start: time, duration: DURATION[kind], side: kind === 'sip' ? 0 : 1 }; }
+  force(kind: DateGesture, time: number) { if (kind === 'chin' || kind === 'think') this.hold = { kind, start: time, side: 1, releasing: -1 }; else this.clip = { kind, start: time, duration: DURATION[kind], side: kind === 'sip' || kind === 'hair' ? 0 : 1 }; }
 
   update(time: number, dt: number, input: DateBehaviourInput): DateBehaviourOutput {
     const out = this.output;
@@ -134,7 +136,7 @@ export class DateBehaviour {
       const bored = interest < .25 && input.quietFor > 12 && !input.listening;
       if (bored && time - this.lastPhone > 40) { this.play('phone', time, 1); this.lastPhone = time; }
       else if (input.glass && time - this.lastSip > 26 && this.rand() < .55) { this.play('sip', time, 0); this.lastSip = time; }
-      else if (!cold && interest > .5 && this.rand() < .35) this.play('hair', time, this.rand() < .5 ? 0 : 1);
+      else if (!cold && interest > .5 && this.rand() < .35) this.play('hair', time, 0);
       else if (interest < .5 || cold) this.play('fidget', time, 0);
       this.nextIdle = time + 9 + this.rand() * 12 - interest * 3;
     }
@@ -150,7 +152,7 @@ export class DateBehaviour {
     out.bounce = 0; out.lookUp = 0; out.lookDown = 0; out.fork = input.mainServed ? 'plate' : 'table'; out.phone = false;
     out.glass.weight = 0; out.glass.tilt = 0;
     out.gesture = this.clip?.kind ?? this.hold?.kind ?? null;
-    for (const arm of out.arms) arm.weight = 0;
+    for (const arm of out.arms) { arm.weight = 0; arm.bend = undefined; }
 
     const head = input.head;
     this.mouth.set(head.x, head.y - .085, head.z + .1);
@@ -159,11 +161,13 @@ export class DateBehaviour {
       const w = envelope(age, Infinity, .5) * release, arm = out.arms[this.hold.side], side = this.hold.side ? 1 : -1;
       if (this.hold.kind === 'chin') {
         // Elbow on the table, the chin resting on the back of the fingers.
-        arm.target.set(head.x + side * .025, head.y - .135, head.z + .085);
+        arm.target.set(head.x + side * .02, head.y - .14, head.z + .1);
         arm.orientation.copy(q(.35, side * -1.2, side * -.25));
+        arm.bend = this.elbow[this.hold.side].set(side * .25, -.45, .86);
       } else {
-        arm.target.set(head.x + side * .035, head.y - .125, head.z + .09);
+        arm.target.set(head.x + side * .035, head.y - .13, head.z + .1);
         arm.orientation.copy(q(.1, side * -1.35, side * -.6));
+        arm.bend = this.elbow[this.hold.side].set(side * .35, -.5, .79);
         out.lookUp = w;
       }
       arm.weight = w;
@@ -175,8 +179,11 @@ export class DateBehaviour {
         // Fork to the near side of the plate, then up to the mouth and back down.
         const plate = this.scratch.copy(input.plate).add(new THREE.Vector3(side * .05, .035, -.11));
         const lift = smooth((p - .3) / .25) * (1 - smooth((p - .72) / .25));
-        arm.target.copy(plate).lerp(this.mouth, lift);
-        arm.orientation.copy(q(-Math.PI / 2 + lift * 1.2, side * .2, side * (.1 + lift * .6)));
+        // At the top the fingers turn up so the fork's tines meet the lips from just below and in front.
+        const lips = new THREE.Vector3(this.mouth.x + side * .035, this.mouth.y - .13, this.mouth.z + .05);
+        arm.target.copy(plate).lerp(lips, lift);
+        arm.orientation.copy(q(-Math.PI / 2 - lift * 1.85, side * (.2 - lift * 1.3), side * .1));
+        arm.bend = this.elbow[clip.side].set(side * .55, -.65, -.2 + lift * .6);
         arm.weight = w;
         out.lean += .05 * (1 - lift) * w;
         // The fork is picked up off the rim when the hand gets there and put back the same way.
@@ -188,6 +195,7 @@ export class DateBehaviour {
         const atLips = new THREE.Vector3(this.mouth.x + side * .02, this.mouth.y - .07, this.mouth.z + .05);
         arm.target.copy(hold).lerp(atLips, lift);
         arm.orientation.copy(q(-.15 - lift * .25, side * -1.45, side * -.05));
+        arm.bend = this.elbow[clip.side].set(side * .55, -.6, .1 + lift * .5);
         arm.weight = Math.min(w, Math.max(reach, lift));
         out.glass.weight = lift;
         out.glass.position.copy(arm.target).add(new THREE.Vector3(0, -.06, .02));
@@ -195,18 +203,21 @@ export class DateBehaviour {
         out.lean += .04 * w;
       } else if (clip.kind === 'hair') {
         const brush = Math.sin(Math.min(1, p) * Math.PI);
-        arm.target.set(head.x + side * .085, head.y + .02 - brush * .03, head.z + .02);
-        arm.orientation.copy(q(.2, side * -1.5, side * -1.1));
+        // Fingertips behind the ear, the elbow low and forward: a tuck, not a stretch.
+        arm.target.set(head.x + side * .09, head.y - .03 - brush * .025, head.z + .07);
+        arm.orientation.copy(q(.35, side * -1.3, side * -1.25));
+        arm.bend = this.elbow[clip.side].set(side * .45, -.75, .5);
         arm.weight = w;
       } else if (clip.kind === 'laugh') {
         arm.target.set(this.mouth.x + side * .01, this.mouth.y - .005, this.mouth.z + .055);
         arm.orientation.copy(q(.05, side * -1.4, side * -.4));
+        arm.bend = this.elbow[clip.side].set(side * .4, -.55, .73);
         arm.weight = w * .95;
         out.bounce = Math.sin(age * 22) * .004 * w;
         out.smile += .25 * w;
       } else if (clip.kind === 'phone') {
         // Phone low in the lap edge of the table, glanced at.
-        arm.target.set(side * .06, head.y - .5, head.z + .3);
+        arm.target.set(side * .06, head.y - .43, head.z + .29);
         arm.orientation.copy(q(-.55, side * .15, 0));
         arm.weight = w; out.phone = w > .5; out.lookDown = w;
         out.lean -= .02 * w;
