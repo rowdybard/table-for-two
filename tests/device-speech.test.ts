@@ -69,17 +69,29 @@ test('unavailable or blocked device speech stays caption-only and never claims c
   }
 });
 
-test('a successful device fallback skips repeated outage waits for thirty seconds, then probes the free service again', async t => {
+test('one voice outage voices only that line on the device; two in a row skip the wait for thirty seconds', async t => {
   const env = environment(); let clock = 10000, calls = 0;
   t.mock.method(performance, 'now', () => clock);
   const player = new SpeechPlayer({ onPlayback() {}, onStatus() {} }, { canFallback: () => true });
   t.after(() => { player.dispose(); env.restore(); });
   const source = () => { calls++; return failure(); };
-  const first = player.play(line, source), firstVoice = await ready(env.synthesis); firstVoice.onstart?.(); clock += 100; firstVoice.onend?.(); await first; assert.equal(calls, 1);
+  const speak = async (count: number) => { const playing = player.play(line, source), voice = await ready(env.synthesis, count); voice.onstart?.(); clock += 100; voice.onend?.(); await playing; };
+  await speak(1); assert.equal(calls, 1);
   clock += 5000;
-  const next = player.play(line, source), secondVoice = await ready(env.synthesis, 2); secondVoice.onstart?.(); secondVoice.onend?.(); await next; assert.equal(calls, 1);
+  await speak(2); assert.equal(calls, 2, 'a single glitch does not stick: the next line asks the real voice again');
+  clock += 5000;
+  await speak(3); assert.equal(calls, 2, 'after two outages in a row the device voice is used without waiting');
   clock += 30001;
-  const probe = player.play(line, source), thirdVoice = await ready(env.synthesis, 3); thirdVoice.onstart?.(); thirdVoice.onend?.(); await probe; assert.equal(calls, 2);
+  await speak(4); assert.equal(calls, 3, 'then the free service is probed again');
+});
+
+test('a dropped connection voices that line on the device but never arms the outage skip', async t => {
+  const env = environment(); let calls = 0;
+  const player = new SpeechPlayer({ onPlayback() {}, onStatus() {} }, { canFallback: () => true });
+  t.after(() => { player.dispose(); env.restore(); });
+  const source = () => { calls++; return Promise.reject(new TypeError('network error')); };
+  for (let count = 1; count <= 3; count++) { const playing = player.play(line, source), voice = await ready(env.synthesis, count); voice.onstart?.(); voice.onend?.(); await playing; }
+  assert.equal(calls, 3);
 });
 
 test('server authorization and stale-generation rejections never bypass their guard through a device voice', async t => {
