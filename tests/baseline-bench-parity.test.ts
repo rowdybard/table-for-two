@@ -16,6 +16,10 @@ import { roleplayInstructions } from '../server/restaurant/roleplay';
 import { ACTIONS, EMOTIONS, SOCIAL_SIGNALS } from '../server/restaurant/providers';
 import { presetDateSheet } from '../server/double-date/table-note';
 import { evaluationProvenance } from '../scripts/lib/evaluation-provenance';
+import { evaluationModelSettings } from '../scripts/lib/conversation-evaluation';
+import { createBaselineHordeAdapter } from '../scripts/lib/baseline-horde-compat';
+import { hordeAdapter } from '../server/restaurant/horde';
+import { TURN_SCHEMA, type ClaudeChunk, type ClaudeRequest } from '../server/restaurant/providers';
 
 const BASE = '05ff06a5e5727fc99d78fe64469460ab286a4d0a';
 const normalize = (text: string) => text.replace(/\r\n/g, '\n');
@@ -77,9 +81,44 @@ test('baseline report provenance resolves the frozen evaluated code independentl
   const hash = (text: string) => createHash('sha256').update(text).digest('hex');
   assert.equal(hash(current(manifest.instrumentationPatch)), manifest.instrumentationSha256);
   for (const [path, expected] of Object.entries(manifest.copiedHarnessSha256)) assert.equal(hash(current(path)), expected, `${path} differs from the captured harness`);
+  for (const [path, expected] of Object.entries(manifest.originalCopiedHarnessSha256)) assert.equal(hash(normalize(git('show', `${manifest.originalCopiedHarnessRevision}:${path}`))), expected, `${path} original harness differs`);
+  assert.equal(hash(current(manifest.bridgeCompatibility.originalAdapterPath)), manifest.bridgeCompatibility.originalAdapterSha256);
+  assert.equal(hash(current(manifest.bridgeCompatibility.shimPath)), manifest.bridgeCompatibility.shimSha256);
   assert.equal(hash(current('src/restaurant/evaluation-fixtures.ts')), manifest.corpusFileSha256);
   const runtime = current('src/restaurant/evaluation-runtime.ts');
   assert.equal((runtime.match(/clampMemory\(turn\.memory, view\.memory\)/g) ?? []).length, 2);
   const restored = runtime.replaceAll('clampMemory(turn.memory, view.memory)', 'clampMemory(turn.memory, view.memory, input.text)');
   assert.equal(hash(restored), manifest.candidateRuntimeSha256, 'The compatibility adaptation must change only the two baseline memory calls.');
+});
+
+test('bench bridge changes only context_fit and reports its actual route settings', async () => {
+  const env = { DATE_CONVERSATION_PROVIDER: 'aihorde', AI_HORDE_MODEL: 'koboldcpp/example', AI_HORDE_API_KEY: 'test-only' };
+  const request: ClaudeRequest = { model: 'ai-horde', system: 'Frozen system instructions.', messages: [{ role: 'user', content: 'First message.' }, { role: 'assistant', content: 'Café.' }, { role: 'user', content: 'Follow-up.' }], maxTokens: 700, outputSchema: TURN_SCHEMA };
+  const captured: { url: string; method: string | undefined; headers: HeadersInit | undefined; body: any; signal: AbortSignal | null | undefined }[] = [];
+  const wire = 'data: {"choices":[{"index":0,"delta":{"content":"{}"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n';
+  const fetcher = (async (url: unknown, init?: RequestInit) => {
+    captured.push({ url: String(url), method: init?.method, headers: init?.headers, body: JSON.parse(init!.body as string), signal: init?.signal });
+    return new Response(wire);
+  }) as typeof fetch;
+  const signal = new AbortController().signal;
+  const collect = async (adapter: ReturnType<typeof hordeAdapter>) => { const chunks: ClaudeChunk[] = []; for await (const chunk of adapter.stream(request, signal)) chunks.push(chunk); return chunks; };
+  const original = await collect(hordeAdapter(env, fetcher)), compatible = await collect(createBaselineHordeAdapter(env, fetcher));
+  assert.deepEqual(compatible, original); assert.equal(captured.length, 2);
+  assert.equal(captured[0].body.horde.context_fit, 'reject'); assert.equal(captured[1].body.horde.context_fit, 'grow');
+  captured[0].body.horde.context_fit = 'grow';
+  assert.deepEqual(captured[1], captured[0], 'all headers, signal, schema, messages and routing options are identical');
+  assert.equal(evaluationModelSettings(['ai-horde'], env)[0].routingConfig?.contextFit, 'grow');
+  assert.equal(evaluationModelSettings(['ai-horde'], { ...env, AI_HORDE_TRANSPORT: 'native' })[0].routingConfig?.contextFit, 'reject');
+});
+
+test('native Horde bypasses the bridge compatibility shim', async () => {
+  const env = { DATE_CONVERSATION_PROVIDER: 'aihorde', AI_HORDE_TRANSPORT: 'native' };
+  const calls: string[][] = [];
+  for (const make of [hordeAdapter, createBaselineHordeAdapter]) {
+    const seen: string[] = []; calls.push(seen);
+    const adapter = make(env, (async (url: unknown) => { seen.push(String(url)); return Response.json([]); }) as typeof fetch);
+    await adapter.prepare!();
+  }
+  assert.deepEqual(calls[0], calls[1]);
+  assert.ok(calls[0].length > 0 && calls[0].every(url => !url.startsWith('https://oai.')));
 });

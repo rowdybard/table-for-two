@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { anthropicAdapter, type ClaudeAdapter } from '../server/restaurant/providers';
-import { hordeAdapter } from '../server/restaurant/horde';
+import { createBaselineHordeAdapter } from './lib/baseline-horde-compat';
 import type { ClaudeModel } from '../src/restaurant/types';
 import { evaluationPreview, parseEvaluationOptions, runConversationEvaluation } from './lib/conversation-evaluation';
 import { evaluationProvenance } from './lib/evaluation-provenance';
@@ -19,7 +19,7 @@ async function main() {
   }
   const provenance = evaluationProvenance();
   const adapters: Partial<Record<ClaudeModel, ClaudeAdapter>> = {};
-  for (const model of options.models) adapters[model] = model === 'ai-horde' ? hordeAdapter({ ...process.env, DATE_CONVERSATION_PROVIDER: 'aihorde' }) : anthropicAdapter(process.env);
+  for (const model of options.models) adapters[model] = model === 'ai-horde' ? createBaselineHordeAdapter({ ...process.env, DATE_CONVERSATION_PROVIDER: 'aihorde' }) : anthropicAdapter(process.env);
   if (options.models.includes('ai-horde')) console.log('Horde is community hosted: volunteer hosts may inspect or retain these fictional prompts. No paid model is used as fallback.');
   const controller = new AbortController(), cancel = () => controller.abort();
   process.once('SIGINT', cancel);

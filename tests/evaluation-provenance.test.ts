@@ -13,6 +13,8 @@ test('baseline provenance separates evaluated code from its clean harness and re
   const commit = () => { git('add', '.'); git('-c', 'user.name=Evaluation fixture', '-c', 'user.email=evaluation@example.invalid', 'commit', '-qm', 'Offline fixture'); return git('rev-parse', 'HEAD'); };
   try {
     git('init', '--initial-branch=main'); await mkdir(join(directory, 'server')); await mkdir(join(directory, 'docs'));
+    await mkdir(join(directory, 'server', 'restaurant'));
+    await writeFile(join(directory, 'server', 'restaurant', 'horde.ts'), 'export const frozenAdapter = true;\n');
     await writeFile(join(directory, 'server', 'base.ts'), 'export const baseline = true;\n');
     const evaluatedSourceRevision = commit();
     assert.deepEqual(evaluationProvenance(directory), { sourceRevision: evaluatedSourceRevision, evaluatedSourceRevision, harnessRevision: evaluatedSourceRevision, sourceTreeDirty: false, instrumentationSha256: null });
@@ -23,6 +25,16 @@ test('baseline provenance separates evaluated code from its clean harness and re
     await writeFile(join(directory, 'docs', 'conversation-baseline-bench.json'), JSON.stringify(manifest));
     const harnessRevision = commit();
     assert.deepEqual(evaluationProvenance(directory), { sourceRevision: harnessRevision, evaluatedSourceRevision, harnessRevision, sourceTreeDirty: false, instrumentationSha256 });
+    await mkdir(join(directory, 'scripts', 'lib'), { recursive: true });
+    const shim = 'export const shim = true;\n', original = 'export const frozenAdapter = true;\n';
+    await writeFile(join(directory, 'scripts', 'lib', 'baseline-horde-compat.ts'), shim);
+    const digest = (text: string) => createHash('sha256').update(text).digest('hex');
+    const bridgeCompatibility = { originalAdapterPath: 'server/restaurant/horde.ts', originalAdapterSha256: digest(original), shimPath: 'scripts/lib/baseline-horde-compat.ts', shimSha256: digest(shim), fieldDelta: { 'horde.context_fit': { from: 'reject', to: 'grow' } } };
+    await writeFile(join(directory, 'docs', 'conversation-baseline-bench.json'), JSON.stringify({ ...manifest, bridgeCompatibility }));
+    assert.equal(evaluationProvenance(directory).evaluatedSourceRevision, evaluatedSourceRevision);
+    await writeFile(join(directory, 'scripts', 'lib', 'baseline-horde-compat.ts'), 'changed\n');
+    assert.throws(() => evaluationProvenance(directory), /bridge compatibility differs/);
+    await writeFile(join(directory, 'scripts', 'lib', 'baseline-horde-compat.ts'), shim);
     await writeFile(join(directory, 'server', 'behavior.ts'), 'export const unrelatedBehaviorChange = true;\n');
     assert.throws(() => evaluationProvenance(directory), /outside the reviewed instrumentation/);
     await rm(join(directory, 'server', 'behavior.ts'));

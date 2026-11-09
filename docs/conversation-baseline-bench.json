@@ -14,12 +14,31 @@
   "copiedHarnessSha256": {
     "src/restaurant/evaluation.ts": "ef82ff8973909025988789eaba326ee5638b7ef153c6ff879182e3863d98a1a4",
     "src/restaurant/evaluation-fixtures.ts": "c23e5c9527147fbbf7fd7f48eb849ea6ae11edbe21f9ac3b4ea33444a21d6f4f",
-    "scripts/compare-date-models.ts": "4fa946ed55c4e988f3e5f72e2793b5e2de966096af41c11f50e0e707cea01745",
-    "scripts/lib/conversation-evaluation.ts": "009e1aa779b4de1e26c09cc809fc0555a4fc917b0892770fd8fefc3a195420c1",
-    "scripts/lib/evaluation-provenance.ts": "b2ad38910d566b689fc6580c222474b8634879e808ba44d1db98aed48cd70a38",
+    "scripts/compare-date-models.ts": "3f5b1cd79bc1aa00b8dc749a2ac260d7f1ff4e82acc6a2781c042a42efd32eeb",
+    "scripts/lib/conversation-evaluation.ts": "7a16825aa8ea80deb9cbb8335ffb514697552f0bb636599cf8a350094e0c93fa",
+    "scripts/lib/evaluation-provenance.ts": "871538a3ea35844c4e7f175836008b4e324e4f2418ee0ebc8c9b9bd9c88c7744",
     "tests/fixtures/evaluation-network-guard.mjs": "53f3b40ea9581edb4b25bb75e3e3ad4cb85e7c44048b9021b071c53c1a4f7fff"
   },
   "runtimeCompatibility": "The identical evaluation runtime calls the baseline two-argument clampMemory at both acceptance sites. All other runtime lines are copied unchanged. Baseline content, prompts, notes, transcripts and controllers are retained.",
   "verification": "Mock-only corpus and source-extraction parity tests. No live outputs, quality ratings, server, browser, synthesis or deployment.",
-  "candidateRuntimeSha256": "78e12bf46adbab426b146e78ff96be0f92ef69873a638d44c5841474deae98d8"
+  "candidateRuntimeSha256": "78e12bf46adbab426b146e78ff96be0f92ef69873a638d44c5841474deae98d8",
+  "originalCopiedHarnessRevision": "08fceff2408c7597601c993e7b7d7a73e93e1610",
+  "originalCopiedHarnessSha256": {
+    "scripts/compare-date-models.ts": "4fa946ed55c4e988f3e5f72e2793b5e2de966096af41c11f50e0e707cea01745",
+    "scripts/lib/conversation-evaluation.ts": "009e1aa779b4de1e26c09cc809fc0555a4fc917b0892770fd8fefc3a195420c1",
+    "scripts/lib/evaluation-provenance.ts": "b2ad38910d566b689fc6580c222474b8634879e808ba44d1db98aed48cd70a38"
+  },
+  "bridgeCompatibility": {
+    "scope": "baseline benchmark CLI, Horde OpenAI bridge only",
+    "originalAdapterPath": "server/restaurant/horde.ts",
+    "originalAdapterSha256": "0050f4f2154910e3caddc74921db99f9574b11e0721cef8d80276b04802a36a0",
+    "shimPath": "scripts/lib/baseline-horde-compat.ts",
+    "shimSha256": "56ab857680b1a4c4872a1013507df74d9c695471d56bd0d0d0a2e998d62e4bfd",
+    "fieldDelta": {
+      "horde.context_fit": {
+        "from": "reject",
+        "to": "grow"
+      }
+    }
+  }
 }
