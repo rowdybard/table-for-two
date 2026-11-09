@@ -13,19 +13,21 @@ concurrency:
   group: conversation-quality-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
+env:
+  ANTHROPIC_API_KEY: ''
+  OPENROUTER_API_KEY: ''
+  ELEVENLABS_API_KEY: ''
+  AI_HORDE_API_KEY: ''
+  DATE_ALLOW_MODEL_SELECTION: '0'
+  DATE_SPEECH_PROVIDER: none
+  LFS_SOFTWARE_GPU: '1'
+  RESTAURANT_CAPTURE_SCREENSHOTS: '1'
+
 jobs:
   provider-disabled:
+    name: Unit and deployment checks
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    env:
-      ANTHROPIC_API_KEY: ''
-      OPENROUTER_API_KEY: ''
-      ELEVENLABS_API_KEY: ''
-      AI_HORDE_API_KEY: ''
-      DATE_ALLOW_MODEL_SELECTION: '0'
-      DATE_SPEECH_PROVIDER: none
-      LFS_SOFTWARE_GPU: '1'
-      RESTAURANT_CAPTURE_SCREENSHOTS: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -57,22 +59,122 @@ jobs:
         env:
           NODE_OPTIONS: --import=${{ github.workspace }}/tests/fixtures/evaluation-network-guard.mjs
         run: pnpm --dir deployment/cloudflare run smoke
-      - name: Install the Chrome channel used by the existing Playwright config
-        run: pnpm exec playwright install --with-deps chrome
-      - name: Conversation, recovery, delivery and existing evening flows
-        timeout-minutes: 27
-        env:
-          NODE_OPTIONS: --import=${{ github.workspace }}/tests/fixtures/evaluation-network-guard.mjs
-        run: pnpm exec playwright test tests/browser-conversation-depth.spec.ts tests/browser-restaurant.spec.ts tests/browser-speech.spec.ts tests/browser-double-date.spec.ts tests/browser-evening.spec.ts --reporter=line,html --global-timeout=1500000 --max-failures=1
       - uses: actions/upload-artifact@v4
         if: always()
+        timeout-minutes: 2
         with:
-          name: conversation-quality-${{ github.run_id }}
+          name: conversation-quality-${{ github.run_id }}-${{ github.run_attempt }}-unit-deployment
+          include-hidden-files: true
+          path: |
+            .qa/
+          if-no-files-found: warn
+          retention-days: 14
+
+  browser:
+    name: Browser - ${{ matrix.id }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - id: recovery
+            file: tests/browser-conversation-depth.spec.ts
+            grep: ''
+          - id: restaurant
+            file: tests/browser-restaurant.spec.ts
+            grep: ''
+          - id: evening
+            file: tests/browser-evening.spec.ts
+            grep: ''
+          - id: speech
+            file: tests/browser-speech.spec.ts
+            grep: ''
+          - id: double-session
+            file: tests/browser-double-date.spec.ts
+            grep: '(^| )private double date: distinct choices, readiness, independent first-person seats, pause and reconnect$'
+          - id: double-conversation
+            file: tests/browser-double-date.spec.ts
+            grep: '(^| )shared table turns: one request, both identities, exclusion and repair, private host model command and interruption$'
+          - id: double-friend-voice
+            file: tests/browser-double-date.spec.ts
+            grep: '(^| )friend voice uses one opted-in microphone per browser and exchanges native RTP in both directions$'
+          - id: double-wingman
+            file: tests/browser-double-date.spec.ts
+            grep: '(^| )a finished date can stay as a wingman, help the active pair and return from their own ending$'
+          - id: double-evening
+            file: tests/browser-double-date.spec.ts
+            grep: '(^| )complete double evening: both dinners, a shared dessert, one check for the table and independent farewells$'
+          - id: blind
+            file: tests/browser-double-date.spec.ts
+            grep: '(^| )blind date starts directly, restores its seeded match and can finish without another human$'
+    steps:
+      - name: Start job deadline clock
+        shell: bash
+        run: echo "BROWSER_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.25.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Install the Chrome channel used by the existing Playwright config
+        timeout-minutes: 8
+        run: pnpm exec playwright install --with-deps chrome
+      - name: Run the isolated browser group
+        timeout-minutes: 22
+        shell: bash
+        env:
+          NODE_OPTIONS: --import=${{ github.workspace }}/tests/fixtures/evaluation-network-guard.mjs
+          TEST_FILE: ${{ matrix.file }}
+          TEST_GREP: ${{ matrix.grep }}
+        run: |
+          elapsed=$(( $(date +%s) - BROWSER_JOB_STARTED_AT ))
+          remaining=$(( 26 * 60 - elapsed ))
+          if (( remaining <= 0 )); then
+            echo "Setup exhausted the browser budget; reserving time to upload diagnostics."
+            exit 1
+          fi
+          # Reserve four minutes: one for forced cleanup, two for upload, one spare.
+          seconds=$(( remaining < 1200 ? remaining : 1200 ))
+          args=("$TEST_FILE" --reporter=line,html --trace=retain-on-failure --global-timeout="$(( seconds * 1000 ))")
+          if [[ -n "$TEST_GREP" ]]; then
+            args+=(--grep "$TEST_GREP")
+          fi
+          # Bound cleanup too if a browser ignores Playwright's own global deadline.
+          timeout --signal=TERM --kill-after=30s "$(( seconds + 30 ))s" pnpm exec playwright test "${args[@]}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        timeout-minutes: 2
+        with:
+          name: conversation-quality-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.id }}
           include-hidden-files: true
           path: |
             playwright-report/
             test-results/
-            .qa/**/*.png
-            .qa/**/*.json
+            .qa/
           if-no-files-found: warn
           retention-days: 14
+
+  quality-gate:
+    name: Provider-disabled technical gate
+    if: always()
+    needs: [provider-disabled, browser]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require unit, deployment and every browser group
+        shell: bash
+        env:
+          UNIT_RESULT: ${{ needs.provider-disabled.result }}
+          BROWSER_RESULT: ${{ needs.browser.result }}
+        run: |
+          if [[ "$UNIT_RESULT" != success || "$BROWSER_RESULT" != success ]]; then
+            echo "Unit/deployment result: $UNIT_RESULT; browser matrix result: $BROWSER_RESULT"
+            exit 1
+          fi

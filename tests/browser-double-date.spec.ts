@@ -11,7 +11,7 @@ import { doubleContext } from './helpers/double-note';
 import { captureRestaurantScene, restaurantEvening, restaurantInterrupted, restaurantScenario, resolveRestaurantScenario, waitForRestaurantScene } from './restaurant-browser-helpers';
 
 let http: Server, restaurant: Awaited<ReturnType<typeof attachRestaurantServer>>;
-let doubles: Awaited<ReturnType<typeof attachDoubleDateServer>>, browser: Browser, base = '';
+let doubles: Awaited<ReturnType<typeof attachDoubleDateServer>>, browser: Browser, friendBrowser: Browser, base = '';
 const requests: ClaudeRequest[] = [], speechRequests: SpeechRequest[] = [];
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -68,10 +68,13 @@ test.beforeAll(async () => {
   doubles = await attachDoubleDateServer(http, restaurant, { env: {}, storyRate: 30, scenarioId: 'family-visit' });
   await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${(http.address() as { port: number }).port}`;
-  browser = await chromium.launch({ channel: 'chrome', headless: true, args: [...(process.env.LFS_SOFTWARE_GPU === '1' ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : []), '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required', '--disable-background-timer-throttling', '--disable-renderer-backgrounding'] });
+  const launchOptions = { channel: 'chrome', headless: true, args: [...(process.env.LFS_SOFTWARE_GPU === '1' ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : []), '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required', '--disable-background-timer-throttling', '--disable-renderer-backgrounding'] };
+  browser = await chromium.launch(launchOptions);
+  try { friendBrowser = await chromium.launch(launchOptions); }
+  catch (error) { await browser.close(); throw error; }
   await mkdir('.qa/double-date', { recursive: true });
 });
-test.afterAll(async () => { await browser?.close(); await doubles?.close(); await restaurant?.close(); http?.closeAllConnections(); await new Promise<void>(resolve => http?.close(() => resolve())); });
+test.afterAll(async () => { await Promise.all([browser?.close(), friendBrowser?.close()]); await doubles?.close(); await restaurant?.close(); http?.closeAllConnections(); await new Promise<void>(resolve => http?.close(() => resolve())); });
 
 const state = (page: Page) => page.evaluate(() => (window as unknown as { __restaurantState: DinnerState }).__restaurantState);
 const credentials = (page: Page) => page.evaluate(() => JSON.parse(sessionStorage.getItem('table-for-two-double-date') || 'null') as DoubleRoomCredentials);
@@ -135,7 +138,8 @@ async function instrumentVoice(context: BrowserContext) {
   });
 }
 async function pair(speechEnabled = false, voiceProbe = false): Promise<Pair> {
-  const aContext = await browser.newContext({ viewport: { width: 1280, height: 800 } }), bContext = await browser.newContext({ viewport: { width: 1000, height: 700 } });
+  // Friends use separate browser processes, including independent software-GPU queues in CI.
+  const aContext = await browser.newContext({ viewport: { width: 1280, height: 800 } }), bContext = await friendBrowser.newContext({ viewport: { width: 1000, height: 700 } });
   try {
   if (voiceProbe) for (const context of [aContext,bContext]) await instrumentVoice(context);
   for (const context of [aContext, bContext]) await context.addInitScript(speechEnabled => {

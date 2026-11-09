@@ -106,7 +106,7 @@ export const VOICE_EXCHANGES: Record<DateId, readonly VoiceExchange[]> = {
     { kind: 'opening', human: 'Hi.', date: 'Hi. I’m glad you came. I was getting very invested in the menu.' },
   ],
   jules: [
-    { kind: 'teasing', human: 'I’m very mysterious.', date: 'You told me your bus route already.' },
+    { kind: 'teasing', human: 'I’m very mysterious.', date: 'Mm. You announced it, though.' },
     { kind: 'attraction', human: 'I can’t tell if you’re interested.', date: 'I am. I’m being less subtle now.' },
     { kind: 'disagreement', human: 'Quiet people are always judging everyone.', date: 'Sometimes we’re just eating.' },
     { kind: 'vulnerability', human: 'Why haven’t you written your own recipe?', date: 'Then it would be mine to get wrong. I know. It’s only pudding.' },
