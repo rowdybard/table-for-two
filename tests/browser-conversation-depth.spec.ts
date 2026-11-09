@@ -6,6 +6,7 @@ import { attachRestaurantServer, type ClaudeAdapter } from '../server/restaurant
 import { DateApiError } from '../server/restaurant/providers';
 import type { DinnerState, SceneTurn } from '../src/restaurant/types';
 import { waitForRestaurantScene } from './restaurant-browser-helpers';
+import { captionReadingMs } from '../src/restaurant/caption-delivery';
 
 // The user explicitly prohibits launching the game on their computer.
 test.skip(!process.env.CI, 'Rendered conversation verification runs in GitHub Actions only.');
@@ -17,7 +18,10 @@ const REPLY = 'That is an opening. I was expecting a hello, but I appreciate the
 let stalled = false, aborted = false;
 const adapter: ClaudeAdapter = { async *stream(request, signal) {
   const content = request.messages.at(-1)!.content; calls.push(content);
-  if (content.includes(STALL)) {
+  // Failed turns remain in the real transcript. Match the latest turn note,
+  // never an earlier unanswered line merged into this user message.
+  const latest = content.slice(content.lastIndexOf('The human just said:')).split('\n')[0];
+  if (latest === `The human just said: “${STALL}”`) {
     stalled = true;
     await new Promise<void>(resolve => {
       const finish = () => { aborted = true; resolve(); };
@@ -25,7 +29,7 @@ const adapter: ClaudeAdapter = { async *stream(request, signal) {
     });
     return;
   }
-  if (content.includes(FAIL)) throw new DateApiError(503, 'horde_provider', 'The mock reply service is unavailable.');
+  if (latest === `The human just said: “${FAIL}”`) throw new DateApiError(503, 'horde_provider', 'The mock reply service is unavailable.');
   const turn: SceneTurn = { utterances: [{ speaker: 'date', text: REPLY, emotion: 'amused' }], emotion: 'amused', action: 'none', memory: 'HUMAN: greeted me. TOLD THEM: nothing personal yet. OPEN: none.' };
   yield { type: 'text', text: JSON.stringify(turn) };
   yield { type: 'usage', usage: { outputTokens: 100 } };
@@ -63,7 +67,7 @@ async function send(page: Page, text: string) {
 }
 
 test('headers-only replies time out, cancel the old job, and permit the next turn without reset', async ({ page }) => {
-  test.setTimeout(60000); stalled = false; aborted = false;
+  test.setTimeout(90000); stalled = false; aborted = false;
   await page.route('**/api/date/status', async route => {
     const response = await route.fetch(), status = await response.json();
     await route.fulfill({ response, json: { ...status, conversationTimeoutMs: 50, hordeTimeoutMs: 50 } });
@@ -105,6 +109,7 @@ test('unavailable voice uses readable captions and completes only after visible 
   await begin(page, true); await send(page, 'A very ordinary hello.');
   await expect(page.locator('#caption-text')).toHaveText(REPLY);
   expect(receipts.includes(true)).toBe(false);
+  await page.screenshot({ path: '.qa/conversation-depth-caption-reading.png' });
   await expect.poll(() => receipts.includes(true), { timeout: 12000 }).toBe(true);
   await page.screenshot({ path: '.qa/conversation-depth-caption-fallback.png' });
 });
@@ -121,4 +126,30 @@ test('disabled captions cannot manufacture a completed caption-only receipt', as
   await expect(page.locator('#send-turn')).toBeEnabled();
   await expect(page.locator('#caption')).toBeHidden();
   expect(completed.includes(REPLY)).toBe(false);
+});
+
+test('disabling then re-enabling a visible caption cancels that reading interval and permits the next delivery', async ({ page }) => {
+  const receipts: { generation: number; completed: boolean }[] = [];
+  page.on('request', request => {
+    if (request.method() === 'POST' && request.url().endsWith('/playback')) {
+      const body = request.postDataJSON();
+      if (body.text === REPLY) receipts.push({ generation: body.generation, completed: body.completed });
+    }
+  });
+  await begin(page); await send(page, 'An ordinary greeting before a brief caption interruption.');
+  await expect(page.locator('#caption')).toBeVisible();
+  await expect(page.locator('#caption-text')).toHaveText(REPLY);
+  const generation = (await state(page)).generation;
+  // Exercise the actual Settings change handler without opening a pause surface:
+  // an unrelated generation cancellation would conceal this subscription bug.
+  await page.evaluate(() => {
+    const toggle = document.querySelector<HTMLInputElement>('#captions-enabled')!;
+    toggle.checked = false; toggle.dispatchEvent(new Event('change', { bubbles: true }));
+    toggle.checked = true; toggle.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await expect.poll(() => receipts.some(receipt => receipt.generation === generation && !receipt.completed)).toBe(true);
+  await page.waitForTimeout(captionReadingMs(REPLY) + 250);
+  expect(receipts.some(receipt => receipt.generation === generation && receipt.completed)).toBe(false);
+  await send(page, 'Another ordinary greeting after the interruption.');
+  await expect.poll(() => receipts.some(receipt => receipt.generation !== generation && receipt.completed), { timeout: 12000 }).toBe(true);
 });

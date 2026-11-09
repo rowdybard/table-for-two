@@ -1,5 +1,7 @@
 import { MODEL_RATES } from '../../src/restaurant/content';
 import { createHash } from 'node:crypto';
+import { EVALUATION_MAX_TOKENS } from '../../src/restaurant/evaluation-runtime';
+import { DEFAULT_HORDE_MODEL } from '../../server/restaurant/horde';
 import { DATE_EVALUATION_RUBRIC, EVALUATION_REVIEW_GUIDE, EVALUATION_MODELS, EVALUATION_SCRIPTS, EvaluationConversation, type EvaluationScript } from '../../src/restaurant/evaluation';
 import type { ClaudeModel } from '../../src/restaurant/types';
 import { completeUtterances } from '../../server/restaurant';
@@ -72,7 +74,25 @@ export interface EvaluationRunOptions {
   timeoutMs?: number; signal?: AbortSignal; now?: () => number;
   /** Public source provenance only. Unknown or dirty revisions are not formal A/B evidence. */
   sourceRevision?: string; sourceTreeDirty?: boolean | null;
+  evaluatedSourceRevision?: string; harnessRevision?: string; instrumentationSha256?: string | null;
+  /** Only public route settings are copied into the report; credentials are never serialized. */
+  providerEnvironment?: NodeJS.ProcessEnv;
   onProgress?(message: { scriptId: string; model: ClaudeModel; turn: number; valid: boolean; accountedCostUSD: number }): void;
+}
+
+export function evaluationModelSettings(models: readonly ClaudeModel[], env: NodeJS.ProcessEnv = {}, timeoutMs?: number) {
+  return models.map(model => {
+    const horde = model === 'ai-horde', native = horde && env.AI_HORDE_TRANSPORT === 'native';
+    const pinned = env.AI_HORDE_MODEL?.trim() || null;
+    const upstreamModel = horde ? pinned ?? (native ? null : DEFAULT_HORDE_MODEL) : model;
+    const configuredTimeout = Number(env.AI_HORDE_TIMEOUT_MS?.trim() || 60_000);
+    return { model, upstreamModel, transport: horde ? native ? 'horde-native' : 'horde-openai' : 'anthropic-messages',
+      maxTokens: EVALUATION_MAX_TOKENS, effectiveMaxTokens: horde ? Math.min(512, EVALUATION_MAX_TOKENS) : EVALUATION_MAX_TOKENS,
+      timeoutMs: timeoutMs ?? (horde ? 65000 : 30000),
+      providerTimeoutMs: native ? Number.isFinite(configuredTimeout) ? Math.floor(Math.max(1000, Math.min(120_000, configuredTimeout))) : 60_000 : null,
+      routingConfig: horde ? { selection: native && !pinned ? 'reviewed-native-pool' : pinned ? 'configured-model' : 'default-fixed-model',
+        requestedModels: upstreamModel ? [upstreamModel] : null, actualWorkerObserved: false, contextFit: 'reject' } : null };
+  });
 }
 
 /** Cancels a stuck iterator without waiting forever for a provider that ignores AbortSignal. */
@@ -161,8 +181,13 @@ export async function runConversationEvaluation(options: EvaluationRunOptions) {
       accountedCostUSD: rows.reduce((sum, row) => sum + row.accountedCostUSD, 0), humanQualityStatus: 'unrated' as const };
   });
   const sourceRevision = /^[a-f0-9]{40,64}$/i.test(options.sourceRevision ?? '') ? options.sourceRevision!.toLowerCase() : 'unknown';
+  const revision = (value: string | undefined) => /^[a-f0-9]{40,64}$/i.test(value ?? '') ? value!.toLowerCase() : 'unknown';
   return { createdAt: new Date().toISOString(), sourceRevision, sourceTreeDirty: typeof options.sourceTreeDirty === 'boolean' ? options.sourceTreeDirty : null,
+    evaluatedSourceRevision: revision(options.evaluatedSourceRevision ?? sourceRevision), harnessRevision: revision(options.harnessRevision ?? sourceRevision),
+    instrumentationSha256: /^[a-f0-9]{64}$/i.test(options.instrumentationSha256 ?? '') ? options.instrumentationSha256!.toLowerCase() : null,
     corpusSha256: createHash('sha256').update(JSON.stringify(options.scripts)).digest('hex'),
+    selectedScripts: structuredClone(options.scripts),
+    modelSettings: evaluationModelSettings(options.models, options.providerEnvironment, options.timeoutMs),
     budgetUSD: options.budgetUSD, accountedCostUSD: accounted, requests, plannedRequests: options.models.length * options.scripts.reduce((sum, script) => sum + script.turns.length, 0), modelSummaries,
     providerCallsPerHumanTurn: 1, automaticRetries: 0, speechMeasured: false, ratesUSDPerMillionTokens: MODEL_RATES, reviewGuide: structuredClone(EVALUATION_REVIEW_GUIDE), results };
 }

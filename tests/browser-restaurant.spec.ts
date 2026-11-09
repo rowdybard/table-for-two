@@ -298,14 +298,24 @@ test('menus and rapid date changes stay usable during warmup, including disposal
     await route.continue(body.mode === 'blind-date' ? { postData: JSON.stringify({ ...body, seed }) } : {});
   });
   const callsBeforeWarmup = calls.length;
+  async function expectWarmupState() {
+    const parallel = await page.locator('.restaurant-canvas').evaluate(canvas => !!(canvas as HTMLCanvasElement).getContext('webgl2')?.getExtension('KHR_parallel_shader_compile'));
+    if (parallel) {
+      await expect(page.locator('.restaurant-canvas')).toHaveAttribute('aria-busy', 'true');
+      await expect(page.locator('#scene-loading')).toBeVisible();
+    } else {
+      // The existing serial fallback renders normally instead of awaiting assets in compileAsync.
+      await waitForRestaurantScene(page);
+    }
+    return parallel;
+  }
   try {
     await page.goto(base);
     await expect(page.locator('#title-start')).toBeFocused({ timeout: 15000 });
     await page.keyboard.press('Enter'); await expect(page.locator('#mode-menu')).toBeVisible();
     await page.locator('#mode-solo').click();
     await expect.poll(() => heldRequests).toBeGreaterThan(0);
-    await expect(page.locator('.restaurant-canvas')).toHaveAttribute('aria-busy', 'true');
-    await expect(page.locator('#scene-loading')).toBeVisible();
+    await expectWarmupState();
     for (const dateId of ['jules','mira','dev']) await page.locator(`[data-date="${dateId}"]`).click();
     await expect(page.locator('[data-date="dev"]')).toHaveAttribute('aria-pressed', 'true');
     await expect(page.locator('.selection-stage-label strong')).toHaveText('Dev');
@@ -316,14 +326,14 @@ test('menus and rapid date changes stay usable during warmup, including disposal
     expect((await state(page)).dateId).toBe(expected.dateId); expect(expected.dateId).not.toBe('dev');
     expect(await previousCanvas!.evaluate(canvas => canvas.isConnected)).toBe(false);
     await expect(page.locator('.restaurant-canvas')).toHaveCount(1);
-    await expect(page.locator('.restaurant-canvas')).toHaveAttribute('aria-busy', 'true');
-    await expect(page.locator('#scene-loading')).toBeVisible();
-    const before = (await state(page)).participants[0].position;
-    await page.keyboard.down('w'); await page.keyboard.press('e');
-    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-    await page.keyboard.up('w');
+    if (await expectWarmupState()) {
+      const before = (await state(page)).participants[0].position;
+      await page.keyboard.down('w'); await page.keyboard.press('e');
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      await page.keyboard.up('w');
+      (await state(page)).participants[0].position.forEach((coordinate, index) => expect(coordinate).toBeCloseTo(before[index], 5));
+    }
     expect(inputCommands).toEqual([]);
-    (await state(page)).participants[0].position.forEach((coordinate, index) => expect(coordinate).toBeCloseTo(before[index], 5));
     releaseAssets();
     await waitForRestaurantScene(page);
     expect((await state(page)).dateId).toBe(expected.dateId);
@@ -339,6 +349,8 @@ test('menus and rapid date changes stay usable during warmup, including disposal
 async function beginNewSolo(page: Page) {
   page.setDefaultTimeout(12000);
   await page.goto(base);
+  await expect(page.locator('#restaurant-app')).toHaveAttribute('data-input-mode', 'title', { timeout: 12000 });
+  await expect(page.locator('#title-start')).toBeFocused();
   await page.locator('#title-start').click();
   await page.locator('#mode-solo').click();
   await page.locator('#start-date').click();

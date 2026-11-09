@@ -46,6 +46,9 @@ Implement the user's approved “Make Table for Two's conversations worth sharin
 - Evaluation checks execute all 660 scripted turns using injected providers, with no HTTP/renderer startup. Human ratings remain null.
 - Typecheck and production client build pass. The first complete Node run passed 568/569; its remaining greeting-dependent fixture was corrected and its focused rerun passes. Final frozen CI is authoritative for the integrated tree.
 - Review caught and fixed hidden-caption completion, authorization-error caption fallthrough, and terminal `done` waiting for HTTP EOF.
+- Prepared an isolated baseline bench at `08fceff2408c7597601c993e7b7d7a73e93e1610`, preserving evaluated source `05ff06a5...`. Frozen-source parity and all 660 injected turns pass; no live baseline capture exists.
+- Added offline counterbalanced human-review packets and a gate calculator. Nine checks pass; human judgments remain null, and missing capture/review coverage blocks a pass.
+- First remote browser run exposed two recovery mock fixtures matching old failed transcript text and existing software-browser test assumptions. Source/unit/package checks passed; browser verification and artifact review remain pending the corrected integrated run.
 
 ## Remaining release gates
 

@@ -68,7 +68,7 @@ test.beforeAll(async () => {
   doubles = await attachDoubleDateServer(http, restaurant, { env: {}, storyRate: 30, scenarioId: 'family-visit' });
   await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${(http.address() as { port: number }).port}`;
-  browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required', '--disable-background-timer-throttling', '--disable-renderer-backgrounding'] });
+  browser = await chromium.launch({ channel: 'chrome', headless: true, args: [...(process.env.LFS_SOFTWARE_GPU === '1' ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : []), '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required', '--disable-background-timer-throttling', '--disable-renderer-backgrounding'] });
   await mkdir('.qa/double-date', { recursive: true });
 });
 test.afterAll(async () => { await browser?.close(); await doubles?.close(); await restaurant?.close(); http?.closeAllConnections(); await new Promise<void>(resolve => http?.close(() => resolve())); });

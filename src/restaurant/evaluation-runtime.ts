@@ -24,6 +24,7 @@ type HeardLine = { id: string; speaker: 'd1' | 'd2' | 'waiter' | 'diner'; text: 
 export type EvaluationResult = { kind: 'solo'; turn: SceneTurn } | { kind: 'double'; turn: DoubleResult };
 const humans: DoubleHumanId[] = ['h1', 'h2'];
 const actors: DoubleDateActorId[] = ['d1', 'd2'];
+export const EVALUATION_MAX_TOKENS = 700;
 const names = { h1: 'Alex', h2: 'Casey' };
 const owner = (actor: DoubleDateActorId): DoubleHumanId => actor === 'd1' ? 'h1' : 'h2';
 const zeroUsage = () => ({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, speechCharacters: 0, cacheHits: 0, claudeRequests: 0, claudeCost: 0, speechCost: 0, totalCost: 0, responseMs: null, firstAudioMs: null });
@@ -54,7 +55,7 @@ export class EvaluationConversation {
   private previous: { lines: SceneUtterance[]; delivery: 'heard' | 'interrupted' | 'unheard' } | undefined;
   private prepared = -1;
 
-  constructor(readonly script: EvaluationScript, readonly model: ClaudeModel, readonly maxTokens = 700) {
+  constructor(readonly script: EvaluationScript, readonly model: ClaudeModel, readonly maxTokens = EVALUATION_MAX_TOKENS) {
     const ids = script.dateIds ?? [script.blindSeed ? createBlindDate(script.blindSeed).dateId : script.dateId, 'jules'];
     this.views = { h1: snapshot(script, ids[0], 'h1'), h2: snapshot(script, ids[1], 'h2') };
     this.humanNames = friendNames(humans.map(id => ({ id, name: script.humanNames?.[id] ?? names[id] })));

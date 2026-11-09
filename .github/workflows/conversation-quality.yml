@@ -16,7 +16,7 @@ concurrency:
 jobs:
   provider-disabled:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     env:
       ANTHROPIC_API_KEY: ''
       OPENROUTER_API_KEY: ''
@@ -60,13 +60,15 @@ jobs:
       - name: Install the Chrome channel used by the existing Playwright config
         run: pnpm exec playwright install --with-deps chrome
       - name: Conversation, recovery, delivery and existing evening flows
+        timeout-minutes: 27
         env:
           NODE_OPTIONS: --import=${{ github.workspace }}/tests/fixtures/evaluation-network-guard.mjs
-        run: pnpm exec playwright test tests/browser-conversation-depth.spec.ts tests/browser-restaurant.spec.ts tests/browser-speech.spec.ts tests/browser-double-date.spec.ts tests/browser-evening.spec.ts --reporter=line,html
+        run: pnpm exec playwright test tests/browser-conversation-depth.spec.ts tests/browser-restaurant.spec.ts tests/browser-speech.spec.ts tests/browser-double-date.spec.ts tests/browser-evening.spec.ts --reporter=line,html --global-timeout=1500000 --max-failures=1
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: conversation-quality-${{ github.run_id }}
+          include-hidden-files: true
           path: |
             playwright-report/
             test-results/

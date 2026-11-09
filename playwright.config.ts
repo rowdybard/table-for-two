@@ -11,6 +11,7 @@ export default defineConfig({
     channel: 'chrome',
     viewport: { width: 1280, height: 800 },
     screenshot: 'only-on-failure',
+    trace: 'retain-on-failure',
     launchOptions: { args: [...(process.env.LFS_SOFTWARE_GPU === '1' ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : []), '--disable-background-timer-throttling', '--disable-renderer-backgrounding'] },
   },
 });

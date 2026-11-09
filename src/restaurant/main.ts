@@ -806,11 +806,11 @@ async function restoreSession() {
 }
 
 btn('title-start').addEventListener('click', () => { userEnteredMenu = true; el('arrival-screen').dataset.screen = 'mode'; menuNavigation.focusInitial(); });
-btn('mode-solo').addEventListener('click', () => { doubleLobby.hide(); state = preview(selectedDate); renderer.setDate(selectedDate); el('arrival-screen').dataset.screen = 'select'; });
+btn('mode-solo').addEventListener('click', () => { doubleLobby.hide(); state = preview(selectedDate); renderer.setDate(selectedDate); el('arrival-screen').dataset.screen = 'select'; menuNavigation.focusInitial(); });
 btn('mode-double').addEventListener('click', () => { el('arrival-screen').hidden = true; doubleLobby.show('entry'); menuNavigation.focusInitial(); });
 btn('mode-blind').addEventListener('click', () => void startDinner(true));
-btn('mode-back').addEventListener('click', () => { el('arrival-screen').dataset.screen = 'title'; });
-btn('select-back').addEventListener('click', () => { el('arrival-screen').dataset.screen = 'mode'; });
+btn('mode-back').addEventListener('click', () => { el('arrival-screen').dataset.screen = 'title'; menuNavigation.focusInitial(); });
+btn('select-back').addEventListener('click', () => { el('arrival-screen').dataset.screen = 'mode'; menuNavigation.focusInitial(); });
 document.querySelectorAll<HTMLButtonElement>('[data-date]').forEach(card => card.addEventListener('click', () => {
   selectedDate = card.dataset.date as DateId; state = preview(selectedDate); renderer.setDate(selectedDate);
   document.querySelector<HTMLElement>('.selection-stage-label strong')!.textContent = getDate(selectedDate)!.name;
@@ -961,7 +961,13 @@ btn('settings-save').addEventListener('click', async () => {
   el('settings-saved').textContent = 'Saved. The limit applies to a new dinner.';
 });
 input('speech-enabled').addEventListener('change', () => { preferences.speech = input('speech-enabled').checked; if (!preferences.speech) speech.stop(); savePreferences(); });
-input('captions-enabled').addEventListener('change', () => { preferences.captions = input('captions-enabled').checked; el('caption').hidden = !preferences.captions || !el('caption-text').textContent; savePreferences(); });
+input('captions-enabled').addEventListener('change', () => {
+  preferences.captions = input('captions-enabled').checked;
+  // Re-enabling captions cannot make an interrupted reading interval continuous.
+  if (!preferences.captions) captionReadAbort?.abort();
+  el('caption').hidden = !preferences.captions || !el('caption-text').textContent;
+  savePreferences();
+});
 input('voice-volume').addEventListener('input', () => { preferences.volume = Number(input('voice-volume').value); speech.setVolume(preferences.volume); savePreferences(); });
 document.addEventListener('mousemove', event => {
   if (mobile?.enabled || !joined || menuInputOpen() || state.phase !== 'playing') return;
@@ -1091,6 +1097,8 @@ function frame(now: number) {
   } else { el('interaction').hidden = true; el('capture-pointer').hidden = true; }
   perfStats?.sample(now, performance.now() - frameStart);
 }
+// The DOM menus are ready before shader preparation or the first rendered frame.
+menuNavigation.refresh('gameplay');
 requestAnimationFrame(frame);
 async function connectRestaurant(attempt = 0) {
   try {

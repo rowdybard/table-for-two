@@ -10,7 +10,8 @@ import { CONTINUITY_EVALUATION_SCRIPTS, DATE_EVALUATION_RUBRIC, EVALUATION_SCRIP
 import { soloSystem } from '../server/restaurant/conversation-prompt';
 import { DateApiError, TURN_SCHEMA, type ClaudeAdapter, type ClaudeRequest } from '../server/restaurant/providers';
 import { DOUBLE_TURN_SCHEMA } from '../server/double-date/conversation';
-import { evaluationPreview, evaluationReservation, parseEvaluationOptions, runConversationEvaluation } from '../scripts/lib/conversation-evaluation';
+import { evaluationModelSettings, evaluationPreview, evaluationReservation, parseEvaluationOptions, runConversationEvaluation } from '../scripts/lib/conversation-evaluation';
+import { DEFAULT_HORDE_MODEL } from '../server/restaurant/horde';
 
 const none = () => ({ signal: 'none', reason: 'No change in boundaries.', wantsToLeave: false, boundary: { kind: 'none', topic: 'other', refusal: '', evidence: '' } });
 const agenda = () => ({ signal: 'none', evidence: '', clue: '' });
@@ -205,13 +206,34 @@ test('report provenance is injected and baseline comparison remains explicitly u
   const sourceRevision = 'a'.repeat(40);
   const known = await runConversationEvaluation({ scripts: [script], models: ['ai-horde'], budgetUSD: 0, adapters: { 'ai-horde': adapter }, sourceRevision, sourceTreeDirty: false });
   assert.equal(known.sourceRevision, sourceRevision); assert.equal(known.sourceTreeDirty, false);
+  assert.equal(known.evaluatedSourceRevision, sourceRevision); assert.equal(known.harnessRevision, sourceRevision); assert.equal(known.instrumentationSha256, null);
   assert.match(known.corpusSha256, /^[a-f0-9]{64}$/);
+  assert.deepEqual(known.selectedScripts, [script]); assert.notEqual(known.selectedScripts[0], script);
+  assert.deepEqual(known.modelSettings, evaluationModelSettings(['ai-horde']));
   assert.equal(known.reviewGuide.baselineComparison.status, 'unrated');
   assert.equal(known.reviewGuide.baselineComparison.baselineReport, null);
   assert.equal(known.reviewGuide.baselineComparison.candidateReport, null);
   const unknown = await runConversationEvaluation({ scripts: [script], models: ['ai-horde'], budgetUSD: 0, adapters: { 'ai-horde': adapter }, sourceRevision: 'not-a-revision' });
   assert.equal(unknown.sourceRevision, 'unknown'); assert.equal(unknown.sourceTreeDirty, null);
   assert.equal(unknown.corpusSha256, known.corpusSha256);
+  const baseline = await runConversationEvaluation({ scripts: [script], models: ['ai-horde'], budgetUSD: 0, adapters: { 'ai-horde': adapter }, sourceRevision,
+    evaluatedSourceRevision: 'b'.repeat(40), harnessRevision: sourceRevision, instrumentationSha256: 'c'.repeat(64) });
+  assert.equal(baseline.evaluatedSourceRevision, 'b'.repeat(40)); assert.equal(baseline.harnessRevision, sourceRevision);
+  assert.equal(baseline.instrumentationSha256, 'c'.repeat(64)); assert.equal(baseline.reviewGuide.baselineComparison.status, 'unrated');
+});
+
+test('model settings record requested Horde identities and transport caps without serializing credentials', () => {
+  const env = { AI_HORDE_MODEL: '  fictional/configured-model  ', AI_HORDE_API_KEY: 'private-fixture-key', ANTHROPIC_API_KEY: 'private-paid-key' };
+  const bridge = evaluationModelSettings(['ai-horde'], env)[0];
+  assert.equal(bridge.upstreamModel, 'fictional/configured-model'); assert.equal(bridge.transport, 'horde-openai');
+  assert.equal(bridge.maxTokens, 700); assert.equal(bridge.effectiveMaxTokens, 512);
+  assert.deepEqual(bridge.routingConfig?.requestedModels, ['fictional/configured-model']); assert.equal(bridge.routingConfig?.actualWorkerObserved, false);
+  assert.equal(evaluationModelSettings(['ai-horde'])[0].upstreamModel, DEFAULT_HORDE_MODEL);
+  const native = evaluationModelSettings(['ai-horde'], { ...env, AI_HORDE_TRANSPORT: 'native', AI_HORDE_TIMEOUT_MS: '999999' })[0];
+  assert.equal(native.transport, 'horde-native'); assert.equal(native.providerTimeoutMs, 120000); assert.equal(native.upstreamModel, bridge.upstreamModel);
+  const pool = evaluationModelSettings(['ai-horde'], { AI_HORDE_TRANSPORT: 'native' })[0];
+  assert.equal(pool.upstreamModel, null); assert.equal(pool.routingConfig?.selection, 'reviewed-native-pool'); assert.equal(pool.routingConfig?.requestedModels, null);
+  assert.ok(!JSON.stringify([bridge, native, pool]).includes('private-'));
 });
 
 test('Solo and Double acceptance retire a stopped optional premise while preserving a factual promise', () => {
