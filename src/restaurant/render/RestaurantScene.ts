@@ -415,7 +415,8 @@ export function createRestaurantScene(): RestaurantSet {
   const spill = new THREE.Group();
   const puddle = new THREE.Mesh(new THREE.CircleGeometry(.2, 24), waterMat);
   puddle.rotation.x = -Math.PI / 2;
-  puddle.position.set(.37, .783, -.98);
+  // 1.3 mm above the menu and napkin paper (.783) so the spill never z-fights with them.
+  puddle.position.set(.37, .7843, -.98);
   puddle.scale.set(1, .65, 1);
   spill.add(puddle);
   spill.visible = false;

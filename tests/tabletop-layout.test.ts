@@ -17,10 +17,9 @@ before(async () => {
 const describe = (list: Finding[]) => list.map(x => `${x.scenario} ${x.type} ${x.a}${x.b ? ' x ' + x.b : ''} ${JSON.stringify(x.mm)}`);
 const each = (check: (scenario: Scenario) => string[]) => SCENARIOS.flatMap(s => { applyFrame(f, buildState(s), s.motion); return check(s).map(line => `${s.label} ${line}`); });
 
-/** The water puddle (RestaurantScene, workstream B) still lies at the paper height .783 until it is raised to .7843. */
+/** The water puddle (RestaurantScene) lies at .7843, above the paper at .783. */
 const puddle = () => f.set.spill.children[0]!;
 const puddleAtPaperHeight = () => Math.abs(puddle().position.y - .783) < 1e-6;
-const puddleOnPaper = (x: Finding) => x.type === 'flat-stack' && (x.a === 'spill-puddle' || x.b === 'spill-puddle') && puddleAtPaperHeight();
 
 test('every scenario rests: no interpenetration past .5 mm, nothing sinking, floating or hanging past the flat top', () => {
   assert.ok(SCENARIOS.length >= 170, `${SCENARIOS.length} scenarios`);
@@ -28,11 +27,11 @@ test('every scenario rests: no interpenetration past .5 mm, nothing sinking, flo
 });
 
 test('flat items never z-fight: paper and decals within .5 mm with overlapping footprints, or a stain on paper or under a prop', () => {
-  assert.deepEqual(describe(findings.filter(x => (x.type === 'flat-stack' || x.type === 'decal-on-paper' || x.type === 'decal-under-solid') && !puddleOnPaper(x))), []);
+  assert.deepEqual(describe(findings.filter(x => (x.type === 'flat-stack' || x.type === 'decal-on-paper' || x.type === 'decal-under-solid'))), []);
 });
 
-test('the spill puddle clears the paper once it is raised to .7843', t => {
-  if (puddleAtPaperHeight()) t.todo('RestaurantScene.ts (workstream B) still lays the puddle at the paper height .783');
+test('the spill puddle sits above the paper at .7843', () => {
+  assert.ok(!puddleAtPaperHeight(), 'the puddle must not share the paper height .783');
   assert.deepEqual(describe(findings.filter(x => x.type === 'flat-stack' && (x.a === 'spill-puddle' || x.b === 'spill-puddle'))), []);
 });
 
