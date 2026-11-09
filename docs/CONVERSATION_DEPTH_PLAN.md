@@ -23,7 +23,8 @@ Implement the user's approved “Make Table for Two's conversations worth sharin
 - [x] Double cast voice, knowledge, agenda and romantic progress stay independent.
 - [x] Refresh restrained reaction envelopes for distinct delivered utterances, including repeated emotion values. Important speech/listening wins over incidental gestures.
 - [x] Bound voice preparation/playback, retain existing fallbacks and truthful receipts, and reject late audio.
-- [x] Preserve lighting tiers, adaptive pixel budgets and frame cap; no character/room rebuild.
+- [x] Latest authorized scope: reduce GPU cost for potato hardware, including cheaper lighting/shadows, materials and scene detail while retaining readable faces, hands and captions. No replacement character rigs or new activities. Remote performance/readability verification remains pending.
+- [x] Fix the separately reported WASD input delay and stutter while preserving authoritative movement, collisions and interaction rules. Remote movement verification remains pending.
 
 ## Constraints and verification
 
@@ -52,6 +53,9 @@ Implement the user's approved “Make Table for Two's conversations worth sharin
 - The integrated Node suite subsequently passed all 608 checks. The five recovery/caption browser cases and four speech cases pass; remaining existing browser-flow failures are being corrected from remote traces, without launching locally.
 - Complete baseline/candidate prompt comparison covers 2,640 matched requests across all scripts, natural/comfortable stances and Haiku/Horde. Maximum increase is 419 estimated tokens; no request exceeds the 600-token allowance. Reproducible evidence is saved under the isolated checkout's ignored `.qa/` directory.
 - Final authored farewells now recall only this couple's actual shared acts with completed own-listener delivery evidence. Outcome selection, earned confidence, reserved wording and medical handoffs remain unchanged; Blind uses seeded voice rather than preset biography.
+- User expanded the scope to stronger GPU reductions and a non-framerate WASD latency fix. Two GPT-6.1 Terra agents at ultra now handle movement and low-tier assets/materials alongside the lighting owner; Fast mode is enabled in Codex configuration. Their changes remain under integration and remote verification.
+- Low-tier shader lights are reduced from twelve to four, software canvas budget from 1,000,000 to 320,000 pixels, and low-tier PMREM/shadow/reflection/glow work and roughly 279,000 detailed plant triangles are avoided. Draw-only pacing preserves independent input updates; high-tier antialiasing and lighting remain.
+- Walking now uses bounded visual prediction, immediate ordered direction/stop sends, and a queued focus-loss stop that does not depend on a later render frame. Authoritative positions and collisions remain server-owned. Focused integrated rendering, movement, caption and ending checks pass; actual remote performance is not yet claimed.
 
 ## Remaining release gates
 

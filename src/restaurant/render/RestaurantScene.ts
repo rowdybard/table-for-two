@@ -5,7 +5,10 @@ import { createProceduralMaterial, type SurfaceKind } from './ProceduralMaterial
 import { createBotanicalPlant, createLeafBladeGeometry } from './RestaurantFoliage';
 import { applyEnvironmentSurface } from './EnvironmentAssets';
 import { createNightExterior } from './NightExterior';
+import { applyNightExteriorQuality } from './NightExteriorQuality';
 import { RestaurantPropKit } from './RestaurantPropKit';
+import { placeRestaurantPlant } from './RestaurantPlantPolicy';
+import type { RenderQuality } from './RenderQuality';
 import { dessertLayout, TabletopProps } from './TabletopProps';
 import type { DinnerState } from '../types';
 import { PENDANTS } from './VenueContract';
@@ -138,7 +141,7 @@ class Builder {
   }
 }
 
-export function createRestaurantScene(): RestaurantSet {
+export function createRestaurantScene(quality?: Pick<RenderQuality, 'tier'>): RestaurantSet {
   const b = new Builder();
   const diningRoot = new THREE.Group(); diningRoot.name = 'dining-station'; b.root.add(diningRoot);
   const plaster = b.surface('plaster', '#e3d6c2', .95);
@@ -361,7 +364,7 @@ export function createRestaurantScene(): RestaurantSet {
     ground.position.y = .358; fallback.add(ground);
     const foliage = createBotanicalPlant(index % 2 ? 'parlor-palm' : 'rubber-tree', height, index * .7);
     fallback.add(foliage.root); b.materials.push(...foliage.materials); b.textures.push(...foliage.textures);
-    props.place('plant', fallback, x, 0, z, index < 2 ? 1.55 : 1.3, index * 1.1);
+    placeRestaurantPlant(props, fallback, x, z, index < 2 ? 1.55 : 1.3, index * 1.1, quality);
   }
   [[-5.9, -6.3], [5.9, -6.3], [-5.95, 5.9], [5.9, 5.9]].forEach((p, i) => plant(p[0]!, p[1]!, i));
 
@@ -454,6 +457,7 @@ export function createRestaurantScene(): RestaurantSet {
   targets.push(...tabletop.targets);
 
   const exterior = createNightExterior();
+  applyNightExteriorQuality(exterior.root, quality);
   b.root.add(exterior.root);
   b.bake();
   return {

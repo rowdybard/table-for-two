@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as THREE from 'three';
-import { ADAPTIVE_PIXEL_RATIO, BOOTH_LIGHT, KEY_SHADOW, buildLightRig, createPixelRatioGovernor, ensureVenueShadowLayers, fitDirectionalShadow, roomCorners } from '../src/restaurant/render/RestaurantLighting';
+import { ADAPTIVE_PIXEL_RATIO, BOOTH_LIGHT, KEY_SHADOW, applyLowCostVenue, buildLightRig, createPixelRatioGovernor, ensureVenueShadowLayers, fitDirectionalShadow, roomCorners } from '../src/restaurant/render/RestaurantLighting';
 import { PENDANTS, PENDANT_Y, STATIC_SHADOW_LAYER } from '../src/restaurant/render/VenueContract';
 import { LAMP_HALO_SCALE, createVenueGlow, roomHaloLayout } from '../src/restaurant/render/VenueGlow';
 import { applyVenueMaterialTags, createVenueEnvironmentProxy, installVenueGlass, VENUE_GLASS_CACHE_KEY } from '../src/restaurant/render/VenueEnvironment';
@@ -18,8 +18,8 @@ function rig(tier: 'high' | 'low') {
 const countLights = (root: THREE.Object3D) => { let n = 0; root.traverse(object => { if ((object as THREE.Light).isLight) n++; }); return n; };
 const near = (actual: number, expected: number, epsilon = 1e-6) => assert.ok(Math.abs(actual - expected) <= epsilon, `${actual} != ${expected}`);
 
-test('the high tier owns nine lights and the low tier seven; only the high-tier key casts', () => {
-  for (const [tier, expected, pendants] of [['high', 9, 4], ['low', 7, 2]] as const) {
+test('the high tier owns nine lights and the low tier three; only the high-tier key casts', () => {
+  for (const [tier, expected, pendants] of [['high', 9, 4], ['low', 3, 0]] as const) {
     const { roomLights, diningRoot, rig: lights } = rig(tier);
     assert.equal(lights.lights.length, expected, tier);
     assert.equal(countLights(roomLights) + countLights(diningRoot), expected, tier);
@@ -90,8 +90,8 @@ test('the booth light follows the solo or Double layout without changing the lig
   }
 });
 
-test('the bar spot cone takes in the shelves and the bar sign', () => {
-  const { scene, rig: lights } = rig('low');
+test('the high-tier bar spot cone takes in the shelves and the bar sign', () => {
+  const { scene, rig: lights } = rig('high');
   scene.updateMatrixWorld(true);
   const from = new THREE.Vector3().setFromMatrixPosition(lights.bar.matrixWorld);
   const axis = new THREE.Vector3().setFromMatrixPosition(lights.bar.target.matrixWorld).sub(from).normalize();
@@ -100,6 +100,32 @@ test('the bar spot cone takes in the shelves and the bar sign', () => {
     const ray = new THREE.Vector3(...point).sub(from).normalize();
     assert.ok(ray.dot(axis) > Math.cos(lights.bar.angle), `outside the cone: ${point}`);
   }
+});
+
+test('low venue shading excludes extra lights and map costs without replacing materials or actor details', () => {
+  const { scene, rig: lights } = rig('low'), retained = new Set(lights.lights);
+  const face = new THREE.PointLight(); face.name = 'view-face-fill'; scene.add(face);
+  const lamp = new THREE.PointLight('#fff', 0), barWash = new THREE.PointLight(); scene.add(lamp, barWash);
+  const map = new THREE.Texture(), alpha = new THREE.Texture(), normal = new THREE.Texture(), roughness = new THREE.Texture(), metalness = new THREE.Texture(), environment = new THREE.Texture();
+  const material = new THREE.MeshStandardMaterial({ map, alphaMap: alpha, normalMap: normal, roughnessMap: roughness, metalnessMap: metalness, envMap: environment, transparent: true, side: THREE.DoubleSide, opacity: .14, alphaTest: .1 });
+  material.userData.venueGlass = true;
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(), material); mesh.castShadow = mesh.receiveShadow = true; scene.add(mesh);
+  const actor = new THREE.Group(); actor.name = 'character-test';
+  const eyeMaterial = new THREE.MeshStandardMaterial({ normalMap: normal });
+  actor.add(new THREE.Mesh(mesh.geometry, eyeMaterial)); scene.add(actor);
+  applyLowCostVenue(scene, retained);
+  let activeLights = 0; scene.traverseVisible(object => { if ((object as THREE.Light).isLight) activeLights++; });
+  assert.equal(activeLights, 4, 'only hemisphere, key, booth and viewer fill enter the shader');
+  lamp.intensity = 2.5; assert.equal(lamp.visible, false, 'later lamp level changes cannot restore a costly light slot');
+  assert.equal(mesh.material, material); assert.equal(material.map, map); assert.equal(material.alphaMap, alpha);
+  assert.equal(material.normalMap, null); assert.equal(material.roughnessMap, null); assert.equal(material.metalnessMap, null); assert.equal(material.envMap, null);
+  assert.equal(material.opacity, .14); assert.equal(material.alphaTest, .1); assert.equal(material.forceSinglePass, true);
+  assert.equal(mesh.castShadow, false); assert.equal(mesh.receiveShadow, false);
+  assert.equal(eyeMaterial.normalMap, normal, 'cast materials are handled separately, never stripped by venue policy');
+  const version = material.version; applyLowCostVenue(scene, retained); assert.equal(material.version, version, 'repeat scans do not recompile unchanged programs');
+  material.normalMap = normal; applyLowCostVenue(scene, retained); assert.equal(material.normalMap, null, 'late texture callbacks are handled in place');
+  lights.dispose(); material.dispose(); eyeMaterial.dispose(); mesh.geometry.dispose();
+  for (const texture of [map, alpha, normal, roughness, metalness, environment]) texture.dispose();
 });
 
 test('the adaptive pixel ratio keeps a step only when frames get faster', () => {

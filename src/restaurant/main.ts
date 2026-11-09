@@ -26,7 +26,9 @@ import { InterestCue } from './InterestCue';
 import { createPerfStats } from './PerfStats';
 import { createFrameCap } from './FrameCap';
 import { consumeTurnResponse, replyDeadlineMs } from './conversation-stream';
-import { captionReadingMs, waitForCaptionReading } from './caption-delivery';
+import { captionReadingMs, waitForCaptionPaint, waitForCaptionReading } from './caption-delivery';
+import { WalkingView } from './WalkingView';
+import { MovementSendGate } from './MovementSendGate';
 
 document.title = 'Table for Two';
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = markup;
@@ -84,13 +86,15 @@ let connectionTimer: ReturnType<typeof setTimeout> | undefined;
 let mobile: MobileControls | undefined;
 let tabletopInspector: TabletopInspector | undefined;
 let turnStartedAt = 0, firstAudioMs: number | null = null, presentedEvents = new Set<string>();
-let lastFrame = performance.now(), lastMove = 0, movePending = false, lastMovement = false;
+let lastFrame = performance.now();
 let lastPartial = '', dragging = false, pointerX = 0, pointerY = 0;
 let pointerTravel = 0;
 let currentSpeechGeneration = 0;
 let tableAttention: { actor: 'h1' | 'h2'; until: number } | undefined;
 let hadPointerLock = false, intentionalPointerRelease = false;
 const keys = new Set<string>();
+const walkingView = new WalkingView();
+const movementSendGate = new MovementSendGate();
 const listeningPreview = new ListeningPreviewController();
 let listeningTarget: ListeningPreviewTarget = null;
 const money = (value: number) => '$' + value.toFixed(3);
@@ -377,7 +381,9 @@ async function presentCaption(utterance: SceneUtterance, generation: number, epo
   const deliveryId = `caption:${++captionDeliverySequence}`;
   caption(utterance);
   playback = { speaker: utterance.speaker, amplitude: 0, emotion: utterance.emotion, caption: utterance.text, actorId: utterance.actorId, deliveryId };
-  const completed = await waitForCaptionReading(captionReadingMs(utterance.text), controller.signal, document, () => !document.hidden && !el('caption').hidden && preferences.captions);
+  const readable = () => !document.hidden && !el('caption').hidden && preferences.captions;
+  const painted = await waitForCaptionPaint(controller.signal, document, readable, { request: callback => requestAnimationFrame(callback), cancel: id => cancelAnimationFrame(id) });
+  const completed = painted && await waitForCaptionReading(captionReadingMs(utterance.text), controller.signal, document, readable);
   if (captionReadAbort === controller) captionReadAbort = undefined;
   // A readable caption is real delivery. Enqueueing it, or interrupting it early, is not.
   if (epoch === generationEpoch && joined && state.phase === 'playing' && playback.deliveryId === deliveryId) {
@@ -548,7 +554,14 @@ function showEnding() {
 }
 function releasePointer() {
   keys.clear(); dragging = false; mobile?.clear();
-  if (joined && lastMovement) { lastMovement = false; void command({ type: 'move', x: 0, z: 0, yaw: renderer.getYaw() }, true); }
+  if (joined && state.phase === 'playing') {
+    const room = state.id, membership = doubleClient.credentials, sessionToken = token;
+    movementSendGate.stop(room, performance.now(), complete => {
+      // The old request may finish after leaving or rejoining a different seat.
+      if (!joined || state.id !== room || doubleClient.credentials !== membership || token !== sessionToken || state.phase !== 'playing') { complete(); return; }
+      void command({ type: 'move', x: 0, z: 0, yaw: renderer.getYaw() }, true).finally(complete);
+    });
+  }
   if (document.pointerLockElement) { intentionalPointerRelease = true; document.exitPointerLock(); }
 }
 async function resumeDinner(after?: () => void) {
@@ -1067,12 +1080,29 @@ function frame(now: number) {
     else renderer.setListeningPreview(cue);
   }
   renderer.setDateThinking(busy && !playback.speaker);
-  renderer.update(dt, state, playback);
+  const touchBlocked = !!mobile?.enabled && (mobile.portrait || !!mobile.menuScope);
+  const controlsBlocked = menuInputOpen() || !el('conversation-form').hidden || pageSuspended || document.hidden;
+  const typing = controlsBlocked || touchBlocked || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+  const analog = mobile?.movement ?? { horizontal: 0, forward: 0 };
+  const horizontal = !typing ? Math.max(-1, Math.min(1, Number(keys.has('d') || keys.has('arrowright')) - Number(keys.has('a') || keys.has('arrowleft')) + analog.horizontal)) : 0;
+  const forward = !typing ? Math.max(-1, Math.min(1, Number(keys.has('w') || keys.has('arrowup')) - Number(keys.has('s') || keys.has('arrowdown')) + analog.forward)) : 0;
+  const canWalk = renderer.isReady && joined && state.phase === 'playing' && !state.seated && !pageSuspended && !document.hidden;
+  const moving = canWalk && !!(horizontal || forward);
+  const vector = renderer.getMovement(moving ? horizontal : 0, moving ? forward : 0);
+  const magnitude = Math.max(1, Math.hypot(vector.x, vector.z));
+  const moveX = vector.x / magnitude, moveZ = vector.z / magnitude;
+  // Send changes immediately when the previous request finishes; the 80 ms
+  // interval is a heartbeat, not a delay on starting, stopping or turning.
+  const completeMove = renderer.isReady && joined && state.phase === 'playing' && !pageSuspended && !document.hidden ? movementSendGate.begin(state.id, now, moving, horizontal, forward) : undefined;
+  if (completeMove) void command({ type: 'move', x: moveX, z: moveZ, yaw: renderer.getYaw() }, true).finally(completeMove);
+  const humanIndex = state.participants.findIndex(participant => participant.kind === 'human');
+  const human = state.participants[humanIndex];
+  const viewPosition = human && walkingView.sample(state.id, human.position, canWalk, moveX, moveZ, dt);
+  const renderState = viewPosition ? { ...state, participants: state.participants.map((participant, index) => index === humanIndex ? { ...participant, position: viewPosition } : participant) } : state;
+  renderer.update(dt, renderState, playback);
   if (tabletopInspector?.target && !renderer.hasTableTarget(tabletopInspector.target)) tabletopInspector.close();
   el('scene-loading').hidden = renderer.isReady;
   el('prompt-line').classList.toggle('prompt-quiet', !joined || state.phase !== 'playing' || visibleModal() || !el('conversation-form').hidden);
-  const touchBlocked = !!mobile?.enabled && (mobile.portrait || !!mobile.menuScope);
-  const controlsBlocked = menuInputOpen() || !el('conversation-form').hidden || pageSuspended || document.hidden;
   const touchHit = !controlsBlocked && !touchBlocked && renderer.isReady && joined && state.phase === 'playing' ? renderer.getInteraction(state) : null;
   tabletopInspector?.update(state, touchHit && isInspectionTarget(touchHit.target) ? { target: touchHit.target, label: touchHit.label } : null);
   if (tabletopInspector?.isOpen && (otherModalOpen() || !el('journal').hidden || !el('conversation-form').hidden || pageSuspended || document.hidden || touchBlocked)) tabletopInspector.close();
@@ -1083,17 +1113,6 @@ function frame(now: number) {
     el('interaction').hidden = !hit;
     if (hit) el('interaction-label').textContent = hit.label;
     el('capture-pointer').hidden = !!mobile?.enabled || blocked || !!document.pointerLockElement || document.activeElement === input('conversation-input');
-    const typing = blocked || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
-    const analog = mobile?.movement ?? { horizontal: 0, forward: 0 };
-    const horizontal = !typing ? Math.max(-1, Math.min(1, Number(keys.has('d') || keys.has('arrowright')) - Number(keys.has('a') || keys.has('arrowleft')) + analog.horizontal)) : 0;
-    const forward = !typing ? Math.max(-1, Math.min(1, Number(keys.has('w') || keys.has('arrowup')) - Number(keys.has('s') || keys.has('arrowdown')) + analog.forward)) : 0;
-    const moving = !!(horizontal || forward) && !state.seated;
-    if (!movePending && now - lastMove > 80 && (moving || lastMovement)) {
-      lastMove = now; lastMovement = moving; movePending = true;
-      const vector = renderer.getMovement(moving ? horizontal : 0, moving ? forward : 0);
-      const magnitude = Math.max(1, Math.hypot(vector.x, vector.z));
-      void command({ type: 'move', x: vector.x / magnitude, z: vector.z / magnitude, yaw: renderer.getYaw() }, true).finally(() => { movePending = false; });
-    }
   } else { el('interaction').hidden = true; el('capture-pointer').hidden = true; }
   perfStats?.sample(now, performance.now() - frameStart);
 }

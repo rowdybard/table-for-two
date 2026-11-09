@@ -1,6 +1,37 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { captionReadingMs, waitForCaptionReading } from '../src/restaurant/caption-delivery';
+import { captionReadingMs, waitForCaptionPaint, waitForCaptionReading } from '../src/restaurant/caption-delivery';
+
+function frameQueue() {
+  let id = 0;
+  const callbacks = new Map<number, FrameRequestCallback>();
+  return { request(callback: FrameRequestCallback) { callbacks.set(++id, callback); return id; }, cancel(key: number) { callbacks.delete(key); },
+    paint() { const entry = callbacks.entries().next().value; if (entry) { callbacks.delete(entry[0]); entry[1](performance.now()); } }, get pending() { return callbacks.size; } };
+}
+
+test('caption reading cannot start while newly inserted text is waiting to paint', async () => {
+  const frames = frameQueue(); let ready = false;
+  const paint = waitForCaptionPaint(new AbortController().signal, new EventTarget(), () => true, frames).then(value => { ready = value; return value; });
+  await Promise.resolve(); assert.equal(ready, false);
+  frames.paint(); await Promise.resolve(); assert.equal(ready, false);
+  frames.paint(); assert.equal(await paint, true); assert.equal(frames.pending, 0);
+});
+
+test('a renderer with no frames cannot manufacture visible delivery or hold the queue forever', async () => {
+  const frames = frameQueue();
+  assert.equal(await waitForCaptionPaint(new AbortController().signal, new EventTarget(), () => true, frames, 5), false);
+  assert.equal(frames.pending, 0);
+});
+
+test('hiding or cancelling before paint removes scheduled work and never earns a delivery', async () => {
+  for (const action of ['hide', 'abort'] as const) {
+    const frames = frameQueue(), visibility = new EventTarget(), controller = new AbortController(); let visible = true;
+    const paint = waitForCaptionPaint(controller.signal, visibility, () => visible, frames);
+    if (action === 'hide') { visible = false; visibility.dispatchEvent(new Event('visibilitychange')); visible = true; }
+    else controller.abort();
+    assert.equal(await paint, false); assert.equal(frames.pending, 0);
+  }
+});
 
 test('hidden or disabled captions never produce completed reading evidence', async () => {
   const visibility = new EventTarget();

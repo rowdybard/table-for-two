@@ -1,6 +1,10 @@
 import { expect, type Page } from '@playwright/test';
+import { writeFile } from 'node:fs/promises';
 import type { DinnerState } from '../src/restaurant/types';
 import type { RestaurantScenarioState } from '../src/restaurant/scenario-types';
+
+/** Software rendering needs time for real UI/caption delivery while the authored evening advances. */
+export const RESTAURANT_BROWSER_STORY_RATE = process.env.LFS_SOFTWARE_GPU === '1' ? 5 : 30;
 
 /** DOM menus remain usable before this gate; movement and scene assertions wait. */
 export async function waitForRestaurantScene(page: Page) {
@@ -10,8 +14,28 @@ export async function waitForRestaurantScene(page: Page) {
 }
 
 export async function captureRestaurantScene(page: Page, path: string) {
+  if (process.env.RESTAURANT_CAPTURE_SCREENSHOTS === '1') await page.bringToFront();
   await waitForRestaurantScene(page);
-  if (process.env.RESTAURANT_CAPTURE_SCREENSHOTS === '1') await page.screenshot({ path });
+  // Software CI PNG readbacks measured 7–15 seconds; artifact capture has its own bounded budget.
+  if (process.env.RESTAURANT_CAPTURE_SCREENSHOTS === '1') {
+    // Read the opt-in HUD before PNG readback can stall rendering. Tests without
+    // ?stats explicitly record null rather than inventing performance numbers.
+    const snapshot = await page.evaluate(() => {
+      const canvas = document.querySelector<HTMLCanvasElement>('.restaurant-canvas');
+      const rect = canvas?.getBoundingClientRect();
+      return {
+        perfText: document.querySelector('#perf-stats')?.textContent ?? null,
+        canvas: canvas ? { width: canvas.width, height: canvas.height, cssWidth: rect?.width ?? 0, cssHeight: rect?.height ?? 0 } : null,
+        devicePixelRatio: window.devicePixelRatio,
+        visibility: document.visibilityState,
+      };
+    });
+    const started = performance.now();
+    await page.screenshot({ path, timeout: 30_000 });
+    const screenshotReadbackMs = performance.now() - started;
+    const statsPath = /\.png$/i.test(path) ? path.replace(/\.png$/i, '.stats.json') : `${path}.stats.json`;
+    await writeFile(statsPath, JSON.stringify({ ...snapshot, screenshotReadbackMs }, null, 2) + '\n');
+  }
 }
 
 export function restaurantEvening(state: DinnerState) {

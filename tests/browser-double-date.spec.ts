@@ -8,12 +8,15 @@ import type { ClaudeRequest, SpeechRequest } from '../server/restaurant/provider
 import type { DoubleDateRoomState, DoubleRoomCredentials } from '../src/restaurant/double-date-types';
 import type { DinnerState } from '../src/restaurant/types';
 import { doubleContext } from './helpers/double-note';
-import { captureRestaurantScene, restaurantEvening, restaurantInterrupted, restaurantScenario, resolveRestaurantScenario, waitForRestaurantScene } from './restaurant-browser-helpers';
+import { RESTAURANT_BROWSER_STORY_RATE, captureRestaurantScene, restaurantEvening, restaurantInterrupted, restaurantScenario, resolveRestaurantScenario, waitForRestaurantScene } from './restaurant-browser-helpers';
 
 let http: Server, restaurant: Awaited<ReturnType<typeof attachRestaurantServer>>;
 let doubles: Awaited<ReturnType<typeof attachDoubleDateServer>>, browser: Browser, friendBrowser: Browser, base = '';
 const requests: ClaudeRequest[] = [], speechRequests: SpeechRequest[] = [];
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+// Repeated full-resolution PNG readbacks measured 7–15 seconds each on software CI.
+// Extend only the total two-browser case budget; action and network deadlines remain unchanged.
+const doubleTestBudget = (milliseconds: number) => process.env.LFS_SOFTWARE_GPU === '1' ? milliseconds * 2 : milliseconds;
 
 // A generated tone exercises real HTMLAudioElement decoding without paid providers.
 // These tests explicitly use SpeechPlayer's supported non-MSE fallback for WAV.
@@ -65,7 +68,7 @@ test.beforeAll(async () => {
     }).catch(() => res.writeHead(404).end());
   });
   restaurant = await attachRestaurantServer(http, { env: {}, claude, speech, ledgerPath: false, development: true });
-  doubles = await attachDoubleDateServer(http, restaurant, { env: {}, storyRate: 30, scenarioId: 'family-visit' });
+  doubles = await attachDoubleDateServer(http, restaurant, { env: {}, storyRate: RESTAURANT_BROWSER_STORY_RATE, scenarioId: 'family-visit' });
   await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${(http.address() as { port: number }).port}`;
   const launchOptions = { channel: process.env.CI ? undefined : 'chrome', headless: true, args: [...(process.env.LFS_SOFTWARE_GPU === '1' ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : []), '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required', '--disable-background-timer-throttling', '--disable-renderer-backgrounding'] };
@@ -374,7 +377,7 @@ async function walkToTheDoor(page: Page) {
 }
 
 test('private double date: distinct choices, readiness, independent first-person seats, pause and reconnect', async () => {
-  test.setTimeout(150000);
+  test.setTimeout(doubleTestBudget(150000));
   const p = await pair();
   try {
     await captureRestaurantScene(p.a, '.qa/double-date/lobby-entry-1280.png');
@@ -420,7 +423,7 @@ test('private double date: distinct choices, readiness, independent first-person
 });
 
 test('shared table turns: one request, both identities, exclusion and repair, private host model command and interruption', async () => {
-  test.setTimeout(150000);
+  test.setTimeout(doubleTestBudget(150000));
   const p = await pair(true);
   try {
     await start(p); await seat(p.a); await seat(p.b);
@@ -505,7 +508,7 @@ test('shared table turns: one request, both identities, exclusion and repair, pr
 });
 
 test('friend voice uses one opted-in microphone per browser and exchanges native RTP in both directions', async () => {
-  test.setTimeout(150000);
+  test.setTimeout(doubleTestBudget(150000));
   const p = await pair(false, true);
   let phase = 'starting';
   const checkpoints: { phase: string; bytes: number }[] = [];
@@ -570,7 +573,7 @@ async function pauseFromRestaurant(page: Page) {
 }
 
 test('a finished date can stay as a wingman, help the active pair and return from their own ending', async () => {
-  test.setTimeout(150000);
+  test.setTimeout(doubleTestBudget(150000));
   const p = await pair();
   try {
     await start(p); await seat(p.a); await seat(p.b);
@@ -639,7 +642,7 @@ test('a finished date can stay as a wingman, help the active pair and return fro
 });
 
 test('complete double evening: both dinners, a shared dessert, one check for the table and independent farewells', async () => {
-  test.setTimeout(240000);
+  test.setTimeout(doubleTestBudget(240000));
   const p = await pair();
   try {
     await start(p); await seat(p.a); await seat(p.b);

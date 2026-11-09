@@ -3,10 +3,11 @@ import type { DinnerState } from '../types';
 import type { RenderQuality, RenderTier } from './RenderQuality';
 import type { RestaurantSet } from './RestaurantScene';
 import { PENDANTS, PENDANT_Y, STATIC_SHADOW_LAYER } from './VenueContract';
-import { applyVenueMaterialTags, createVenueEnvironment, VENUE_ROOM } from './VenueEnvironment';
+import { applyVenueMaterialTags, createVenueEnvironment, installVenueGlass, VENUE_ROOM } from './VenueEnvironment';
 import { createVenueGlow } from './VenueGlow';
 import { waitForEnvironmentAssets } from './EnvironmentAssets';
 import { waitForRestaurantProps } from './RestaurantPropKit';
+import { createFrameIntervalClock } from '../FrameCap';
 
 /** Booth face light, diningRoot-local, so it travels with the quiet-table move. */
 export const BOOTH_LIGHT = { solo: [-1.2, 2.1, -1.3], double: [0, 2.15, -1.45] } as const;
@@ -27,7 +28,7 @@ export interface LightRig {
   readonly key: THREE.DirectionalLight;
   /** P0 over the dining table, parented to diningRoot. Casts no shadow; contact blobs ground the tabletop. */
   readonly table: THREE.SpotLight;
-  /** P1..P4 room pendants. P3 and P4 exist on the high tier only. */
+  /** P1..P4 room pendants on the high tier; none on low. */
   readonly pendants: readonly THREE.SpotLight[];
   readonly bar: THREE.SpotLight;
   /** Face light on both tiers, parented to diningRoot. */
@@ -88,12 +89,12 @@ export function buildLightRig(quality: Pick<RenderQuality, 'tier'>, roomLights: 
   const high = quality.tier === 'high';
   const lights: THREE.Light[] = [];
 
-  // 1.0 replaces the ambient the scene-wide reflection map used to add (walls and floor matched within a few %).
-  const hemisphere = new THREE.HemisphereLight('#e6d6cf', '#5a4840', 1);
+  // Low uses a little more broad fill in place of background spotlights and reflection maps.
+  const hemisphere = new THREE.HemisphereLight('#e6d6cf', '#5a4840', high ? 1 : 1.2);
   hemisphere.name = 'venue-hemisphere';
   roomLights.add(hemisphere); lights.push(hemisphere);
 
-  const key = new THREE.DirectionalLight('#ffdcc0', .55);
+  const key = new THREE.DirectionalLight('#ffdcc0', high ? .55 : .7);
   key.name = 'venue-key';
   key.position.set(...KEY_SHADOW.position);
   key.target.name = 'venue-key-target';
@@ -112,10 +113,11 @@ export function buildLightRig(quality: Pick<RenderQuality, 'tier'>, roomLights: 
   const [tableX, tableZ] = PENDANTS[0];
   // No shadow: a per-frame depth pass of the props and diners cost frames and added little.
   const table = spot(diningRoot, 'venue-table-spot', '#ffd39a', 8, 6, 1.15, .75, [tableX, PENDANT_Y.light, tableZ], [tableX, .78, tableZ]);
-  lights.push(table);
+  if (high) lights.push(table);
+  else { table.removeFromParent(); table.target.removeFromParent(); }
 
   const pendants: THREE.SpotLight[] = [];
-  for (let i = 1; i < (high ? 5 : 3); i++) {
+  for (let i = 1; i < (high ? 5 : 1); i++) {
     const [x, z] = PENDANTS[i]!;
     const pendant = spot(roomLights, `venue-pendant-${i}`, '#ffd39a', 5.5, 5.5, 1.05, .7, [x, PENDANT_Y.light, z], [x, 0, z]);
     pendants.push(pendant); lights.push(pendant);
@@ -123,7 +125,8 @@ export function buildLightRig(quality: Pick<RenderQuality, 'tier'>, roomLights: 
 
   // Aimed at the shelves so the bottles and the bar sign sit inside the cone.
   const bar = spot(roomLights, 'venue-bar-spot', '#ffcf9f', 4.5, 4, .95, .8, [0, 2.95, -5.75], [0, 1.9, -6.8]);
-  lights.push(bar);
+  if (high) lights.push(bar);
+  else { bar.removeFromParent(); bar.target.removeFromParent(); }
 
   // Both tiers: without it the date's cheeks fall to a third of the old face light on phones.
   const booth = new THREE.PointLight('#ffdbbd', 2.6, 4, 2);
@@ -141,7 +144,7 @@ export function buildLightRig(quality: Pick<RenderQuality, 'tier'>, roomLights: 
     dispose() {
       if (disposed) return;
       disposed = true;
-      for (const light of lights) {
+      for (const light of new Set([...lights, table, bar])) {
         const target = (light as THREE.SpotLight | THREE.DirectionalLight).target;
         if (target && target.parent === light.parent) target.removeFromParent();
         light.removeFromParent();
@@ -152,6 +155,26 @@ export function buildLightRig(quality: Pick<RenderQuality, 'tier'>, roomLights: 
 }
 
 const isActorRoot = (object: THREE.Object3D) => object.name.startsWith('character-');
+
+/** Remove expensive venue shading in place, retaining material identity and late-loaded albedo maps. */
+export function applyLowCostVenue(root: THREE.Object3D, retainedLights: ReadonlySet<THREE.Light>) {
+  if (isActorRoot(root)) return;
+  if ((root as THREE.Light).isLight && !retainedLights.has(root as THREE.Light) && root.name !== 'view-face-fill') root.visible = false;
+  const mesh = root as THREE.Mesh;
+  if (mesh.isMesh) {
+    mesh.castShadow = false; mesh.receiveShadow = false;
+    for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+      if (!(material instanceof THREE.MeshStandardMaterial)) continue;
+      const changed = !!(material.envMap || material.normalMap || material.bumpMap || material.roughnessMap || material.metalnessMap);
+      material.envMap = null; material.envMapIntensity = 0;
+      material.normalMap = null; material.bumpMap = null; material.roughnessMap = null; material.metalnessMap = null;
+      if (material.userData.venueGlass === true) installVenueGlass(material);
+      if (material.transparent && material.side === THREE.DoubleSide) material.forceSinglePass = true;
+      if (changed) material.needsUpdate = true;
+    }
+  }
+  for (const child of root.children) applyLowCostVenue(child, retainedLights);
+}
 
 /**
  * Keeps the key shadow usable when the surfaces workstream has not tagged any baked batch: every
@@ -232,18 +255,24 @@ export interface RestaurantLighting {
 export function createRestaurantLighting({ renderer, scene, quality, roomLights, set, setResolutionScale }: RestaurantLightingOptions): RestaurantLighting {
   const rig = buildLightRig(quality, roomLights, set.diningRoot);
   const { key } = rig;
-  ensureVenueShadowLayers(set);
+  const high = quality.tier === 'high';
+  if (high) ensureVenueShadowLayers(set);
 
   // Only tagged materials (metal, glass, glaze, water) sample the venue map. A scene-wide environment put
   // two cube-map lookups on every room pixel, the largest share of the pass's per-frame cost.
-  const environment = createVenueEnvironment(renderer);
-  const glow = createVenueGlow(scene, set.diningRoot);
+  const environment = high ? createVenueEnvironment(renderer) : null;
+  const glow = high ? createVenueGlow(scene, set.diningRoot) : null;
+  const retainedLights = new Set(rig.lights);
+  const applyMaterials = (root: THREE.Object3D) => {
+    if (environment) applyVenueMaterialTags(root, environment.texture, isActorRoot);
+    else applyLowCostVenue(root, retainedLights);
+  };
 
   // Characters keep their own explicit environment and are skipped.
   const seenRoots = new WeakSet<THREE.Object3D>();
   const scanRoot = (root: THREE.Object3D) => {
     seenRoots.add(root);
-    if (!isActorRoot(root)) applyVenueMaterialTags(root, environment.texture, isActorRoot);
+    if (!isActorRoot(root)) applyMaterials(root);
   };
   const scanNewRoots = () => {
     const children = scene.children;
@@ -256,12 +285,14 @@ export function createRestaurantLighting({ renderer, scene, quality, roomLights,
   let double = false, lampLevel = 2;
   let assetsReady = 0, retag = false, restored = false;
   let lastOffset = NaN, lastDouble = false, lastAssets = -1, renders = 0, renderedSinceUpdate = false;
+  const drawClock = createFrameIntervalClock();
+  let frameSeconds = 0;
   // Registered before the warmup's own waits, so these tags land before compileAsync; the
   // next-frame retag still catches meshes an asset callback inserts after this one.
   const assetReady = () => {
     if (disposed) return;
     assetsReady++; retag = true;
-    applyVenueMaterialTags(scene, environment.texture, isActorRoot);
+    applyMaterials(scene);
   };
   // Late model meshes (plants) and licensed maps: rescan tags and refresh the static key shadow once each.
   void waitForEnvironmentAssets().then(assetReady, assetReady);
@@ -270,8 +301,8 @@ export function createRestaurantLighting({ renderer, scene, quality, roomLights,
   const onContextRestored = () => {
     if (disposed) return;
     try {
-      environment.rebuild();
-      applyVenueMaterialTags(scene, environment.texture, isActorRoot);
+      environment?.rebuild();
+      applyMaterials(scene);
     } catch (error) {
       console.warn('Venue environment could not be rebuilt after the WebGL context returned.', error);
     }
@@ -288,16 +319,18 @@ export function createRestaurantLighting({ renderer, scene, quality, roomLights,
     // New top-level roots (a replacement date, the Double friend) are handled before their first draw.
     scanNewRoots();
     // A slow safety net for meshes added deep inside an existing root; applying a tag is idempotent.
-    if (retag || renders % TAG_RESCAN_RENDERS === 0) { retag = false; applyVenueMaterialTags(scene, environment.texture, isActorRoot); }
+    if (retag || renders % TAG_RESCAN_RENDERS === 0) { retag = false; applyMaterials(scene); }
     // World matrices are current here, so a table move or furniture swap refreshes this same frame.
     const offset = set.diningRoot.matrixWorld.elements[14]!;
     const layoutChanged = offset !== lastOffset || double !== lastDouble || assetsReady !== lastAssets;
     if (layoutChanged || restored) {
-      key.shadow.needsUpdate = true;
+      if (high) key.shadow.needsUpdate = true;
       lastOffset = offset; lastDouble = double; lastAssets = assetsReady; restored = false;
     }
     renders++;
-    glow.followLamp(set.flame, lampLevel);
+    glow?.followLamp(set.flame, lampLevel);
+    const renderedAt = performance.now();
+    frameSeconds = drawClock.sample(renderedAt);
     renderedSinceUpdate = true;
   };
   scene.onBeforeRender = beforeRender;
@@ -308,18 +341,22 @@ export function createRestaurantLighting({ renderer, scene, quality, roomLights,
   // The governor judges a resolution scale (1 = the tier's full resolution); the renderer turns it into a pixel ratio.
   const governor = createPixelRatioGovernor(1, quality.minScale);
   const resetWindow = () => { sampleCount = 0; windowFrames = 0; windowTime = 0; };
-  const adapt = (state: DinnerState, dt: number, time: number, gameplay: boolean) => {
+  const adapt = (state: DinnerState, gameplay: boolean) => {
     const rendered = renderedSinceUpdate;
     renderedSinceUpdate = false;
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+      drawClock.reset(); frameSeconds = 0; playingSince = null; resetWindow(); return;
+    }
     if (!quality.adaptive || governor.idle) return;
     // The selection preview also reports phase 'playing'; only the dinner itself counts.
     if (!gameplay) { playingSince = null; resetWindow(); return; }
-    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') { resetWindow(); return; }
-    if (playingSince === null) { if (state.phase === 'playing') playingSince = time; return; }
-    if (time - playingSince < ADAPTIVE_PIXEL_RATIO.delay || !rendered || dt <= 0) return;
-    if (sampleCount < samples.length) samples[sampleCount++] = dt;
+    const now = performance.now() / 1000;
+    if (playingSince === null) { if (state.phase === 'playing') playingSince = now; return; }
+    if (now - playingSince < ADAPTIVE_PIXEL_RATIO.delay || !rendered || frameSeconds <= 0) return;
+    // Animation dt is clamped for stable poses; quality must judge actual wall time between draws.
+    if (sampleCount < samples.length) samples[sampleCount++] = frameSeconds;
     windowFrames++;
-    windowTime += dt;
+    windowTime += frameSeconds;
     if (windowTime < ADAPTIVE_PIXEL_RATIO.window) return;
     for (let i = 0; i < sorted.length; i++) sorted[i] = i < sampleCount ? samples[i]! : Infinity;
     sorted.sort();
@@ -338,17 +375,17 @@ export function createRestaurantLighting({ renderer, scene, quality, roomLights,
       lampLevel = state.evening.tabletop?.shared.lampLevel ?? 2;
       // Candle flicker holds still under reduced motion.
       if (!reducedMotion) glowTime += Math.max(0, dt);
-      glow.setTime(glowTime);
-      adapt(state, dt, time, gameplay);
+      glow?.setTime(glowTime);
+      adapt(state, gameplay);
     },
     dispose() {
       if (disposed) return;
       disposed = true;
       canvas.removeEventListener('webglcontextrestored', onContextRestored);
       if (scene.onBeforeRender === beforeRender) scene.onBeforeRender = previousBeforeRender;
-      glow.dispose();
+      glow?.dispose();
       rig.dispose();
-      environment.dispose();
+      environment?.dispose();
     },
   };
 }

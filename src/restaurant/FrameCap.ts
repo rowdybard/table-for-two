@@ -29,3 +29,35 @@ export function createFrameCap(target = 60, window = 60) {
     },
   };
 }
+
+/** Limit drawing only: input, DOM focus and simulation can still update on every browser callback. */
+export function createDrawCadence(maxFPS: number) {
+  const interval = 1000 / Math.max(1, maxFPS);
+  let last: number | null = null, previousSample: number | null = null;
+  return {
+    shouldDraw(now: number) {
+      const clockReset = previousSample !== null && now < previousSample;
+      previousSample = now;
+      if (last === null || clockReset) { last = now; return true; }
+      const elapsed = now - last;
+      if (elapsed < interval - .5) return false;
+      // Never replay missed draws after a long frame or a hidden tab.
+      last += Math.max(1, Math.floor((elapsed + .5) / interval)) * interval;
+      return true;
+    },
+    reset() { last = previousSample = null; },
+  };
+}
+
+/** Wall time between real draws, kept separate from animation's clamped simulation dt. */
+export function createFrameIntervalClock() {
+  let previous: number | null = null;
+  return {
+    sample(now: number) {
+      const elapsed = previous === null ? 0 : Math.max(0, (now - previous) / 1000);
+      previous = now;
+      return elapsed;
+    },
+    reset() { previous = null; },
+  };
+}

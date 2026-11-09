@@ -45,8 +45,10 @@ export interface RenderQualityEnvironment {
  */
 export const RENDER_TIERS: Readonly<Record<RenderTier, { pixelRatioCap: number; pixelBudget: number; minPixels: number; minScale: number }>> = {
   high: { pixelRatioCap: 1.5, pixelBudget: 2_100_000, minPixels: 560_000, minScale: .5 },
-  low: { pixelRatioCap: 1.25, pixelBudget: 1_000_000, minPixels: 200_000, minScale: .5 },
+  low: { pixelRatioCap: 1, pixelBudget: 600_000, minPixels: 240_000, minScale: .5 },
 };
+/** CPU rasterizers need a lower starting load; DOM menus/captions retain their native resolution. */
+export const SOFTWARE_RENDER_BUDGET = { pixelRatioCap: 1, pixelBudget: 320_000, minPixels: 160_000, minScale: .5 } as const;
 
 type ResolutionPolicy = Pick<RenderQuality, 'pixelRatioCap' | 'pixelBudget' | 'minPixels'>;
 
@@ -108,7 +110,7 @@ export function detectRenderQuality(env: RenderQualityEnvironment = readRenderQu
   const tier: RenderTier = override ?? (env.coarsePointer || touchScreen || smallMemory || software ? 'low' : 'high');
   return {
     tier,
-    ...RENDER_TIERS[tier],
+    ...(software && tier === 'low' ? SOFTWARE_RENDER_BUDGET : RENDER_TIERS[tier]),
     adaptive: !override && !env.webdriver,
     forced: !!override,
     software,

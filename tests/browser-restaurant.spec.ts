@@ -36,10 +36,10 @@ const horde: ClaudeAdapter = { async *stream(request, signal) {
   yield { type: 'text', text: JSON.stringify({ utterances: [{ speaker: 'date', text: cancelledHordeLine, emotion: 'neutral' }], emotion: 'neutral', action: 'none', memory: 'A cancelled response.' } satisfies SceneTurn) };
 } };
 const state = (page: Page) => page.evaluate(() => (window as unknown as Window & { __restaurantState: DinnerState }).__restaurantState);
-const licensedAssets = [
-  ...['black_walnut_veneer_01', 'white_plaster_02', 'terlenka'].flatMap(material => ['albedo.jpg', 'roughness.jpg', 'normal-gl.jpg'].map(map => `/environment-assets/${material}/${map}`)),
-  '/restaurant-props/potted_plant_02.glb',
-];
+const plantAsset = '/restaurant-props/potted_plant_02.glb';
+const surfaceAssets = ['black_walnut_veneer_01', 'white_plaster_02', 'terlenka']
+  .flatMap(material => ['albedo.jpg', 'roughness.jpg', 'normal-gl.jpg'].map(map => `/environment-assets/${material}/${map}`));
+const licensedAssets = [...surfaceAssets, plantAsset];
 
 async function openSettingsFromPause(page: Page) {
   await page.route('**/api/date/sessions/*/interrupt', async route => {
@@ -96,8 +96,11 @@ test('solo restaurant: roster, real movement, seat, order, streamed cast, privat
   page.setDefaultTimeout(8000);
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   const environmentResponses = new Map<string, number>();
+  const environmentRequests = new Set<string>();
+  page.on('request', request => { const path = new URL(request.url()).pathname; if (licensedAssets.includes(path)) environmentRequests.add(path); });
   page.on('response', response => { const path = new URL(response.url()).pathname; if (licensedAssets.includes(path)) environmentResponses.set(path, response.status()); });
-  await page.goto(base);
+  // The existing opt-in diagnostic reports the actual chosen tier, including software WebGL.
+  await page.goto(base + '/?stats');
   await expect(page.locator('#arrival-title')).toBeVisible();
   await expect(page.locator('#arrival-title')).not.toHaveText('');
   await expect(page.locator('#restaurant-app')).toHaveAttribute('data-input-mode', 'title');
@@ -121,8 +124,12 @@ test('solo restaurant: roster, real movement, seat, order, streamed cast, privat
   await expect(page.locator('[data-date="jules"]')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.date-card.selected')).toHaveAttribute('data-date', 'jules');
   await expect(page.locator('.selection-stage-label strong')).toHaveText('Jules');
-  await expect.poll(() => licensedAssets.filter(path => !environmentResponses.has(path)), { timeout: 15000 }).toEqual([]);
-  expect(licensedAssets.map(path => environmentResponses.get(path))).toEqual(licensedAssets.map(() => 200));
+  await expect(page.locator('#perf-stats')).toContainText(/\b(?:high|low) tier\b/, { timeout: 15000 });
+  const tier = /\b(high|low) tier\b/.exec(await page.locator('#perf-stats').innerText())![1];
+  const expectedAssets = tier === 'high' ? licensedAssets : surfaceAssets;
+  await expect.poll(() => expectedAssets.filter(path => !environmentResponses.has(path)), { timeout: 15000 }).toEqual([]);
+  expect(expectedAssets.map(path => environmentResponses.get(path))).toEqual(expectedAssets.map(() => 200));
+  if (tier === 'low') expect(environmentRequests.has(plantAsset)).toBe(false);
   await captureRestaurantScene(page, '.qa/restaurant-arrival.png');
   await page.keyboard.press('Enter');
   await expect(page.locator('#arrival-screen')).toBeHidden();
@@ -288,7 +295,7 @@ test('menus and rapid date changes stay usable during warmup, including disposal
   });
   let releaseAssets!: () => void, heldRequests = 0;
   const assetsReleased = new Promise<void>(resolve => { releaseAssets = resolve; });
-  await page.route('**/restaurant-props/potted_plant_02.glb', async route => {
+  await page.route('**/environment-assets/black_walnut_veneer_01/albedo.jpg*', async route => {
     heldRequests++; await assetsReleased; await route.continue().catch(() => {});
   });
   const seed = Array.from({ length: 32 }, (_, index) => `warmup-disposal-${index}`).find(value => createBlindDate(value).dateId !== 'dev')!;
