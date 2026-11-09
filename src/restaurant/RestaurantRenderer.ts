@@ -9,6 +9,8 @@ import { EveningTable } from './render/EveningTable';
 import { createPlaceSettingShadows } from './render/PlaceSettingShadows';
 import { waitForEnvironmentAssets } from './render/EnvironmentAssets';
 import { waitForRestaurantProps } from './render/RestaurantPropKit';
+import { createRestaurantLighting, type RestaurantLighting } from './render/RestaurantLighting';
+import { detectRenderQuality } from './render/RenderQuality';
 import { DOUBLE_TABLE, type ConversationTarget, type DoubleDateActorId, type DoubleHumanId } from './double-date-types';
 import { tableActionForTarget, tabletopActionAvailability } from './tabletop';
 import { isInspectionTarget, type InspectionTarget } from './TabletopInspector';
@@ -26,10 +28,14 @@ export class RestaurantRenderer {
   readonly camera = new THREE.PerspectiveCamera(61, 1, .035, 45);
   readonly canvas: HTMLCanvasElement;
   private readonly renderer: THREE.WebGLRenderer;
-  private readonly characterEnvironment: THREE.WebGLRenderTarget;
+  /** Replaced after a WebGL context restore, when the old render target's texture is gone. */
+  private characterEnvironment: THREE.WebGLRenderTarget;
   private readonly set: RestaurantSet;
   private readonly table = new EveningTable();
   private readonly placeSettingShadows = createPlaceSettingShadows();
+  /** Chosen once, before the first shader compile: light count and shadow casters depend on it. */
+  private readonly quality = detectRenderQuality();
+  private readonly lighting: RestaurantLighting;
   private readonly waiter = new RestaurantActor('waiter');
   private readonly diner = new RestaurantActor('diner');
   private date: RestaurantActor;
@@ -103,6 +109,21 @@ export class RestaurantRenderer {
     return true;
   }
 
+  /** three restores its own state first (its listener was added at construction), then this rebakes the cast probe. */
+  private readonly restoreCharacterEnvironment = () => {
+    if (this.disposed) return;
+    try {
+      // The old target's GL objects died with the lost context; let it be collected rather than
+      // deleting stale handles on the new context.
+      this.characterEnvironment = createCharacterEnvironment(this.renderer);
+      for (const actor of [this.date, this.waiter, this.diner, this.otherDate, this.friend]) {
+        if (actor) prepareCharacterLighting(actor.root, this.characterEnvironment.texture);
+      }
+    } catch (error) {
+      console.warn('Cast reflections could not be rebuilt after the WebGL context returned.', error);
+    }
+  };
+
   /** Coalesce cast changes and wait for scene assets before using compiled programs. */
   private requestWarmup() {
     if (this.disposed) return;
@@ -174,15 +195,16 @@ export class RestaurantRenderer {
     this.dateId = dateId;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
     this.parallelCompile = this.renderer.extensions.has('KHR_parallel_shader_compile');
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.quality.pixelRatioCap));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.03;
+    this.renderer.toneMappingExposure = 1.10;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.setClearColor('#172536');
     this.characterEnvironment = createCharacterEnvironment(this.renderer);
     this.canvas = this.renderer.domElement;
+    this.canvas.addEventListener('webglcontextrestored', this.restoreCharacterEnvironment);
     this.canvas.className = 'restaurant-canvas';
     this.canvas.setAttribute('aria-label', 'First-person view of Table for Two restaurant');
     this.canvas.style.width = '100%';
@@ -190,32 +212,10 @@ export class RestaurantRenderer {
     this.canvas.style.display = 'block';
     container.appendChild(this.canvas);
     this.scene.background = new THREE.Color('#172536');
-    this.scene.fog = new THREE.Fog('#172536', 14, 34);
+    this.scene.fog = new THREE.Fog('#172536', 16, 36);
     this.camera.rotation.order = 'YXZ';
     this.camera.position.set(...RESTAURANT.spawn);
 
-    const sky = new THREE.HemisphereLight('#e1d9dc', '#655149', .86);
-    this.roomLights.add(sky);
-    const key = new THREE.DirectionalLight('#ffddbe', 1.34);
-    key.position.set(2.4, 4.5, 3.2);
-    key.castShadow = true;
-    key.shadow.mapSize.set(1024, 1024);
-    key.shadow.camera.left = -8; key.shadow.camera.right = 8;
-    key.shadow.camera.top = 8; key.shadow.camera.bottom = -8;
-    key.shadow.camera.near = .5; key.shadow.camera.far = 22;
-    key.shadow.bias = -.00035; key.shadow.normalBias = .035;
-    this.roomLights.add(key);
-    const windowFill = new THREE.DirectionalLight('#9ab4e7', .62);
-    windowFill.position.set(-7, 2.5, -.5);
-    this.roomLights.add(windowFill);
-    for (const [x, y, z, strength] of [[0, 2.55, -1.15, 4.5], [-3.5, 2.55, -3.5, 5], [3.5, 2.55, -3.5, 5], [0, 2.9, 4, 5]]) {
-      const light = new THREE.PointLight('#ffd394', strength, 6, 2);
-      light.position.set(x!, y!, z!);
-      this.roomLights.add(light);
-    }
-    const boothLight = new THREE.PointLight('#ffdbbd', 2.8, 4, 2);
-    boothLight.position.set(-1.2, 2.1, -1.3);
-    this.roomLights.add(boothLight);
     this.scene.add(this.roomLights);
     this.roomLights.add(this.farewellLight);
     this.roomLights.add(this.faceFill);
@@ -239,6 +239,7 @@ export class RestaurantRenderer {
     this.diner.setSeated(true);
     this.scene.add(this.diner.root);
     for (const actor of [this.date, this.waiter, this.diner]) prepareCharacterLighting(actor.root, this.characterEnvironment.texture);
+    this.lighting = createRestaurantLighting({ renderer: this.renderer, scene: this.scene, camera: this.camera, roomLights: this.roomLights, set: this.set, quality: this.quality });
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
     this.setPresentation('selection');
@@ -439,6 +440,7 @@ export class RestaurantRenderer {
     this.time += dt;
     if (state.phase !== 'playing') this.listeningPreview = null;
     this.set.update(this.time, this.reducedMotion.matches);
+    this.lighting.update(state, dt, this.time, this.reducedMotion.matches);
     if (state.dateId !== this.dateId) this.setDate(state.dateId);
     this.syncDoubleActors(state);
     if (!this.compiled) return;
@@ -695,9 +697,11 @@ export class RestaurantRenderer {
     this.set.dispose();
     this.table.dispose();
     this.placeSettingShadows.dispose();
+    this.lighting.dispose();
     const renderer = this.renderer, pending = this.warmupTask;
     const disposeRenderer = () => { this.characterEnvironment.dispose(); renderer.dispose(); };
     if (pending) void pending.then(disposeRenderer); else disposeRenderer();
+    this.canvas.removeEventListener('webglcontextrestored', this.restoreCharacterEnvironment);
     this.canvas.remove();
     this.scene.clear();
   }
