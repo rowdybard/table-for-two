@@ -23,6 +23,7 @@ import { tableActionForTarget, tabletopActionAvailability } from './tabletop';
 import { scenePresenceAvailable } from './scenario-care';
 import { diningOffsetZ } from './dining-space';
 import { createPerfStats } from './PerfStats';
+import { createFrameCap } from './FrameCap';
 
 document.title = 'Table for Two';
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = markup;
@@ -1003,8 +1004,11 @@ window.addEventListener('pageshow', event => {
   else if (joined && state.phase !== 'ended') { clearTimeout(pollTimer); void poll(); }
 });
 const perfStats = new URLSearchParams(location.search).has('stats') ? createPerfStats(document.body, () => renderer.diagnostics()) : null;
+const frameCap = createFrameCap();
 function frame(now: number) {
   if (disposed) return;
+  requestAnimationFrame(frame);
+  if (!frameCap.shouldRender(now)) return;
   const frameStart = performance.now();
   const dt = Math.min(.06, (now - lastFrame) / 1000); lastFrame = now;
   menuNavigation.refresh(el('conversation-form').hidden ? 'gameplay' : 'typing');
@@ -1045,7 +1049,6 @@ function frame(now: number) {
     }
   } else { el('interaction').hidden = true; el('capture-pointer').hidden = true; }
   perfStats?.sample(now, performance.now() - frameStart);
-  requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 async function connectRestaurant(attempt = 0) {

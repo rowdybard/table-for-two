@@ -408,13 +408,21 @@ class TailoredBody implements CharacterBodyRig {
       buckle.scale.x = 1.55; buckle.position.set(0, waistY - .004, .094);
     }
 
+    // Sleeves get their own material instances. three re-selects the program and re-uploads every uniform each
+    // time one material alternates between a skinned and a plain mesh, which the shared jacket did every frame.
+    const skinnedCopies = new Map<THREE.MeshStandardMaterial, THREE.MeshStandardMaterial>();
+    const forSkin = (material: THREE.MeshStandardMaterial) => {
+      let copy = skinnedCopies.get(material);
+      if (!copy) { copy = material.clone(); this.materials.add(copy); skinnedCopies.set(material, copy); }
+      return copy;
+    };
     for (const side of [-1, 1]) {
       const arm = boneChain(.29, .25);
       // parent-space socket stays just inside the torso; the cap adds the outer deltoid.
       arm.root.position.set(side * (build.shoulders - .009), .338, -.005);
       this.upperBody.add(arm.root); this.arms.push(arm);
-      const sleeveMaterial = kind === 'dev' ? [jacket, skin, trim]
-        : [kind === 'waiter' ? top : jacket, kind === 'jules' || kind === 'waiter' ? top : trim];
+      const sleeveMaterial = (kind === 'dev' ? [jacket, skin, trim]
+        : [kind === 'waiter' ? top : jacket, kind === 'jules' || kind === 'waiter' ? top : trim]).map(forSkin);
       this.skeletons.push(bindSkin(arm.root, armGeometry(kind, side), sleeveMaterial, [arm.upper, arm.lower, arm.end]));
       const hand = add(arm.end, palmGeometry(side), skin); arm.hand = hand;
       if ((kind === 'mira' && side === -1) || (kind === 'dev' && side === 1)) {
