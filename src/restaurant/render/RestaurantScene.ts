@@ -403,10 +403,12 @@ export function createRestaurantScene(): RestaurantSet {
   diningRoot.add(food);
   const bill = new THREE.Group();
   const folio = new THREE.Mesh(new RoundedBoxGeometry(.17, .025, .25, 2, .012), wood);
-  folio.position.set(.28, .795, -1.12);
+  // Clear of the bread basket: the folio lies lengthwise across the right of the table.
+  folio.position.set(.31, .795, -1.04);
+  folio.rotation.y = Math.PI / 2;
   const receipt = new THREE.Mesh(new THREE.PlaneGeometry(.13, .18), ceramic);
-  receipt.rotation.x = -Math.PI / 2;
-  receipt.position.set(.28, .808, -1.12);
+  receipt.rotation.set(-Math.PI / 2, 0, Math.PI / 2);
+  receipt.position.set(.31, .808, -1.04);
   bill.add(folio, receipt);
   bill.visible = false;
   diningRoot.add(bill);
@@ -429,7 +431,7 @@ export function createRestaurantScene(): RestaurantSet {
   }
   target('seat', 0, .61, .1, .65, .7, .65);
   target('menu', -.34, .83, -.75, .3, .1, .4);
-  target('bill', .28, .85, -1.12, .24, .13, .3);
+  target('bill', .31, .85, -1.04, .30, .13, .24);
   target('exit', 0, 1.4, 6.95, 2.1, 2.8, .2);
   targets.push(...tabletop.targets);
 
