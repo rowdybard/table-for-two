@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as THREE from 'three';
-import { BOOTH_LIGHT, KEY_SHADOW, TABLE_SPOT_SHADOW, buildLightRig, enableActorShadowLayer, ensureVenueShadowLayers, fitDirectionalShadow, roomCorners } from '../src/restaurant/render/RestaurantLighting';
+import { ADAPTIVE_PIXEL_RATIO, BOOTH_LIGHT, KEY_SHADOW, TABLE_SPOT_SHADOW, buildLightRig, createPixelRatioGovernor, enableActorShadowLayer, ensureVenueShadowLayers, fitDirectionalShadow, roomCorners } from '../src/restaurant/render/RestaurantLighting';
 import { DYNAMIC_SHADOW_LAYER, PENDANTS, PENDANT_Y, STATIC_SHADOW_LAYER } from '../src/restaurant/render/VenueContract';
 import { LAMP_HALO_SCALE, createVenueGlow, roomHaloLayout } from '../src/restaurant/render/VenueGlow';
 import { applyVenueMaterialTags, createVenueEnvironmentProxy, installVenueGlass, VENUE_GLASS_CACHE_KEY } from '../src/restaurant/render/VenueEnvironment';
@@ -18,13 +18,13 @@ function rig(tier: 'high' | 'low') {
 const countLights = (root: THREE.Object3D) => { let n = 0; root.traverse(object => { if ((object as THREE.Light).isLight) n++; }); return n; };
 const near = (actual: number, expected: number, epsilon = 1e-6) => assert.ok(Math.abs(actual - expected) <= epsilon, `${actual} != ${expected}`);
 
-test('the high tier owns nine lights and the low tier six, with a fixed caster set', () => {
-  for (const [tier, expected, pendants] of [['high', 9, 4], ['low', 6, 2]] as const) {
+test('the high tier owns nine lights and the low tier seven, with a fixed caster set', () => {
+  for (const [tier, expected, pendants] of [['high', 9, 4], ['low', 7, 2]] as const) {
     const { roomLights, diningRoot, rig: lights } = rig(tier);
     assert.equal(lights.lights.length, expected, tier);
     assert.equal(countLights(roomLights) + countLights(diningRoot), expected, tier);
     assert.equal(lights.pendants.length, pendants, tier);
-    assert.equal(!!lights.booth, tier === 'high', tier);
+    assert.equal(lights.booth.parent, diningRoot, 'both tiers keep the booth face light');
     assert.deepEqual(lights.lights.filter(light => light.castShadow).map(light => light.name).sort(), ['venue-key', 'venue-table-spot']);
     for (const light of lights.lights) assert.equal((light as THREE.PointLight).decay ?? 2, 2, light.name);
   }
@@ -58,7 +58,7 @@ test('the key light renders only the static layer and the table spot only the dy
 test('the table spot and booth light travel with the dining station, and every spot target sits beside its light', () => {
   const { roomLights, diningRoot, rig: lights } = rig('high');
   assert.equal(lights.table.parent, diningRoot);
-  assert.equal(lights.booth!.parent, diningRoot);
+  assert.equal(lights.booth.parent, diningRoot);
   const spots = [lights.table, ...lights.pendants, lights.bar];
   for (const spot of spots) {
     assert.ok(spot.parent, spot.name);
@@ -87,14 +87,60 @@ test('the table spot and booth light travel with the dining station, and every s
 });
 
 test('the booth light follows the solo or Double layout without changing the light count', () => {
-  const { rig: lights } = rig('high');
-  assert.deepEqual(lights.booth!.position.toArray(), [...BOOTH_LIGHT.solo]);
-  lights.setDoubleLayout(true);
-  assert.deepEqual(lights.booth!.position.toArray(), [...BOOTH_LIGHT.double]);
-  lights.setDoubleLayout(false);
-  assert.deepEqual(lights.booth!.position.toArray(), [...BOOTH_LIGHT.solo]);
-  const { rig: low } = rig('low');
-  assert.doesNotThrow(() => low.setDoubleLayout(true));
+  for (const tier of ['high', 'low'] as const) {
+    const { rig: lights } = rig(tier);
+    const count = lights.lights.length;
+    assert.deepEqual(lights.booth.position.toArray(), [...BOOTH_LIGHT.solo], tier);
+    lights.setDoubleLayout(true);
+    assert.deepEqual(lights.booth.position.toArray(), [...BOOTH_LIGHT.double], tier);
+    lights.setDoubleLayout(false);
+    assert.deepEqual(lights.booth.position.toArray(), [...BOOTH_LIGHT.solo], tier);
+    assert.equal(lights.lights.length, count, tier);
+  }
+});
+
+test('the bar spot cone takes in the shelves and the bar sign', () => {
+  const { scene, rig: lights } = rig('low');
+  scene.updateMatrixWorld(true);
+  const from = new THREE.Vector3().setFromMatrixPosition(lights.bar.matrixWorld);
+  const axis = new THREE.Vector3().setFromMatrixPosition(lights.bar.target.matrixWorld).sub(from).normalize();
+  // Sign centre and the upper and lower bottle shelves (RestaurantScene's bar backdrop).
+  for (const point of [[0, 2.97, -6.88], [0, 2.25, -6.69], [0, 1.62, -6.69]] as const) {
+    const ray = new THREE.Vector3(...point).sub(from).normalize();
+    assert.ok(ray.dot(axis) > Math.cos(lights.bar.angle), `outside the cone: ${point}`);
+  }
+});
+
+test('the adaptive pixel ratio keeps a step only when frames get faster', () => {
+  const capped = 1 / 30, { slowFrame, step } = ADAPTIVE_PIXEL_RATIO;
+  // A 30 Hz rAF cap (iOS Low Power Mode, Chrome Energy Saver): the probe gains nothing and is undone.
+  const phone = createPixelRatioGovernor(1.25, .75);
+  assert.equal(phone.judge(capped, capped), 1.25 - step);
+  assert.equal(phone.judge(capped, capped), 1.25, 'the probe is undone');
+  for (let i = 0; i < 5; i++) assert.equal(phone.judge(capped * 1.02, capped * 1.02), null, 'the cap becomes the bar');
+  assert.equal(phone.ratio, 1.25);
+  // Much slower than the cap again: probe once more.
+  assert.equal(phone.judge(.06, .06), 1);
+
+  // Fill-bound frames: keep each step that helps, stop at the floor.
+  const slow = createPixelRatioGovernor(1.25, .75);
+  assert.equal(slow.judge(.045, .045), 1);
+  assert.equal(slow.judge(.03, .03), .75, 'faster but still slow: keep and step again');
+  assert.equal(slow.idle, false, 'the floor step still needs judging');
+  assert.equal(slow.judge(.02, .02), null, 'kept at the floor');
+  assert.equal(slow.ratio, .75);
+  assert.equal(slow.idle, true);
+
+  // A probe that only helps the median, not the mean, is undone.
+  const hitchy = createPixelRatioGovernor(1.5, 1);
+  assert.equal(hitchy.judge(slowFrame + .005, .03), 1.25);
+  assert.equal(hitchy.judge(.016, .029), 1.5);
+
+  // Fast frames never step, and a start at the floor has nothing to do.
+  const fast = createPixelRatioGovernor(1.5, 1);
+  for (let i = 0; i < 5; i++) assert.equal(fast.judge(1 / 60, 1 / 60), null);
+  assert.equal(createPixelRatioGovernor(1, 1).idle, true);
+  assert.equal(createPixelRatioGovernor(1, 1).judge(.05, .05), null);
 });
 
 test('the static key shadow box is fitted to every room corner with margin', () => {

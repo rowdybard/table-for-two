@@ -28,7 +28,8 @@ export class RestaurantRenderer {
   readonly camera = new THREE.PerspectiveCamera(61, 1, .035, 45);
   readonly canvas: HTMLCanvasElement;
   private readonly renderer: THREE.WebGLRenderer;
-  private readonly characterEnvironment: THREE.WebGLRenderTarget;
+  /** Replaced after a WebGL context restore, when the old render target's texture is gone. */
+  private characterEnvironment: THREE.WebGLRenderTarget;
   private readonly set: RestaurantSet;
   private readonly table = new EveningTable();
   private readonly placeSettingShadows = createPlaceSettingShadows();
@@ -107,6 +108,21 @@ export class RestaurantRenderer {
     while (object) { if (!object.visible) return false; object = object.parent; }
     return true;
   }
+
+  /** three restores its own state first (its listener was added at construction), then this rebakes the cast probe. */
+  private readonly restoreCharacterEnvironment = () => {
+    if (this.disposed) return;
+    try {
+      // The old target's GL objects died with the lost context; let it be collected rather than
+      // deleting stale handles on the new context.
+      this.characterEnvironment = createCharacterEnvironment(this.renderer);
+      for (const actor of [this.date, this.waiter, this.diner, this.otherDate, this.friend]) {
+        if (actor) prepareCharacterLighting(actor.root, this.characterEnvironment.texture);
+      }
+    } catch (error) {
+      console.warn('Cast reflections could not be rebuilt after the WebGL context returned.', error);
+    }
+  };
 
   /** Coalesce cast changes and wait for scene assets before using compiled programs. */
   private requestWarmup() {
@@ -188,6 +204,7 @@ export class RestaurantRenderer {
     this.renderer.setClearColor('#172536');
     this.characterEnvironment = createCharacterEnvironment(this.renderer);
     this.canvas = this.renderer.domElement;
+    this.canvas.addEventListener('webglcontextrestored', this.restoreCharacterEnvironment);
     this.canvas.className = 'restaurant-canvas';
     this.canvas.setAttribute('aria-label', 'First-person view of Table for Two restaurant');
     this.canvas.style.width = '100%';
@@ -684,6 +701,7 @@ export class RestaurantRenderer {
     const renderer = this.renderer, pending = this.warmupTask;
     const disposeRenderer = () => { this.characterEnvironment.dispose(); renderer.dispose(); };
     if (pending) void pending.then(disposeRenderer); else disposeRenderer();
+    this.canvas.removeEventListener('webglcontextrestored', this.restoreCharacterEnvironment);
     this.canvas.remove();
     this.scene.clear();
   }

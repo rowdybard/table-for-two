@@ -12,8 +12,12 @@ import { waitForRestaurantProps } from './RestaurantPropKit';
 export const BOOTH_LIGHT = { solo: [-1.2, 2.1, -1.3], double: [0, 2.15, -1.45] } as const;
 export const KEY_SHADOW = { position: [2.2, 10.74, 4.88], target: [0, 0, 0], near: .5, far: 24, margin: .3, mapSize: 1024 } as const;
 export const TABLE_SPOT_SHADOW = { high: { mapSize: 1024, normalBias: .004 }, low: { mapSize: 512, normalBias: .008 } } as const;
-/** Adaptive pixel ratio: wait after play starts, then judge 3 s windows of rendered frames. */
-export const ADAPTIVE_PIXEL_RATIO = { delay: 4, window: 3, slowFrame: .022, step: .25 } as const;
+/**
+ * Adaptive pixel ratio: wait after play starts, then judge 3 s windows of rendered frames. A step
+ * down is kept only if the next window's mean frame time drops below `gain` of the slow one; a
+ * capped display (30 Hz power saving) or main-thread-bound frames gain nothing and get it back.
+ */
+export const ADAPTIVE_PIXEL_RATIO = { delay: 4, window: 3, slowFrame: .022, step: .25, gain: .9, capMargin: 1.25 } as const;
 /** Renders between full-scene venue tag rescans (about two seconds at 60 fps). */
 const TAG_RESCAN_RENDERS = 120;
 
@@ -27,8 +31,8 @@ export interface LightRig {
   /** P1..P4 room pendants. P3 and P4 exist on the high tier only. */
   readonly pendants: readonly THREE.SpotLight[];
   readonly bar: THREE.SpotLight;
-  /** High tier only, parented to diningRoot. */
-  readonly booth: THREE.PointLight | null;
+  /** Face light on both tiers, parented to diningRoot. */
+  readonly booth: THREE.PointLight;
   /** Every light this rig owns, for counting and disposal. */
   readonly lights: readonly THREE.Light[];
   setDoubleLayout(double: boolean): void;
@@ -85,7 +89,7 @@ export function buildLightRig(quality: Pick<RenderQuality, 'tier'>, roomLights: 
   const high = quality.tier === 'high';
   const lights: THREE.Light[] = [];
 
-  const hemisphere = new THREE.HemisphereLight('#e6d6cf', '#4a3a34', .36);
+  const hemisphere = new THREE.HemisphereLight('#e6d6cf', '#5a4840', .5);
   hemisphere.name = 'venue-hemisphere';
   roomLights.add(hemisphere); lights.push(hemisphere);
 
@@ -124,22 +128,20 @@ export function buildLightRig(quality: Pick<RenderQuality, 'tier'>, roomLights: 
     pendants.push(pendant); lights.push(pendant);
   }
 
-  const bar = spot(roomLights, 'venue-bar-spot', '#ffcf9f', 3, 4, .95, .8, [0, 2.95, -5.75], [0, 1.5, -6.75]);
+  // Aimed at the shelves so the bottles and the bar sign sit inside the cone.
+  const bar = spot(roomLights, 'venue-bar-spot', '#ffcf9f', 4.5, 4, .95, .8, [0, 2.95, -5.75], [0, 1.9, -6.8]);
   lights.push(bar);
 
-  let booth: THREE.PointLight | null = null;
-  if (high) {
-    booth = new THREE.PointLight('#ffdbbd', 2.6, 4, 2);
-    booth.name = 'venue-booth';
-    booth.position.set(...BOOTH_LIGHT.solo);
-    diningRoot.add(booth); lights.push(booth);
-  }
+  // Both tiers: without it the date's cheeks fall to a third of the old face light on phones.
+  const booth = new THREE.PointLight('#ffdbbd', 2.6, 4, 2);
+  booth.name = 'venue-booth';
+  booth.position.set(...BOOTH_LIGHT.solo);
+  diningRoot.add(booth); lights.push(booth);
 
   let disposed = false;
   return {
     tier: high ? 'high' : 'low', hemisphere, key, table, pendants, bar, booth, lights,
     setDoubleLayout(double) {
-      if (!booth) return;
       const p = double ? BOOTH_LIGHT.double : BOOTH_LIGHT.solo;
       booth.position.set(p[0], p[1], p[2]);
     },
@@ -185,6 +187,42 @@ export function ensureVenueShadowLayers(set: Pick<RestaurantSet, 'root' | 'dinin
   });
   if (!staticTagged) batches.forEach(mesh => mesh.layers.enable(STATIC_SHADOW_LAYER));
   if (!furnitureTagged) furniture.forEach(mesh => mesh.layers.enable(DYNAMIC_SHADOW_LAYER));
+}
+
+export interface PixelRatioGovernor {
+  readonly ratio: number;
+  /** At the floor with no probe to judge: nothing left to decide. */
+  readonly idle: boolean;
+  /** Judge one finished window. Returns the new pixel ratio when it changes, otherwise null. */
+  judge(median: number, mean: number): number | null;
+}
+
+/**
+ * Pure step-down decision, testable without WebGL. A slow window (median over the bar) steps down
+ * once as a probe. If the next window is not clearly faster on average, lowering the resolution
+ * did not help: the ratio goes back and that frame time, plus a margin, becomes the new bar.
+ */
+export function createPixelRatioGovernor(start: number, floor: number): PixelRatioGovernor {
+  let ratio = start, bar: number = ADAPTIVE_PIXEL_RATIO.slowFrame;
+  let probing = false, probeFrom = start, probeMean = 0, probeMedian = 0;
+  return {
+    get ratio() { return ratio; },
+    get idle() { return !probing && ratio <= floor + 1e-3; },
+    judge(median, mean) {
+      if (probing) {
+        probing = false;
+        if (!(mean <= probeMean * ADAPTIVE_PIXEL_RATIO.gain)) {
+          bar = Math.max(bar, probeMedian * ADAPTIVE_PIXEL_RATIO.capMargin);
+          ratio = probeFrom;
+          return ratio;
+        }
+      }
+      if (median <= bar || ratio <= floor + 1e-3) return null;
+      probing = true; probeFrom = ratio; probeMean = mean; probeMedian = median;
+      ratio = Math.max(floor, ratio - ADAPTIVE_PIXEL_RATIO.step);
+      return ratio;
+    },
+  };
 }
 
 export interface RestaurantLightingOptions {
@@ -237,7 +275,13 @@ export function createRestaurantLighting({ renderer, scene, quality, roomLights,
   let double = false, lampLevel = 2;
   let assetsReady = 0, retag = false, restored = false;
   let lastOffset = NaN, lastDouble = false, lastAssets = -1, renders = 0, renderedSinceUpdate = false;
-  const assetReady = () => { if (!disposed) { assetsReady++; retag = true; } };
+  // Registered before the warmup's own waits, so these tags land before compileAsync; the
+  // next-frame retag still catches meshes an asset callback inserts after this one.
+  const assetReady = () => {
+    if (disposed) return;
+    assetsReady++; retag = true;
+    applyVenueMaterialTags(scene, environment.texture, isActorRoot);
+  };
   // Late model meshes (plants) and licensed maps: rescan tags and refresh the static key shadow once each.
   void waitForEnvironmentAssets().then(assetReady, assetReady);
   void waitForRestaurantProps().then(assetReady, assetReady);
@@ -279,29 +323,28 @@ export function createRestaurantLighting({ renderer, scene, quality, roomLights,
   };
   scene.onBeforeRender = beforeRender;
 
-  // Adaptive pixel ratio: only ever steps down, only from frames that rendered while visible.
+  // Adaptive pixel ratio: never above the start, only from frames that rendered while visible.
   const samples = new Float32Array(512), sorted = new Float32Array(512);
-  let sampleCount = 0, windowTime = 0, playingSince: number | null = null, glowTime = 0;
-  let pixelRatio = renderer.getPixelRatio();
-  const resetWindow = () => { sampleCount = 0; windowTime = 0; };
+  let sampleCount = 0, windowFrames = 0, windowTime = 0, playingSince: number | null = null, glowTime = 0;
+  const governor = createPixelRatioGovernor(renderer.getPixelRatio(), quality.pixelRatioFloor);
+  const resetWindow = () => { sampleCount = 0; windowFrames = 0; windowTime = 0; };
   const adapt = (state: DinnerState, dt: number, time: number) => {
     const rendered = renderedSinceUpdate;
     renderedSinceUpdate = false;
-    if (!quality.adaptive || pixelRatio <= quality.pixelRatioFloor + 1e-3) return;
+    if (!quality.adaptive || governor.idle) return;
     if (typeof document !== 'undefined' && document.visibilityState !== 'visible') { resetWindow(); return; }
     if (playingSince === null) { if (state.phase === 'playing') playingSince = time; return; }
     if (time - playingSince < ADAPTIVE_PIXEL_RATIO.delay || !rendered || dt <= 0) return;
     if (sampleCount < samples.length) samples[sampleCount++] = dt;
+    windowFrames++;
     windowTime += dt;
     if (windowTime < ADAPTIVE_PIXEL_RATIO.window) return;
     for (let i = 0; i < sorted.length; i++) sorted[i] = i < sampleCount ? samples[i]! : Infinity;
     sorted.sort();
-    const median = sorted[sampleCount >> 1]!;
+    const median = sorted[sampleCount >> 1]!, mean = windowTime / windowFrames;
     resetWindow();
-    if (median > ADAPTIVE_PIXEL_RATIO.slowFrame) {
-      pixelRatio = Math.max(quality.pixelRatioFloor, pixelRatio - ADAPTIVE_PIXEL_RATIO.step);
-      renderer.setPixelRatio(pixelRatio);
-    }
+    const next = governor.judge(median, mean);
+    if (next !== null) renderer.setPixelRatio(next);
   };
 
   return {
