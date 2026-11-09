@@ -1,4 +1,5 @@
-import type { ClaudeModel } from './types';
+import type { ClaudeModel, TurnVia } from './types';
+import { RECEIPT_TIMEOUT_MS, timeoutSignal } from './turn-endpointing';
 import type { ConversationTarget, DoubleDateRoomState, DoubleDialogueLine, DoubleRoomCommand, DoubleRoomCredentials, DoubleRoomPoll, DoubleRoomResponse, DoubleVoiceSignal } from './double-date-types';
 
 interface Callbacks {
@@ -68,8 +69,9 @@ export class DoubleDateClient {
     this.accept(result.state);
     return result.state;
   }
-  async turn(text: string, target: ConversationTarget) {
-    const result = await this.json<{ state: DoubleDateRoomState }>(this.path + '/turn', { turnId: crypto.randomUUID(), text, target });
+  /** `via` tells the table whether the words were spoken (an automatic transcript) or typed. */
+  async turn(text: string, target: ConversationTarget, via?: TurnVia) {
+    const result = await this.json<{ state: DoubleDateRoomState }>(this.path + '/turn', { turnId: crypto.randomUUID(), text, target, ...(via ? { via } : {}) });
     this.accept(result.state);
   }
   async interrupt() {
@@ -79,8 +81,9 @@ export class DoubleDateClient {
   speech(lineId: string, generation: number, signal: AbortSignal) {
     return fetch(this.path + '/speech', { method: 'POST', headers: this.headers, body: JSON.stringify({ lineId, generation }), signal });
   }
-  receipt(lineId: string, generation: number, completed: boolean, playedSeconds: number) {
-    return this.json(this.path + '/playback', { lineId, generation, completed, playedSeconds });
+  /** A receipt that cannot land within the timeout is abandoned so it never queues the next turn behind it. */
+  receipt(lineId: string, generation: number, completed: boolean, playedSeconds: number, timeoutMs = RECEIPT_TIMEOUT_MS) {
+    return this.json(this.path + '/playback', { lineId, generation, completed, playedSeconds }, timeoutSignal(timeoutMs));
   }
   inviteUrl() {
     if (!this.room) return '';
