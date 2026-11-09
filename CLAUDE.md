@@ -25,7 +25,7 @@ TypeScript, plain imperative Three.js, Vite, Node, Rapier and DOM game overlays.
 | Client entry, networking, input and playback | `src/restaurant/main.ts` |
 | First-person/selection/inspection camera and actor presentation | `src/restaurant/RestaurantRenderer.ts` |
 | Restaurant geometry, place settings, food and props | `src/restaurant/render/RestaurantScene.ts`, `TabletopProps.ts`, `EveningTable.ts` |
-| Venue lights, reflection map, glow halos and phone quality tier (`?quality=high\|low` forces one) | `src/restaurant/render/RestaurantLighting.ts`, `VenueEnvironment.ts`, `VenueGlow.ts`, `RenderQuality.ts`, shared constants in `VenueContract.ts` |
+| Venue lights, reflection map, glow halos, phone quality tier and pixel budget (`?quality=high\|low` forces a tier; `?stats` shows the GPU, fps and drawn resolution) | `src/restaurant/render/RestaurantLighting.ts`, `VenueEnvironment.ts`, `VenueGlow.ts`, `RenderQuality.ts`, shared constants in `VenueContract.ts` |
 | Prompt line (course choices, incidents, scenarios, gestures), receipt, notebook and endings | `src/restaurant/EveningInterface.ts` |
 | Shared pacing clocks and dessert list | `src/restaurant/evening.ts` |
 | Touch input | `MobileControls.ts`, `MobileInput.ts`, `TouchLookTap.ts`, `TouchButtonGesture.ts` |
