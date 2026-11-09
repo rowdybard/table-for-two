@@ -127,7 +127,11 @@ export class EveningDirector {
   }
   private moment(id: string, title: string, description: string) { if (!this.state.evening.moments.some(m => m.id === id)) this.state.evening.moments.push({ id, title, description }); }
   /** A human just spoke to the table: it is a conversation, not a silence to fill. */
-  noteHumanTurn() { this.lastHumanAt = this.state.elapsed; this.lastSpokeAt = this.state.elapsed; }
+  noteHumanTurn(_text = '') { this.lastHumanAt = this.state.elapsed; this.lastSpokeAt = this.state.elapsed; }
+  /** The date's reply to the latest human turn has finished (or was cut off). */
+  replyEnded() {}
+  /** A scripted question the date asked that the human has not answered yet, if any. */
+  get pendingQuestion(): string | null { return null; }
   seated() { if (!this.seatedOnce) { this.seatedOnce = true; this.seatedAt = this.state.elapsed; this.cue('seated'); } }
   ordered() {
     const e = this.state.evening; e.main.status = 'waiting';

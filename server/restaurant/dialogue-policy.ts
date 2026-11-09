@@ -89,3 +89,8 @@ export function alternatingMessages(messages: readonly Message[]): Message[] {
   if (out[0]?.role === 'assistant') out.unshift({ role: 'user', content: '[The evening begins. The human arrives at the restaurant.]' });
   return out;
 }
+
+/** Filled in by the prompt-voice pass; exported now so the payload code can reference them. */
+export const SPOKEN_REGISTER = '';
+export const VOICE_REMINDER = '';
+export const VOICE_SHORT: Record<string, string> = {};
