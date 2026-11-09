@@ -21,6 +21,25 @@ function environment(fetcher: typeof fetch) {
 async function until(predicate: () => boolean) { for (let i = 0; i < 100; i++) { if (predicate()) return; await delay(5); } throw new Error('Client did not reach expected state.'); }
 const callbacks = (extra: Partial<ConstructorParameters<typeof DoubleDateClient>[0]> = {}) => ({ onState() {}, onLines() {}, onGeneration() {}, onSignals() {}, onConnection() {}, onError() {}, ...extra });
 
+test('a stalled table command expires without losing the private seat and the next command works', async () => {
+  let stalled = true;
+  const env = environment(async (input, init) => {
+    if (String(input).endsWith('/rooms') && init?.method === 'POST') return json(membership, 201);
+    if (String(input).endsWith('/command') && stalled) return new Promise<Response>((_resolve, reject) => {
+      init!.signal!.addEventListener('abort', () => reject(init!.signal!.reason), { once: true });
+    });
+    return json({ state: room, signals: [] });
+  });
+  const client = new DoubleDateClient(callbacks(), { requestTimeoutMs: 20 });
+  try {
+    await client.create('Alex', 'claude-haiku-5-5', 2);
+    await assert.rejects(client.command({ type: 'reset-model' }), /too long/);
+    assert.equal(client.credentials?.token, membership.token); assert.equal(client.active, true);
+    stalled = false; await client.command({ type: 'reset-model' });
+    assert.equal(client.state?.id, room.id);
+  } finally { client.dispose(); env.restore(); }
+});
+
 test('terminal poll 401/404 clears the private seat and stops retries with one expiry callback', async () => {
   for (const status of [401, 404]) {
     let polls = 0; const messages: string[] = [], connections: boolean[] = [];

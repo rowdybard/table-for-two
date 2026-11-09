@@ -1,3 +1,5 @@
+import { isTopicStopRequest } from '../../src/restaurant/conversation-content';
+
 /**
  * The date's private notebook. The model rewrites it every turn from the notes it was shown, in
  * three labelled parts: HUMAN (what they told it), TOLD THEM (what it already shared about
@@ -13,6 +15,26 @@ export const MEMORY_HARD = 900;
 export const MEMORY_REJECT = 4000;
 const SECTION_CAPS: Record<string, number> = { human: 400, 'told them': 220, open: 140 };
 
+/** Remove only the optional premise. A stop must never erase a name, disclosure, question or promise. */
+export function retireSharedPremise(memory: string, latestHumanText: string): string {
+  if (!isTopicStopRequest(latestHumanText)) return memory;
+  return memory.replace(/(\bOPEN:\s*)([\s\S]*?)(?=\b(?:HUMAN|TOLD THEM):|$)/i, (_match, label: string, body: string) => {
+    const kept = body.split(/;\s*|\n/).filter(part => !/^shared premise\s*:/i.test(part.trim())).map(part => part.trim()).filter(Boolean);
+    return label + (kept.join('; ') || 'nothing pending') + (/\n\s*$/.test(body) ? '\n' : '');
+  });
+}
+
+/** Keep one optional premise behind the obligations in OPEN, even when the model lists it first. */
+function prioritizeOpen(text: string): string {
+  return text.replace(/(\bOPEN:\s*)([\s\S]*?)(?=\b(?:HUMAN|TOLD THEM):|$)/i, (_match, label: string, body: string) => {
+    const clauses = body.split(/;\s*|\n/).map(part => part.trim()).filter(Boolean);
+    const ordinary = clauses.filter(part => !/^shared premise\s*:/i.test(part));
+    const premise = clauses.find(part => /^shared premise\s*:/i.test(part));
+    // The marker makes the optional bit distinguishable without a fourth notebook section.
+    return label + [...ordinary, ...(premise ? [cut(premise, 100)] : [])].join('; ') + (/\n\s*$/.test(body) ? '\n' : '');
+  });
+}
+
 /** Cut at the last clause boundary inside the budget, else at a word boundary. */
 const cut = (text: string, max: number) => {
   if (text.length <= max) return text;
@@ -24,8 +46,9 @@ const cut = (text: string, max: number) => {
  * Model notebook in, stored notebook out. A blank answer keeps the previous notebook, and an
  * overlong one is trimmed section by section so the human's own facts are the last thing lost.
  */
-export function clampMemory(next: string, previous = ''): string {
-  const text = next.replace(/\r/g, '').split('\n').map(line => line.trim()).filter(Boolean).join('\n');
+export function clampMemory(next: string, previous = '', latestHumanText = ''): string {
+  const normalized = next.replace(/\r/g, '').split('\n').map(line => line.trim()).filter(Boolean).join('\n');
+  const text = prioritizeOpen(retireSharedPremise(normalized || previous, latestHumanText));
   if (!text) return previous;
   if (text.length <= MEMORY_HARD) return text;
   const parts = text.split(/(?=\b(?:HUMAN|TOLD THEM|OPEN):)/).map(part => part.trim()).filter(Boolean);

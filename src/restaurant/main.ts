@@ -25,6 +25,8 @@ import { diningOffsetZ } from './dining-space';
 import { InterestCue } from './InterestCue';
 import { createPerfStats } from './PerfStats';
 import { createFrameCap } from './FrameCap';
+import { consumeTurnResponse, replyDeadlineMs } from './conversation-stream';
+import { captionReadingMs, waitForCaptionReading } from './caption-delivery';
 
 document.title = 'Table for Two';
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = markup;
@@ -63,6 +65,7 @@ let softwareNoticeShown = false;
 let providers: ProviderStatus | undefined;
 let playback: AudioPlayback = { speaker: null, amplitude: 0, emotion: 'neutral', caption: '' };
 let busy = false, activeGeneration = 0, generationEpoch = 0, turnAbort: AbortController | undefined;
+let captionReadAbort: AbortController | undefined;
 let speechQueue: Promise<void> = Promise.resolve(), pendingSpeeches = 0;
 let interruption: Promise<void> = Promise.resolve();
 let interruptPending = false;
@@ -204,7 +207,7 @@ function applyState(next: DinnerState) {
     if (state.phase === 'playing') {
       if (cue.key.startsWith('ending-')) {
         // Let a farewell take the floor rather than wait behind earlier table chatter.
-        generationEpoch++; turnAbort?.abort(); speech.stop(); speechQueue = Promise.resolve(); pendingSpeeches = 0; busy = false; btn('send-turn').disabled = false;
+        generationEpoch++; turnAbort?.abort(); captionReadAbort?.abort(); speech.stop(); speechQueue = Promise.resolve(); pendingSpeeches = 0; busy = false; btn('send-turn').disabled = false;
       }
       ambience.cue(cue.key);
       // Routine pacing waits for a human who is mid-sentence; health, boundary, incident and farewell cues keep the floor.
@@ -345,6 +348,7 @@ function updateMic() {
 }
 function cancelLocalPlayback() {
   generationEpoch++;
+  captionReadAbort?.abort(); captionReadAbort = undefined;
   turnAbort?.abort(); turnAbort = undefined;
   speech.stop(); busy = false; pendingSpeeches = 0; speechQueue = Promise.resolve();
   playback = { speaker: null, amplitude: 0, emotion: 'neutral', caption: '' };
@@ -366,6 +370,21 @@ async function interrupt() {
 async function humanHasFloor(epoch: number) {
   await waitWhile(() => epoch === generationEpoch && micEnabled && recognition.holdsHumanSpeech());
 }
+let captionDeliverySequence = 0;
+async function presentCaption(utterance: SceneUtterance, generation: number, epoch: number) {
+  if (epoch !== generationEpoch || !joined || state.phase !== 'playing' || !preferences.captions || document.hidden) return;
+  const controller = new AbortController(); captionReadAbort?.abort(); captionReadAbort = controller;
+  const deliveryId = `caption:${++captionDeliverySequence}`;
+  caption(utterance);
+  playback = { speaker: utterance.speaker, amplitude: 0, emotion: utterance.emotion, caption: utterance.text, actorId: utterance.actorId, deliveryId };
+  const completed = await waitForCaptionReading(captionReadingMs(utterance.text), controller.signal, document, () => !document.hidden && !el('caption').hidden && preferences.captions);
+  if (captionReadAbort === controller) captionReadAbort = undefined;
+  // A readable caption is real delivery. Enqueueing it, or interrupting it early, is not.
+  if (epoch === generationEpoch && joined && state.phase === 'playing' && playback.deliveryId === deliveryId) {
+    playback = { speaker: null, amplitude: 0, emotion: 'neutral', caption: '', deliveryId: null };
+    clearCaptionLater(1000); recordDelivery(generation, utterance, completed, 0);
+  }
+}
 function queueUtterance(utterance: SceneUtterance, generation: number, epoch: number, logLine = true, yieldToHuman = false) {
   if (logLine) log(speakerName(utterance.speaker, utterance.actorId), utterance.text);
   pendingSpeeches++;
@@ -380,17 +399,18 @@ function queueUtterance(utterance: SceneUtterance, generation: number, epoch: nu
       if (!current || current.interrupted) return;
     }
     if (!preferences.speech || (!providers?.speech && !providers?.cachedSpeech)) {
-      caption(utterance);
-      await new Promise(resolve => setTimeout(resolve, Math.min(9000, 1200 + utterance.text.length * 28)));
-      if (epoch === generationEpoch) {
-        clearCaptionLater(1000);
-        recordDelivery(generation, utterance, true, 0);
-      }
+      await presentCaption(utterance, generation, epoch);
       return;
     }
     currentSpeechGeneration = generation;
     await speech.play(utterance, signal => doubleClient.active && utterance.lineId ? doubleClient.speech(utterance.lineId, generation, signal) : fetch(sessionPath() + '/speech', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ generation, utterance }), signal }));
-  }).catch(error => { if (epoch === generationEpoch && (error as Error).name !== 'AbortError') { caption(utterance); clearCaptionLater(6000); toast((error as Error).message); } }).finally(() => { if (epoch === generationEpoch) pendingSpeeches = Math.max(0, pendingSpeeches - 1); });
+  }).catch(async error => {
+    if (epoch !== generationEpoch || (error as Error).name === 'AbortError') return;
+    toast((error as Error).message);
+    const status = (error as { status?: number }).status;
+    if (status !== undefined && status >= 400 && status < 500 && status !== 429) return;
+    await presentCaption(utterance, generation, epoch);
+  }).finally(() => { if (epoch === generationEpoch) pendingSpeeches = Math.max(0, pendingSpeeches - 1); });
 }
 async function sendTurn(raw: string, explicitTarget?: ConversationTarget, via: TurnVia = 'typed') {
   const text = raw.trim();
@@ -421,39 +441,49 @@ async function sendTurn(raw: string, explicitTarget?: ConversationTarget, via: T
     finally { doubleTurnSubmissions.delete(submitted); }
   }
   const epoch = ++generationEpoch;
-  turnAbort = new AbortController();
+  const controller = new AbortController(); turnAbort = controller;
   busy = true; updateTypedSubmit();
   log('You', text); el('turn-status').textContent = `${getDate(state.dateId)!.name} is listening…`;
   turnStartedAt = performance.now(); firstAudioMs = null;
-  let accepted = false;
+  let accepted = false, deadlineExpired = false, streamComplete = false;
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  const armDeadline = (model?: ClaudeModel) => {
+    clearTimeout(deadline);
+    deadline = setTimeout(() => { deadlineExpired = true; controller.abort(); }, Math.max(1, replyDeadlineMs(providers, model) - (performance.now() - turnStartedAt)));
+  };
+  armDeadline();
+  const waitingNotice = setTimeout(() => { if (epoch === generationEpoch && busy) el('turn-status').textContent = 'Still waiting for a reply… You can pause to cancel.'; }, 10000);
   try {
-    const response = await fetch(sessionPath() + '/turn', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ turnId: crypto.randomUUID(), text, model: preferences.model, via }), signal: turnAbort.signal });
+    const response = await fetch(sessionPath() + '/turn', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ turnId: crypto.randomUUID(), text, model: preferences.model, via }), signal: controller.signal });
     if (!response.ok) {
       const error = await response.json().catch(() => ({})) as { error?: string; message?: string };
       throw new Error(error.error || error.message || `Conversation unavailable (${response.status})`);
     }
     accepted = true;
-    if (!response.body) throw new Error('The conversation stream was empty. Please try again.');
-    const reader = response.body.getReader(), decoder = new TextDecoder(); let buffer = '';
-    const consume = (line: string) => {
-      if (!line.trim() || epoch !== generationEpoch) return;
-      const event = JSON.parse(line) as TurnEvent;
-      if (event.type === 'start') activeGeneration = event.generation;
-      else if (event.type === 'utterance') { activeGeneration = event.generation; queueUtterance(event.utterance, event.generation, epoch); }
+    await consumeTurnResponse(response, controller.signal, event => {
+      if (epoch !== generationEpoch) return;
+      if (event.type === 'start') {
+        activeGeneration = event.generation; armDeadline(event.model);
+        el('turn-status').textContent = event.model === 'ai-horde' ? 'Waiting for a community reply…' : `${getDate(state.dateId)!.name} is thinking…`;
+      }
+      else if (event.type === 'utterance') { clearTimeout(waitingNotice); activeGeneration = event.generation; queueUtterance(event.utterance, event.generation, epoch); }
       else if (event.type === 'state') applyState(event.state);
-      else if (event.type === 'error') throw new Error(event.message);
-    };
-    while (true) {
-      const result = await reader.read(); buffer += decoder.decode(result.value, { stream: !result.done });
-      const lines = buffer.split('\n'); buffer = lines.pop() || ''; lines.forEach(consume);
-      if (result.done) { consume(buffer); break; }
-    }
+    });
+    streamComplete = true;
     if (epoch === generationEpoch) el('turn-status').textContent = '';
     return true;
   } catch (error) {
+    if (deadlineExpired && epoch === generationEpoch) {
+      void interrupt();
+      const message = 'The reply took too long. You can keep playing and try another turn.';
+      toast(message, 10000); el('turn-status').textContent = 'Reply timed out · you can try again'; log('Connection', message, true);
+      return accepted;
+    }
     if ((error as Error).name !== 'AbortError' && epoch === generationEpoch) { toast((error as Error).message, 10000); el('turn-status').textContent = 'Conversation paused · you can try again'; log('Connection', (error as Error).message, true); }
     return (error as Error).name === 'AbortError' || epoch !== generationEpoch ? accepted : false;
   } finally {
+    clearTimeout(deadline); clearTimeout(waitingNotice);
+    if (!streamComplete) controller.abort();
     if (epoch === generationEpoch) { busy = false; turnAbort = undefined; updateTypedSubmit(); }
   }
 }

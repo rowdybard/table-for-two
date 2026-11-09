@@ -6,7 +6,11 @@ interface SpeechPlayerCallbacks {
   onMetrics?(metrics: { firstAudioMs?: number; cacheHit?: boolean }): void;
   onEnded?(utterance: SceneUtterance, result: { interrupted: boolean; playedSeconds: number }): void;
 }
-export interface SpeechPlayerOptions { canFallback?(): boolean; dateId?(): DateId }
+export interface SpeechPlayerOptions {
+  canFallback?(): boolean; dateId?(): DateId;
+  /** Bounded transport waits; optional overrides also keep unit tests independent of real clocks. */
+  preparationTimeoutMs?: number; playbackTimeoutMs?: number;
+}
 
 function aborted(): DOMException { return new DOMException('Speech playback canceled.', 'AbortError'); }
 
@@ -62,27 +66,48 @@ export class SpeechPlayer {
     const generation = this.generation;
     const controller = new AbortController();
     const signal = controller.signal;
+    // Timing out server audio must not cancel the lifetime signal used by device fallback.
+    const serverController = new AbortController();
+    const serverSignal = AbortSignal.any([signal, serverController.signal]);
     this.controller = controller;
     this.current = utterance;
     let heard = false;
+    let serverStatus: number | undefined;
     let completed = false;
     let deviceAttempted = false;
     const requestedAt = performance.now();
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+    let rejectDeadline!: (error: Error) => void;
+    const deadline = new Promise<never>((_resolve, reject) => { rejectDeadline = reject; });
+    const cancelDeadline = () => { clearTimeout(deadlineTimer); };
+    const armDeadline = (milliseconds: number, message: string) => {
+      cancelDeadline();
+      deadlineTimer = setTimeout(() => {
+        const error = Object.assign(new Error(message), { ...(serverStatus && serverStatus >= 400 ? { status: serverStatus } : {}) });
+        if (serverStatus === 409) error.name = 'AbortError';
+        rejectDeadline(error); serverController.abort(error);
+      }, Math.max(1, milliseconds));
+    };
+    const cancelWait = () => rejectDeadline(aborted());
+    signal.addEventListener('abort', cancelWait, { once: true });
+    armDeadline(this.options.preparationTimeoutMs ?? 12000, 'The voice took too long to start. Captions remain available.');
     const onPlaying = () => {
-      if (signal.aborted || generation !== this.generation) return;
+      if (serverSignal.aborted || generation !== this.generation) return;
       if (!heard) {
         heard = true;
+        armDeadline(this.options.playbackTimeoutMs ?? Math.min(60000, 12000 + utterance.text.length * 110), 'The voice did not finish. Captions remain available.');
         this.callbacks.onMetrics?.({ firstAudioMs: Math.round(performance.now() - requestedAt) });
         this.callbacks.onStatus('');
       }
-      this.animate(utterance, generation);
+      this.animate(utterance, generation, serverSignal);
     };
     this.audio.addEventListener('playing', onPlaying);
     let cleanupFinished = () => {};
     try {
-      await this.unlock();
+      await Promise.race([this.unlock(), deadline]);
       signal.throwIfAborted();
       if (this.options.canFallback?.() && performance.now() < this.deviceFallbackUntil) {
+        cancelDeadline();
         deviceAttempted = true;
         await this.playDevice(utterance, signal, generation, requestedAt);
         signal.throwIfAborted();
@@ -90,41 +115,49 @@ export class SpeechPlayer {
         return;
       }
       this.callbacks.onStatus('Preparing voice…');
-      const response = await source(signal);
-      signal.throwIfAborted();
-      if (!response.ok) {
-        let message = `Voice generation failed (${response.status}).`;
-        try {
-          const error = await response.json() as { message?: string; error?: string };
-          message = error.message ?? error.error ?? message;
-        } catch { /* Preserve the HTTP error. */ }
-        const failure = Object.assign(new Error(message), { status: response.status });
-        // A stale/paused generation has lost permission to speak, including
-        // through the device engine. Treat it like ordinary cancellation.
-        if (response.status === 409) failure.name = 'AbortError';
-        throw failure;
-      }
-      const cache = response.headers.get('x-speech-cache') ?? response.headers.get('x-audio-cache') ?? response.headers.get('x-cache');
-      if (cache) this.callbacks.onMetrics?.({ cacheHit: /^(hit|true|cached)$/i.test(cache) });
-      const mime = response.headers.get('content-type')?.trim() ?? 'audio/mpeg';
-      if (!mime.startsWith('audio/')) throw new Error('Voice service returned no playable audio.');
-      const finished = new Promise<void>((resolve, reject) => {
-        const onEnded = () => resolve();
-        const onError = () => reject(new Error(this.audio.error?.message || 'The generated voice could not be played.'));
-        const onAbort = () => reject(aborted());
-        this.audio.addEventListener('ended', onEnded, { once: true });
-        this.audio.addEventListener('error', onError, { once: true });
-        signal.addEventListener('abort', onAbort, { once: true });
-        cleanupFinished = () => {
-          this.audio.removeEventListener('ended', onEnded);
-          this.audio.removeEventListener('error', onError);
-          signal.removeEventListener('abort', onAbort);
-        };
-      });
-      const streaming = response.body && typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported(mime);
-      await Promise.all([finished, streaming ? this.stream(response, mime, signal) : this.blob(response, signal)]);
+      const serverAttempt = async () => {
+        const response = await source(serverSignal);
+        serverStatus = response.status;
+        if (serverSignal.aborted) { void response.body?.cancel().catch(() => {}); throw aborted(); }
+        if (!response.ok) {
+          let message = `Voice generation failed (${response.status}).`;
+          try {
+            const error = await response.json() as { message?: string; error?: string };
+            message = error.message ?? error.error ?? message;
+          } catch { /* Preserve the HTTP error. */ }
+          serverSignal.throwIfAborted();
+          const failure = Object.assign(new Error(message), { status: response.status });
+          // A stale/paused generation has lost permission to speak, including
+          // through the device engine. Treat it like ordinary cancellation.
+          if (response.status === 409) failure.name = 'AbortError';
+          throw failure;
+        }
+        const cache = response.headers.get('x-speech-cache') ?? response.headers.get('x-audio-cache') ?? response.headers.get('x-cache');
+        if (cache) this.callbacks.onMetrics?.({ cacheHit: /^(hit|true|cached)$/i.test(cache) });
+        const mime = response.headers.get('content-type')?.trim() ?? 'audio/mpeg';
+        if (!mime.startsWith('audio/')) throw new Error('Voice service returned no playable audio.');
+        const finished = new Promise<void>((resolve, reject) => {
+          const onEnded = () => resolve();
+          const onError = () => reject(new Error(this.audio.error?.message || 'The generated voice could not be played.'));
+          const onAbort = () => reject(aborted());
+          this.audio.addEventListener('ended', onEnded, { once: true });
+          this.audio.addEventListener('error', onError, { once: true });
+          serverSignal.addEventListener('abort', onAbort, { once: true });
+          cleanupFinished = () => {
+            this.audio.removeEventListener('ended', onEnded);
+            this.audio.removeEventListener('error', onError);
+            serverSignal.removeEventListener('abort', onAbort);
+          };
+        });
+        const streaming = response.body && typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported(mime);
+        await Promise.all([finished, streaming ? this.stream(response, mime, serverSignal) : this.blob(response, serverSignal)]);
+        serverSignal.throwIfAborted();
+      };
+      await Promise.race([serverAttempt(), deadline]);
       completed = true;
     } catch (error) {
+      cancelDeadline(); serverController.abort(); cleanupFinished();
+      this.audio.removeEventListener('playing', onPlaying);
       if (!signal.aborted && generation === this.generation) {
         const status = (error as { status?: number }).status;
         const unavailable = (error as Error).name !== 'AbortError' && (status === undefined || status === 429 || status >= 500);
@@ -147,6 +180,7 @@ export class SpeechPlayer {
         }
       }
     } finally {
+      cancelDeadline(); signal.removeEventListener('abort', cancelWait); serverController.abort();
       cleanupFinished();
       this.audio.removeEventListener('playing', onPlaying);
       if (generation === this.generation) {
@@ -192,7 +226,7 @@ export class SpeechPlayer {
         if (this.deviceStarted === undefined) { this.deviceStarted = performance.now(); this.callbacks.onMetrics?.({ firstAudioMs: Math.round(this.deviceStarted - requestedAt) }); }
         // SpeechSynthesis exposes no waveform. This is an actual speech event
         // and speaking gate; amplitude remains zero rather than fabricated.
-        this.callbacks.onPlayback({ speaker: utterance.speaker, amplitude: 0, emotion: utterance.emotion, caption: utterance.text, actorId: utterance.actorId });
+        this.callbacks.onPlayback({ speaker: utterance.speaker, amplitude: 0, emotion: utterance.emotion, caption: utterance.text, actorId: utterance.actorId, deliveryId: `speech:${generation}` });
       };
       spoken.onstart = actualSpeech; spoken.onboundary = actualSpeech;
       spoken.onend = () => { cleanup(); if (this.deviceStarted === undefined) reject(new Error('Device speech did not start. Captions remain available.')); else resolve(); };
@@ -213,6 +247,8 @@ export class SpeechPlayer {
     signal.throwIfAborted();
     const buffer = media.addSourceBuffer(mime);
     const reader = response.body!.getReader();
+    const cancel = () => { void reader.cancel().catch(() => {}); };
+    signal.addEventListener('abort', cancel, { once: true });
     let playing = false;
     let playPromise: Promise<void> | undefined;
     try {
@@ -236,13 +272,29 @@ export class SpeechPlayer {
       if (media.readyState === 'open') media.endOfStream();
       await playPromise;
     } finally {
+      signal.removeEventListener('abort', cancel);
       void reader.cancel().catch(() => {});
       reader.releaseLock();
     }
   }
 
   private async blob(response: Response, signal: AbortSignal): Promise<void> {
-    const blob = await response.blob();
+    const reader = response.body!.getReader(), chunks: Uint8Array<ArrayBuffer>[] = [];
+    const cancel = () => { void reader.cancel().catch(() => {}); };
+    signal.addEventListener('abort', cancel, { once: true });
+    let bytes = 0;
+    try {
+      for (;;) {
+        signal.throwIfAborted();
+        const next = await reader.read();
+        signal.throwIfAborted();
+        if (next.done) break;
+        bytes += next.value.byteLength;
+        if (bytes > 5 * 1024 * 1024) throw new Error('The voice recording exceeded its size limit. Captions remain available.');
+        chunks.push(Uint8Array.from(next.value));
+      }
+    } finally { signal.removeEventListener('abort', cancel); void reader.cancel().catch(() => {}); reader.releaseLock(); }
+    const blob = new Blob(chunks, { type: response.headers.get('content-type') ?? 'audio/mpeg' });
     signal.throwIfAborted();
     if (!blob.size) throw new Error('The voice service returned an empty recording.');
     this.objectUrl = URL.createObjectURL(blob);
@@ -263,10 +315,10 @@ export class SpeechPlayer {
     });
   }
 
-  private animate(utterance: SceneUtterance, generation: number): void {
+  private animate(utterance: SceneUtterance, generation: number, signal: AbortSignal): void {
     cancelAnimationFrame(this.animation);
     const update = () => {
-      if (generation !== this.generation || this.audio.paused || this.audio.ended) return;
+      if (signal.aborted || generation !== this.generation || this.audio.paused || this.audio.ended) return;
       let amplitude = 0;
       if (this.analyser && this.samples) {
         this.analyser.getFloatTimeDomainData(this.samples);
@@ -274,7 +326,7 @@ export class SpeechPlayer {
         for (const value of this.samples) energy += value * value;
         amplitude = Math.min(1, Math.sqrt(energy / this.samples.length) * 6);
       }
-      this.callbacks.onPlayback({ speaker: utterance.speaker, amplitude, emotion: utterance.emotion, caption: utterance.text, actorId: utterance.actorId });
+      this.callbacks.onPlayback({ speaker: utterance.speaker, amplitude, emotion: utterance.emotion, caption: utterance.text, actorId: utterance.actorId, deliveryId: `speech:${generation}` });
       this.animation = requestAnimationFrame(update);
     };
     update();
@@ -282,7 +334,7 @@ export class SpeechPlayer {
 
   private clearPlayback(): void {
     cancelAnimationFrame(this.animation);
-    this.callbacks.onPlayback({ speaker: null, amplitude: 0, emotion: 'neutral', caption: '' });
+    this.callbacks.onPlayback({ speaker: null, amplitude: 0, emotion: 'neutral', caption: '', deliveryId: null });
   }
 
   private releaseAudio(): void {

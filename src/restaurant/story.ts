@@ -72,6 +72,8 @@ export type BeatPhase = keyof typeof BEAT_CUES;
 export const BEAT_COLD = 'beat-cold' satisfies StoryCueKey;
 export interface StoryCueContext {
   choice?: string; dish?: string; resolution?: string;
+  /** Existing per-evening variation; never advances a clock or consumes another aside. */
+  variation?: number;
   /** The date's dessert follows what the human said they wanted, rather than the date's own favourite. */
   named?: boolean;
   /** Little has been earned yet: no confession, no praise and no warm farewell, just a plain line. */
@@ -216,6 +218,55 @@ const CUES: Record<DateId, Record<Exclude<StoryCueKey, 'order-nudge'>, SceneUtte
   },
 };
 
+/** Three authored readings of common moments. The controller still chooses when one may happen. */
+export const FREQUENT_CUE_KEYS = ['welcome', 'seated', 'ordered', 'main-served', 'beat-cold', 'beat-waiting-1', 'beat-eating-1', 'beat-after-1', 'dessert-served', 'boundary-warning', 'repair', 'farewell-invite'] as const satisfies readonly StoryCueKey[];
+type FrequentCueKey = typeof FREQUENT_CUE_KEYS[number];
+const alternatives = (dateId: DateId, key: FrequentCueKey, second: string, third: string): readonly [SceneUtterance, SceneUtterance, SceneUtterance] => [CUES[dateId][key], date(second, CUES[dateId][key].emotion), date(third, CUES[dateId][key].emotion)];
+export const STORY_CUE_ALTERNATIVES: Record<DateId, Record<FrequentCueKey, readonly [SceneUtterance, SceneUtterance, SceneUtterance]>> = {
+  mira: {
+    welcome: alternatives('mira', 'welcome', 'Hi! I’m glad you came. I got here early and immediately forgot the clever thing I was going to say.', 'Oh, hi. I was trying to look relaxed when you walked in. Let’s say that worked.'),
+    seated: alternatives('mira', 'seated', 'Okay. An evening where I just get to turn up. I could get used to that.', 'I nearly offered to help Eli with the chairs. I’m going to stay sitting down instead.'),
+    ordered: alternatives('mira', 'ordered', 'Tomato rigatoni for me. I kept looking at the rest of the menu, but I knew.', 'I’m having the rigatoni. I don’t want to spend dinner wishing I’d ordered it.'),
+    'main-served': alternatives('mira', 'main-served', 'Oh, lovely. I was getting very ready for that.', 'That smells good. Wait, hot plate. I heard him, I just got excited.'),
+    'beat-cold': alternatives('mira', 'beat-cold', 'Okay, tiny starting point. Tell me one thing about your day. It doesn’t have to be a good story.', 'I’m curious about you. We don’t have to do the polished introduction; start wherever you like.'),
+    'beat-waiting-1': alternatives('mira', 'beat-waiting-1', 'I tried cycling a loaf to Ada’s. Too wide for the basket. I walked the bike there, eating a corner. Very dignified.', 'I like the bit before dinner when nobody has asked me to take a group photo. I get to stay in my chair.'),
+    'beat-eating-1': alternatives('mira', 'beat-eating-1', 'I’m enjoying this. I don’t have a clever review; I just want another bite.', 'I like dinner when I’m not rushing off halfway through it. I’m staying put tonight.'),
+    'beat-after-1': alternatives('mira', 'beat-after-1', 'I’m glad I left the camera at home. It’s nice having an evening I don’t need pictures of.', 'Okay, I’ve properly stopped thinking about work now. It took me longer than I wanted to admit.'),
+    'dessert-served': alternatives('mira', 'dessert-served', 'Oh, look at that. Yes, I made room.', 'Okay. I’m going to enjoy this very quietly for a second.'),
+    'boundary-warning': alternatives('mira', 'boundary-warning', 'No, I’m not comfortable with that. Please stop.', 'I don’t want that. I need you to leave it alone.'),
+    repair: alternatives('mira', 'repair', 'Thank you for saying that. I’m willing to keep talking, but I still need that to change.', 'Okay. I appreciate the apology. Let’s give this a little time.'),
+    'farewell-invite': alternatives('mira', 'farewell-invite', 'I’ll walk out with you. Oh, wait, let me have one last look for my things.', 'Come on, I’ll come to the door with you. It’s been nice sitting here.'),
+  },
+  jules: {
+    welcome: alternatives('jules', 'welcome', 'Hi. Good to see you. I wasn’t sure whether to wave; then you were already here.', 'Hello. I’m glad you found it. I’ve been deciding what to eat.'),
+    seated: alternatives('jules', 'seated', 'Good. We can hear each other.', 'This is comfortable. That helps.'),
+    ordered: alternatives('jules', 'ordered', 'The mushroom risotto for me. I’ve stopped pretending to consider anything else.', 'I’ll have the risotto. I know what I like tonight.'),
+    'main-served': alternatives('jules', 'main-served', 'That looks good. Thank you.', 'Mm. I’m ready for that.'),
+    'beat-cold': alternatives('jules', 'beat-cold', 'We can start with something ordinary. How was your day?', 'I’m not in a hurry. Tell me something when you’re ready.'),
+    'beat-waiting-1': alternatives('jules', 'beat-waiting-1', 'I watch an old film most Tuesdays. A bad one still gives me something to complain about on the way home.', 'I bought a museum postcard of a loading dock. The person at the till thought I’d picked it up by mistake.'),
+    'beat-eating-1': alternatives('jules', 'beat-eating-1', 'Good choice, this. I’ll carry on eating.', 'I was hungry. This is helping.'),
+    'beat-after-1': alternatives('jules', 'beat-after-1', 'I like a dinner I don’t have to hurry through.', 'I’m glad I came out. I nearly stayed home with a film.'),
+    'dessert-served': alternatives('jules', 'dessert-served', 'Good. I did want dessert.', 'That’s a sensible size. I’ll still finish it.'),
+    'boundary-warning': alternatives('jules', 'boundary-warning', 'No. I’m not comfortable. Leave it there.', 'I don’t want to continue that. Please stop.'),
+    repair: alternatives('jules', 'repair', 'Thank you. We can carry on. It still mattered.', 'I accept the apology. I’d like a little time.'),
+    'farewell-invite': alternatives('jules', 'farewell-invite', 'I’ll come to the door with you. No hurry.', 'Shall we? I’ll walk out with you.'),
+  },
+  dev: {
+    welcome: alternatives('dev', 'welcome', 'Hey. Glad you made it. I’ve decided not to start with three opinions in a row. That’s growth.', 'Hi. I was early. Tried to look casual about it. Not sure I pulled that off.'),
+    seated: alternatives('dev', 'seated', 'Right. I’m sitting down, someone else is cooking. Strong start.', 'Okay. Tell me if I start organizing the evening. I’m trying to just have one.'),
+    ordered: alternatives('dev', 'ordered', 'Lemon chicken for me. I’ve made my decision; no late campaign for the risotto.', 'I’m getting the lemon and herb chicken. Looking forward to eating something I didn’t have to cook.'),
+    'main-served': alternatives('dev', 'main-served', 'Oh, yes. Let’s get into that.', 'Nice. I was about thirty seconds from getting impatient. Good timing.'),
+    'beat-cold': alternatives('dev', 'beat-cold', 'All right, easy start. What did you do today before this?', 'I can do an introduction without listing my achievements. Mechanic, plays basketball, not as good at it as he thinks. Your turn.'),
+    'beat-waiting-1': alternatives('dev', 'beat-waiting-1', 'I fixed three friends’ bikes last weekend. Mine still squeaks. I know exactly what’s wrong; apparently that was enough for me.', 'Thursday basketball is the one appointment I don’t try to make useful. We mostly argue about fouls.'),
+    'beat-eating-1': alternatives('dev', 'beat-eating-1', 'I keep wanting to make notes. No. I’m just going to enjoy eating it.', 'Good dinner. I’m not going to pick it apart while I’m eating. That’s a promise to myself.'),
+    'beat-after-1': alternatives('dev', 'beat-after-1', 'I called for a pass on Thursday, got the ball, and passed it straight back. Hadn’t planned beyond being loud.', 'I know the quick route home. I sometimes take the long one anyway. It’s good not being needed for twenty minutes.'),
+    'dessert-served': alternatives('dev', 'dessert-served', 'There it is. Yeah, I’ve still got room.', 'Okay. I was right to wait for dessert.'),
+    'boundary-warning': alternatives('dev', 'boundary-warning', 'Stop. I’m not okay with that.', 'No. I need you to drop that. I’m serious.'),
+    repair: alternatives('dev', 'repair', 'Thanks. I appreciate you owning it. I still need us to do this differently.', 'Okay. I’m willing to keep talking. Let’s leave the argument here.'),
+    'farewell-invite': alternatives('dev', 'farewell-invite', 'Right. I’ll walk out with you. I enjoyed having an evening someone else ran.', 'Come on, I’ll come to the door. I’m glad we did this.'),
+  },
+};
+
 const GUARDED_STANCES: readonly string[] = ['guarded', 'hurt', 'leaving'];
 /** A date who has been hurt, put on guard or is leaving speaks plainly: no biography, no warmth the evening did not earn. */
 export const isGuardedStance = (resolution?: string) => GUARDED_STANCES.includes(resolution ?? '');
@@ -277,7 +328,8 @@ export function getStoryCue(key: string, dateId: DateId, context: StoryCueContex
   const cue = key as StoryCueKey;
   const staffOnly = WAITER_ONLY_CUES[cue];
   if (staffOnly) return [{ ...staffOnly }];
-  const base = CUES[dateId][cue as Exclude<StoryCueKey, 'order-nudge'>];
+  const varied = STORY_CUE_ALTERNATIVES[dateId][cue as FrequentCueKey];
+  const base = varied ? varied[Math.abs(Math.trunc(context.variation ?? 0)) % varied.length] : CUES[dateId][cue as Exclude<StoryCueKey, 'order-nudge'>];
   if (!base) return [];
   // A hurt date still hears Eli's lines; only the date's own remark turns plain.
   const quiet = isGuardedStance(context.resolution) ? GUARDED[dateId][cue] : undefined;
@@ -325,6 +377,8 @@ export function getStoryCue(key: string, dateId: DateId, context: StoryCueContex
 /** Enumerated variants let the clip CLI pre-generate every fixed response. */
 export const STORY_CUE_VARIANTS: { id: string; context: StoryCueContext }[] = [
   { id: 'default', context: {} },
+  { id: 'variation-1', context: { variation: 1 } },
+  { id: 'variation-2', context: { variation: 2 } },
   ...DESSERTS.map(item => ({ id: item.id, context: { choice: item.id } })),
   ...DESSERTS.map(item => ({ id: `named-${item.id}`, context: { choice: item.id, named: true } })),
   ...['split', 'treat', 'separate'].map(choice => ({ id: choice, context: { choice } })),

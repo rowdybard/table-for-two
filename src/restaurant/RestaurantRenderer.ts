@@ -436,7 +436,7 @@ export class RestaurantRenderer {
       // The friend's date has their own glass, plate and interest on the other side of the table.
       const otherX = otherDate.humanId === 'h1' ? -.57 : .57, otherView = double.otherView;
       const table = !preview && seated && otherView ? this.dateTable(otherView, otherX, true, diningOffsetZ(state), false, this.tableScratch.otherGlass, this.tableScratch.otherPlate) : undefined;
-      actor.update(this.time, dt, speaking ? playback.emotion : resting, speaking, speaking ? playback.amplitude : 0, speaking || listening ? this.camera.position : speakerPosition ? gazeAt : partnerGaze, speed, { stance: otherDate.stance, attentive: !!listening, reducedMotion: this.reducedMotion.matches, table });
+      actor.update(this.time, dt, speaking ? playback.emotion : resting, speaking, speaking ? playback.amplitude : 0, speaking || listening ? this.camera.position : speakerPosition ? gazeAt : partnerGaze, speed, { stance: otherDate.stance, attentive: !!listening, reducedMotion: this.reducedMotion.matches, table, deliveryId: speaking ? playback.deliveryId : null });
       if (!preview) this.applyDateProps(actor, otherX, true);
     }
     if (otherHuman && this.friend) {
@@ -608,7 +608,7 @@ export class RestaurantRenderer {
     if (override.force) { this.date.playGesture(override.force as Parameters<RestaurantActor['playGesture']>[0]); override.force = undefined; }
     const pairX = state.doubleDate ? (state.doubleDate.localHumanId === 'h1' ? -.57 : .57) : 0;
     const table = this.dateTable(state, pairX, !!state.doubleDate, diningOffset, override.thinking ?? (this.dateThinking && !dateSpeaking), this.tableScratch.glass, this.tableScratch.plate);
-    this.date.update(this.time, dt, dateSpeaking ? playback.emotion : firstImpression, dateSpeaking, dateSpeaking ? playback.amplitude : 0, this.gaze, walkingSpeed, { stance: evening.stance, shared: evening.sharedActivities.length > 0, attentive: override.listening ?? !!listening, reducedMotion: this.reducedMotion.matches, table: dateSeated ? table : undefined });
+    this.date.update(this.time, dt, dateSpeaking ? playback.emotion : firstImpression, dateSpeaking, dateSpeaking ? playback.amplitude : 0, this.gaze, walkingSpeed, { stance: evening.stance, shared: evening.sharedActivities.length > 0, attentive: override.listening ?? !!listening, reducedMotion: this.reducedMotion.matches, table: dateSeated ? table : undefined, deliveryId: dateSpeaking ? playback.deliveryId : null });
     this.applyDateProps(this.date, pairX, !!state.doubleDate);
     if (state.doubleDate) this.updateDoubleActors(dt, state, playback);
     const scenarioService = (state.doubleDate?.scenario ?? evening.scenario)?.effects.service;
@@ -635,9 +635,9 @@ export class RestaurantRenderer {
     const waiterFacing = waiterDistance > .06 ? Math.atan2(waiterDirection.x, waiterDirection.z) : Math.atan2(this.gaze.x - this.waiter.root.position.x, this.gaze.z - this.waiter.root.position.z);
     this.waiter.root.rotation.y += Math.atan2(Math.sin(waiterFacing - this.waiter.root.rotation.y), Math.cos(waiterFacing - this.waiter.root.rotation.y)) * (1 - Math.exp(-dt * 4));
     const waiterEmotion = playback.speaker === 'waiter' ? playback.emotion : serviceEvening.incident?.event === 'spilled-drink' ? 'embarrassed' : 'neutral';
-    this.waiter.update(this.time, dt, waiterEmotion, playback.speaker === 'waiter', playback.amplitude, this.gaze, dt > 0 ? waiterStep / dt : 0, { shared: serving, reducedMotion: this.reducedMotion.matches });
+    this.waiter.update(this.time, dt, waiterEmotion, playback.speaker === 'waiter', playback.amplitude, this.gaze, dt > 0 ? waiterStep / dt : 0, { shared: serving, reducedMotion: this.reducedMotion.matches, deliveryId: playback.speaker === 'waiter' ? playback.deliveryId : null });
     const phoneActive = serviceEvening.incident?.event === 'disruptive-diner';
-    this.diner.update(this.time, dt, playback.speaker === 'diner' ? playback.emotion : phoneActive ? 'annoyed' : 'neutral', playback.speaker === 'diner', playback.amplitude, this.gaze, 0, { phoneActive, reducedMotion: this.reducedMotion.matches });
+    this.diner.update(this.time, dt, playback.speaker === 'diner' ? playback.emotion : phoneActive ? 'annoyed' : 'neutral', playback.speaker === 'diner', playback.amplitude, this.gaze, 0, { phoneActive, reducedMotion: this.reducedMotion.matches, deliveryId: playback.speaker === 'diner' ? playback.deliveryId : null });
     this.table.update(state);
     const windowTarget = this.table.targets.find(target => target.userData.target === 'window');
     if (windowTarget) windowTarget.position.z = -.8 - diningOffset;

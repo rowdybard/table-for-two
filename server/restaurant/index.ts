@@ -5,8 +5,8 @@ import { dirname, resolve, sep } from 'node:path';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { DATES, getDate, MODEL_RATES } from '../../src/restaurant/content';
 import { AUTHORED_UTTERANCES } from '../../src/restaurant/authored';
-import { CHARACTER_STORIES } from '../../src/restaurant/story';
 import { createBlindDate } from '../../src/restaurant/blind-date';
+import { soloSystem } from './conversation-prompt';
 import type { RestaurantScenarioId } from '../../src/restaurant/scenario-types';
 import { restaurantScenarioContext } from '../../src/restaurant/scenarios';
 import type { ClaudeModel, CostUsage, DateId, DinnerCommand, DinnerState, Emotion, ProviderStatus, SceneTurn, SceneUtterance, TurnEvent, TurnRequest } from '../../src/restaurant/types';
@@ -14,14 +14,12 @@ import { EVENING_ACTIONS, INTERACTION_TARGETS } from '../../src/restaurant/types
 import { DinnerScene, emptyUsage } from './scene';
 import { ACTIONS, anthropicAdapter, DateApiError, elevenLabsAdapter, EMOTIONS, SOCIAL_SIGNALS, speechText, type ClaudeAdapter, type ClaudeChunk, type ClaudeRequest, type SpeechAdapter, type SpeechRequest, type TokenUsage } from './providers';
 import { edgeSpeechAdapter, edgeSettings, EDGE_MODEL, EDGE_VOICES } from './edge-speech';
-import { AGENDA_INSTRUCTIONS, validAgendaAssessment } from './agendas';
-import { SKEPTICISM_INSTRUCTIONS } from './skepticism';
-import { BOUNDARY_INSTRUCTIONS, validBoundaryAssessment } from './boundaries';
-import { DATE_DIALOGUE_INSTRUCTIONS, SPOKEN_REGISTER, VOICE_REMINDER, alternatingMessages, deferrableCue, dialogueLoopContext, outputContract, tableNow } from './dialogue-policy';
+import { validAgendaAssessment } from './agendas';
+import { validBoundaryAssessment } from './boundaries';
+import { alternatingMessages, deferrableCue, dialogueLoopContext, tableNow } from './dialogue-policy';
 import { openRouterAdapter, openRouterSchemaInstructions } from './openrouter';
 import { hordeAdapter } from './horde';
 import { DOLPHIN_MODEL, HORDE_MODEL, isEarnedModel } from '../../src/restaurant/types';
-import { roleplayInstructions } from './roleplay';
 import { TURN_SCHEMA } from './providers';
 import { isSilentDialogueLine } from './providers';
 import { TABLETOP_ACTIONS } from '../../src/restaurant/tabletop';
@@ -224,7 +222,7 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
       }
     }
   };
-  const status = (): ProviderStatus => ({ claude: anthropicConfigured || dolphinConfigured || hordeConfigured, anthropic: anthropicConfigured, dolphin: dolphinConfigured, horde: hordeConfigured, speech: !!opts.speech || speechProvider === 'edge' || speechProvider === 'elevenlabs' && !!env.ELEVENLABS_API_KEY, speechProvider, speechModel, speechCostPer1K: speechRate * 1000, cachedSpeech: clips.some(clip => (clip.provider ?? 'elevenlabs') === (speechProvider === 'none' ? 'elevenlabs' : speechProvider) && clip.model === speechModel), development, models: selectableModels, defaultModel, sessionLimit, ...(!anthropicConfigured && !dolphinConfigured && !hordeConfigured ? { message: 'Configure a server conversation key for live dialogue. Scene interactions and free voice options remain available.' } : {}) });
+  const status = (): ProviderStatus => ({ claude: anthropicConfigured || dolphinConfigured || hordeConfigured, anthropic: anthropicConfigured, dolphin: dolphinConfigured, horde: hordeConfigured, conversationTimeoutMs: timeoutMs, hordeTimeoutMs: timeoutFor(HORDE_MODEL), speech: !!opts.speech || speechProvider === 'edge' || speechProvider === 'elevenlabs' && !!env.ELEVENLABS_API_KEY, speechProvider, speechModel, speechCostPer1K: speechRate * 1000, cachedSpeech: clips.some(clip => (clip.provider ?? 'elevenlabs') === (speechProvider === 'none' ? 'elevenlabs' : speechProvider) && clip.model === speechModel), development, models: selectableModels, defaultModel, sessionLimit, ...(!anthropicConfigured && !dolphinConfigured && !hordeConfigured ? { message: 'Configure a server conversation key for live dialogue. Scene interactions and free voice options remain available.' } : {}) });
   function authorize(req: IncomingMessage, id: string) {
     const s = sessions.get(id); if (!s) throw apiError(404, 'session_missing', 'This date session is no longer available.');
     const token = (req.headers.authorization || '').replace(/^Bearer /, ''); const a = Buffer.from(tokenHash(token)), b = Buffer.from(s.token);
@@ -239,21 +237,11 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
     record.subscribers.add(res);
     res.on('close', () => { record.subscribers.delete(res); if (!record.finished && !record.subscribers.size && (!record.pending || record.pending.destroyed) && s.turns.get(s.activeTurn || '') === record) s.controller?.abort(); });
   };
-  // The system prompt reads persona first, then the rules in a fixed order, then the output contract; how the
-  // character actually sounds comes last because the last thing read is the strongest pull on a small model.
-  const prompt = (s: Session, model: ClaudeModel) => {
-    const date = getDate(s.scene.state.dateId)!, blind = s.scene.state.blindDate ? createBlindDate(s.scene.state.blindDate.seed) : undefined;
-    // Preferences, favourite dishes and the dinner arc stay in the data; the prompt carries them once (or not at all).
-    const { voiceHabits, dinnerArc: _arc, preferences: _preferences, preferredMain: _main, preferredDessert: _dessert, occupation: _job, ...life } = blind?.biography ?? CHARACTER_STORIES[date.id];
-    const persona = `You are ${date.name}, an adult (${date.age}) fictional AI date in a first-person restaurant game. Pronouns: ${date.pronouns}. Have your own opinions and react the way you really would. Never speak for the human.\nPersonality: ${blind?.personality ?? date.personality}\nLikes and dislikes: ${blind?.preferences ?? date.preferences}\nBoundaries: ${(blind?.boundaries ?? date.boundaries).replace(/\.$/, '')}.\nYour life (draw on it only where the talk goes there and reveal it slowly; its disclosure rules apply): ${JSON.stringify(life)}${blind ? '\nThis is a blind date with a newly seeded personality. The reused appearance and name do not supply a preset biography. Follow only the life above; discover chemistry through the conversation.' : ''}`;
-    return [persona, DATE_DIALOGUE_INSTRUCTIONS, SKEPTICISM_INSTRUCTIONS, AGENDA_INSTRUCTIONS, BOUNDARY_INSTRUCTIONS, roleplayInstructions(model), outputContract({ emotions: EMOTIONS, actions: ACTIONS, signals: SOCIAL_SIGNALS }), SPOKEN_REGISTER, `YOUR VOICE: ${voiceHabits}`, VOICE_REMINDER].join('\n');
-  };
-
   async function generate(s: Session, request: TurnRequest, record: TurnRecord, controller: AbortController, reservation: number, day: string, system: string, messages: { role: 'user' | 'assistant'; content: string }[], estimatedInput: number) {
     const generation = s.generation, started = now(); let text = '', emitted = 0, reportedInput = false, reportedOutput = false;
     const counts: TokenUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
     const timer = setTimeout(() => controller.abort(apiError(504, 'timeout', request.model === HORDE_MODEL ? 'The community AI queue took too long. Please try another turn shortly.' : 'The date took too long to respond. Please try again.')), timeoutFor(request.model));
-    emit(record, { type: 'start', generation }); s.scene.state.usage.claudeRequests++;
+    emit(record, { type: 'start', generation, model: request.model }); s.scene.state.usage.claudeRequests++;
     try {
       for await (const chunk of claude.stream({ model: request.model, system, messages, maxTokens }, controller.signal)) {
         if (controller.signal.aborted || generation !== s.generation) throw apiError(499, 'interrupted', 'Response interrupted.');
@@ -467,7 +455,7 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
     request.model = modelFor(request.model, s.scene.state, { text: request.text, recentTurns: s.history });
     s.scene.state.conversationModel = request.model;
     const previous = s.generations.get(s.generation); if (previous) updatePlaybackHistory(s, previous);
-    const system = prompt(s, request.model), scene = s.scene.snapshot();
+    const scene = s.scene.snapshot(), system = soloSystem({ dateId: scene.dateId, blindDate: scene.blindDate, model: request.model });
     const recentDelivered = [...s.generations.values()].flatMap(generation => generation.lines.filter(line => generation.playback.get(keyFor(line))?.completed)).slice(-8);
     const date = getDate(scene.dateId)!.name, e = scene.evening;
     // How the words arrived. The date's last reply is the generation the previous human turn opened (an interrupt

@@ -14,6 +14,8 @@ export interface PerformanceInput {
   attentive: boolean;
   /** prefers-reduced-motion: keep expression, suppress idle movement. */
   reducedMotion: boolean;
+  /** Unique actual speech/caption presentation. Null cancels its transient accents. */
+  deliveryId?: string | number | null;
   /** Added to the expression's smile, -1..1: how the evening is going shows even in a resting face. */
   smileBias?: number;
   /** 0..1: how readily the eyes drift off the person in front of them. */
@@ -114,6 +116,8 @@ export class FacialPerformance {
   private idleRoll = 0;
   private nextIdleShift = 0;
   private lidOpen = 1;
+  private lastDelivery: string | number | null | undefined;
+  private deliveryAge = Infinity;
 
   constructor(seed: number) {
     this.rand = randomStream(seed * 7919 + 17);
@@ -127,7 +131,14 @@ export class FacialPerformance {
     const pose = this.pose;
     dt = clamp(dt, 0, .1);
     const target = EXPRESSIONS[input.emotion];
-    if (input.emotion !== this.emotion) {
+    const newDelivery = input.deliveryId != null && input.deliveryId !== this.lastDelivery;
+    if (newDelivery || (input.deliveryId === null && this.lastDelivery != null)) {
+      this.deliveryAge = newDelivery ? 0 : Infinity;
+      this.beatStart = -1; this.nodStart = -1; this.speechPeak = 0;
+      pose.beat = 0;
+    }
+    if (input.deliveryId !== undefined) this.lastDelivery = input.deliveryId;
+    if (input.emotion !== this.emotion || newDelivery) {
       // A new feeling arrives with a blink and a tiny gaze reset, like a real reaction.
       this.emotion = input.emotion;
       this.emotionAge = 0;
@@ -135,6 +146,7 @@ export class FacialPerformance {
       if (!input.reducedMotion) this.nextSaccade = time + .25 + this.rand() * .3;
     }
     this.emotionAge += dt;
+    this.deliveryAge += dt;
     const motion = input.reducedMotion ? 0 : 1;
 
     // Expression: features attack quickly and relax slowly so smiles bloom rather than snap.
@@ -149,7 +161,8 @@ export class FacialPerformance {
     // Brows punctuate speech on amplitude peaks, and lift at the start of a surprised beat.
     const peak = input.speaking ? Math.max(0, clamp(input.amplitude, 0, 1) - this.speechPeak) : 0;
     this.speechPeak = approach(this.speechPeak, input.speaking ? clamp(input.amplitude, 0, 1) : 0, dt, 5);
-    const speechLift = peak * .0028 * motion;
+    const deliveryAccent = Math.sin(Math.PI * clamp(this.deliveryAge / .65, 0, 1));
+    const speechLift = (peak * .0028 + deliveryAccent * .0012) * motion;
     pose.browAngle = settle(pose.browAngle, target.browAngle - peak * .02, 6, 3);
     pose.browLift = settle(pose.browLift, target.browLift + speechLift, 9, 3.5);
     const jawSurprise = target.jaw * Math.exp(-this.emotionAge * .55);

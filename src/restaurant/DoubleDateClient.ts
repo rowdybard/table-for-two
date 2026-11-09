@@ -12,6 +12,8 @@ interface Callbacks {
   onExpired?(message: string): void;
 }
 const storageKey = 'table-for-two-double-date';
+export const ROOM_REQUEST_TIMEOUT_MS = 15000;
+export interface DoubleDateClientOptions { requestTimeoutMs?: number }
 class RoomRequestError extends Error {
   constructor(message: string, readonly status: number) { super(message); this.name = 'RoomRequestError'; }
 }
@@ -31,7 +33,7 @@ export class DoubleDateClient {
   private errorKey = '';
   private expiryNotified = false;
 
-  constructor(private readonly callbacks: Callbacks) {}
+  constructor(private readonly callbacks: Callbacks, private readonly options: DoubleDateClientOptions = {}) {}
   get credentials() { return this.membership; }
   get state() { return this.room; }
   get active() { return !!this.membership; }
@@ -150,9 +152,20 @@ export class DoubleDateClient {
     if (this.polling && !this.disposed) this.timer = setTimeout(() => void this.poll(), this.failures ? Math.min(3000, 300 * this.failures) : 100);
   }
   private async json<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
-    const response = await fetch(path, { method: body === undefined ? 'GET' : 'POST', headers: this.headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new RoomRequestError(typeof data.error === 'string' ? data.error : data.error?.message ?? data.message ?? `Table request failed (${response.status}).`, response.status);
-    return data as T;
+    const controller = new AbortController();
+    const configured = this.options.requestTimeoutMs ?? ROOM_REQUEST_TIMEOUT_MS;
+    const timeout = setTimeout(() => controller.abort(), Number.isFinite(configured) ? Math.max(1, Math.min(60000, configured)) : ROOM_REQUEST_TIMEOUT_MS);
+    const cancel = () => controller.abort(signal?.reason);
+    signal?.addEventListener('abort', cancel, { once: true });
+    if (signal?.aborted) cancel();
+    try {
+      const response = await fetch(path, { method: body === undefined ? 'GET' : 'POST', headers: this.headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: controller.signal });
+      const data = await response.json();
+      if (!response.ok) throw new RoomRequestError(typeof data.error === 'string' ? data.error : data.error?.message ?? data.message ?? `Table request failed (${response.status}).`, response.status);
+      return data as T;
+    } catch (error) {
+      if (controller.signal.aborted && !signal?.aborted) throw new Error('The table took too long to respond. You can try again.');
+      throw error;
+    } finally { clearTimeout(timeout); signal?.removeEventListener('abort', cancel); }
   }
 }

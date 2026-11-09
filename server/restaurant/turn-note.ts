@@ -4,6 +4,8 @@
 import type { DinnerState, SceneUtterance, TurnVia } from '../../src/restaurant/types';
 import type { RestaurantScenarioState } from '../../src/restaurant/scenario-types';
 import { TRIMMED_NOTE, alternatingMessages, humanVoice, replyShapeHint, START_NOTE } from './dialogue-policy';
+import { createBlindDate } from '../../src/restaurant/blind-date';
+import { conversationContentNote } from '../../src/restaurant/conversation-content';
 
 type Entry = { role: 'user' | 'assistant'; content: string };
 
@@ -267,6 +269,12 @@ export function turnNote(input: TurnNoteInput): string {
   const boundaries = boundaryLines(input.boundaries);
   if (boundaries.length) out.push(`Boundaries in play:\n${boundaries.join('\n')}`);
   if (input.avoid.length) out.push(`Do not bring up unprompted: ${input.avoid.join(', ')}.`);
+  const blind = scene.blindDate ? createBlindDate(scene.blindDate.seed) : undefined;
+  const material = conversationContentNote({ dateId: scene.dateId, latestHumanText: input.humanText, memory: input.memory,
+    recentDateLines: input.recentDelivered?.filter(line => line.speaker === 'date').map(line => line.text),
+    personalDisclosureAllowed: e.stance === 'comfortable', stoppedTopics: input.avoid, maxEstimatedTokens: 590,
+    ...(blind ? { seeds: blind.conversationSeeds ?? [], includeVoiceExample: false } : {}) });
+  if (material) out.push(material);
   if (input.via === 'voice') out.push('They said this out loud; it is an automatic transcript from a small on-device recognizer and can contain mishearings.');
   const after: string[] = [];
   // Typing is not talking: only the spoken case says they talked over the date or kept going. A typed answer that

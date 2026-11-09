@@ -4,6 +4,8 @@ Read this before changing the project. `README.md` describes setup and the curre
 
 Canonical source: [rowdybard/table-for-two](https://github.com/rowdybard/table-for-two), branch `main`.
 
+Active conversation-depth implementation goal and verification limits: [docs/CONVERSATION_DEPTH_PLAN.md](docs/CONVERSATION_DEPTH_PLAN.md). Preserve its no-local-game-launch and no-live-audition constraints.
+
 ## Product direction
 
 This is a first-person restaurant dating game, not a website with a 3D background. The reference is *Scam With Your Friends*: walking, looking, physical interactions, friends sharing awkward moments. Keep a fun, flirty K-pop mood and a warm, believable restaurant.

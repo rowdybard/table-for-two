@@ -2,7 +2,6 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { getDate } from '../../src/restaurant/content';
 import { scenePresenceAvailable } from '../../src/restaurant/scenario-care';
 import { scenarioMechanicsContext } from '../restaurant/scenario-effects';
-import { CHARACTER_STORIES } from '../../src/restaurant/story';
 import type { DoubleDateActorId, DoubleDateRoomState, DoubleDialogueLine, DoubleHumanId, DoubleTurnRequest } from '../../src/restaurant/double-date-types';
 import type { Emotion, SocialResponse } from '../../src/restaurant/types';
 import type { AgendaAssessment } from '../../src/restaurant/agenda-types';
@@ -18,7 +17,7 @@ import type { ConversationRoutingContext } from '../restaurant/conversation-rout
 import { MEMORY_REJECT } from '../restaurant/memory';
 import { tableFacts } from '../restaurant/table-facts';
 import { QUIET_GAP_SECONDS, heardPrefix } from '../restaurant/turn-note';
-import { doubleMessages, doubleSystem, doubleTurnNote, friendNames, renderDoubleHistory } from './table-note';
+import { doubleMessages, doubleSystem, doubleTurnNote, friendNames, presetDateSheet, renderDoubleHistory } from './table-note';
 import type { Couple, DateSheet, DoubleFlow } from './table-note';
 
 const humans: DoubleHumanId[] = ['h1', 'h2'];
@@ -27,10 +26,11 @@ const actors: DoubleDateActorId[] = ['d1', 'd2'];
 const HISTORY_ENTRIES = 60, RECENT_ENTRIES = 40;
 const emotions = { type: 'string', enum: EMOTIONS };
 const socialSchema = { type: 'object', additionalProperties: false, required: ['signal', 'reason', 'wantsToLeave', 'boundary'], properties: { signal: { type: 'string', enum: SOCIAL_SIGNALS }, reason: { type: 'string' }, wantsToLeave: { type: 'boolean' }, boundary: BOUNDARY_SCHEMA } };
-const schema = { type: 'object', additionalProperties: false, required: ['utterances', 'dateUpdates'], properties: {
+export const DOUBLE_TURN_SCHEMA = { type: 'object', additionalProperties: false, required: ['utterances', 'dateUpdates'], properties: {
   utterances: { type: 'array', minItems: 0, maxItems: 2, items: { type: 'object', additionalProperties: false, required: ['speaker', 'text', 'emotion'], properties: { speaker: { type: 'string', enum: ['d1', 'd2', 'waiter', 'diner'] }, text: { type: 'string' }, emotion: emotions } } },
   dateUpdates: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'object', additionalProperties: false, required: ['actorId', 'emotion', 'memory', 'social', 'agenda'], properties: { actorId: { type: 'string', enum: actors }, emotion: emotions, memory: { type: 'string' }, social: socialSchema, agenda: AGENDA_SCHEMA } } },
 } };
+const schema = DOUBLE_TURN_SCHEMA;
 type Delivery = { completed: boolean; playedSeconds: number };
 type History = { human?: DoubleHumanId; text?: string; target?: string; lines?: DoubleDialogueLine[]; authored?: boolean };
 type QueuedTurn = { human: DoubleHumanId; request: DoubleTurnRequest; fingerprint: string; key: string; boundaries: Record<DoubleHumanId, ReturnType<DoubleTableScene['boundaryContext']>>; /** Questions each date was still waiting on, and the quiet before this turn, as they stood when it was spoken. */ pending: Record<DoubleHumanId, string | null>; quiet: number };
@@ -225,10 +225,7 @@ export class DoubleConversation {
         outputSchema.properties.utterances.items.properties.speaker.enum = [...actors.filter(actor => this.availableForDialogue(actor)), 'waiter', 'diner'];
         const names = friendNames(this.state.members), dateOf = (id: DoubleDateActorId) => this.state.dates.find(date => date.id === id)!;
         const dateNames = { d1: getDate(dateOf('d1').dateId)!.name, d2: getDate(dateOf('d2').dateId)!.name };
-        const sheets: DateSheet[] = actors.map(id => {
-          const actor = dateOf(id), { voiceHabits, dinnerArc: _arc, preferences: _preferences, preferredMain: _main, preferredDessert: _dessert, occupation: _job, ...life } = CHARACTER_STORIES[actor.dateId];
-          return { actorId: id, humanId: actor.humanId, date: getDate(actor.dateId)!, life, voiceHabits };
-        });
+        const sheets: DateSheet[] = actors.map(id => { const actor = dateOf(id); return presetDateSheet(id, actor.humanId, actor.dateId); });
         const system = doubleSystem(sheets, roleplayInstructions(effectiveModel), { emotions: EMOTIONS, signals: SOCIAL_SIGNALS });
         const couples: Couple[] = actors.map(id => {
           const actor = dateOf(id), view = this.state.views[actor.humanId], available = this.availableForDialogue(id);
@@ -263,7 +260,7 @@ export class DoubleConversation {
             }
           }
           if (controller.signal.aborted || generation !== this.state.generation) throw error('Conversation interrupted.', 'interrupted', 499);
-          const parsed = validate(raw);
+          const parsed = validateDoubleTurn(raw);
           for (const update of parsed.dateUpdates) {
             if (!this.availableForDialogue(update.actorId)) continue;
             const actor = this.state.dates.find(item => item.id === update.actorId)!;
@@ -359,7 +356,7 @@ function validateLine(line: unknown): { speaker: 'd1' | 'd2' | 'waiter' | 'diner
   if (!record(line) || !exact(line, ['speaker', 'text', 'emotion']) || !['d1', 'd2', 'waiter', 'diner'].includes(line.speaker) || typeof line.text !== 'string' || !line.text.trim() || line.text.length > 420 || /[\u0000-\u001f]/.test(line.text) || !EMOTIONS.includes(line.emotion)) throw error('A character returned an invalid line.');
   return line as ReturnType<typeof validateLine>;
 }
-function validate(text: string): { utterances: ReturnType<typeof validateLine>[]; dateUpdates: { actorId: DoubleDateActorId; emotion: Emotion; memory: string; social: SocialResponse; agenda?: AgendaAssessment }[] } {
+export function validateDoubleTurn(text: string): { utterances: ReturnType<typeof validateLine>[]; dateUpdates: { actorId: DoubleDateActorId; emotion: Emotion; memory: string; social: SocialResponse; agenda?: AgendaAssessment }[] } {
   let value: unknown; try { value = JSON.parse(text); } catch { throw error('The table returned incomplete dialogue. Try another turn.'); }
   if (!record(value) || !exact(value, ['utterances', 'dateUpdates']) || !Array.isArray(value.utterances) || value.utterances.length > 2 || !Array.isArray(value.dateUpdates) || value.dateUpdates.length !== 2) throw error('The table returned invalid dialogue.');
   const utterances = value.utterances.filter((line: unknown) => !isSilentDialogueLine(line, ['d1', 'd2', 'waiter', 'diner']));
@@ -370,5 +367,5 @@ function validate(text: string): { utterances: ReturnType<typeof validateLine>[]
     if (!record(update) || !exact(update, ['actorId', 'emotion', 'memory', 'social', 'agenda']) || !actors.includes(update.actorId) || seen.has(update.actorId) || !EMOTIONS.includes(update.emotion) || typeof update.memory !== 'string' || update.memory.length > MEMORY_REJECT || !record(update.social) || !exact(update.social, ['signal', 'reason', 'wantsToLeave', 'boundary']) || !SOCIAL_SIGNALS.includes(update.social.signal) || typeof update.social.reason !== 'string' || update.social.reason.length > 180 || typeof update.social.wantsToLeave !== 'boolean' || (update.social.boundary !== undefined && !validBoundaryAssessment(update.social.boundary)) || (update.agenda !== undefined && !validAgendaAssessment(update.agenda))) throw error('A character returned an invalid emotional update.');
     seen.add(update.actorId);
   }
-  return { ...value, utterances } as ReturnType<typeof validate>;
+  return { ...value, utterances } as ReturnType<typeof validateDoubleTurn>;
 }

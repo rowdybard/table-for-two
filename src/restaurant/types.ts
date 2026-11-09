@@ -82,10 +82,10 @@ export type DinnerCommand =
 export type TurnVia = 'voice' | 'typed';
 export interface TurnRequest { turnId: string; text: string; model: ClaudeModel; via?: TurnVia }
 export type TurnEvent =
-  | { type: 'start'; generation: number }
+  | { type: 'start'; generation: number; model?: ClaudeModel }
   | { type: 'utterance'; generation: number; index: number; utterance: SceneUtterance }
   | { type: 'state'; state: DinnerState }
   | { type: 'done'; generation: number }
   | { type: 'error'; message: string; code?: string; details?: { field: string; index?: number } };
-export interface ProviderStatus { claude: boolean; anthropic?: boolean; dolphin?: boolean; horde?: boolean; speech: boolean; speechProvider?: 'edge' | 'elevenlabs' | 'none'; speechModel?: string; speechCostPer1K?: number; cachedSpeech?: boolean; development: boolean; models: ClaudeModel[]; defaultModel: ClaudeModel; sessionLimit: number; message?: string }
-export interface AudioPlayback { speaker: Speaker | null; amplitude: number; emotion: Emotion; caption: string; actorId?: import('./double-date-types').DoubleSpeakerId }
+export interface ProviderStatus { claude: boolean; anthropic?: boolean; dolphin?: boolean; horde?: boolean; conversationTimeoutMs?: number; hordeTimeoutMs?: number; speech: boolean; speechProvider?: 'edge' | 'elevenlabs' | 'none'; speechModel?: string; speechCostPer1K?: number; cachedSpeech?: boolean; development: boolean; models: ClaudeModel[]; defaultModel: ClaudeModel; sessionLimit: number; message?: string }
+export interface AudioPlayback { speaker: Speaker | null; amplitude: number; emotion: Emotion; caption: string; actorId?: import('./double-date-types').DoubleSpeakerId; deliveryId?: string | number | null }

@@ -2,6 +2,7 @@ import { MENU } from './content';
 import { DESSERTS } from './evening';
 import { getStoryCue, guardedLine, isGuardedStance, spokenDessert, spokenDish, type CharacterStory, type StoryCueContext } from './story';
 import type { DateId, Emotion, SceneUtterance } from './types';
+import type { ConversationSeed } from './conversation-content';
 
 export interface BlindDateIdentity {
   version: 1;
@@ -13,6 +14,8 @@ export interface BlindDateIdentity {
   boundaries: string;
   opening: string;
   biography: CharacterStory;
+  /** Private conversational material selected independently of the reused visual rig. */
+  conversationSeeds: readonly ConversationSeed[];
 }
 function generator(seed: string) {
   let value = 2166136261;
@@ -33,6 +36,102 @@ const jobs = [
   ['train dispatcher', 'taking an unplanned holiday where someone else chooses the route', 'notices how people behave when plans change'],
   ['bakery delivery coordinator', 'learning one difficult pastry without help from the bakers', 'has strong opinions about which streets smell best in the morning'],
 ] as const;
+const conversationSeed = (id: string, kind: ConversationSeed['kind'], text: string, topics: readonly string[], retellKeys: readonly string[], personal = false): ConversationSeed => ({ id: `blind-${id}`, kind, text, topics, retellKeys, ...(personal ? { personal } : {}) });
+
+/** Three authored pieces for each existing job/ambition tuple, in exactly the same order as jobs. */
+export const BLIND_CONVERSATION_SEEDS: readonly (readonly ConversationSeed[])[] = [
+  [
+    conversationSeed('sound-cable', 'anecdote', 'At a sound check, they spent ten minutes hunting a hum before discovering a singer had plugged a tiny desk fan into the guitar amp. The fan stayed; the hum did not.', ['work', 'music', 'bands', 'sound'], ['desk fan in the guitar amp', 'hunting the hum']),
+    conversationSeed('sound-room', 'opinion', 'They would choose a small room where people actually listen over a huge show filmed through a wall of phones. An imperfect live version can be the one worth keeping.', ['music', 'concerts', 'phones', 'live'], ['small room where people listen', 'wall of phones']),
+    conversationSeed('sound-listening-night', 'desire', 'They want their local-band listening night to include one song each musician is almost embarrassed to love. The event has no booked date yet; they are still working out who to ask.', ['music', 'bands', 'plans', 'ambition'], ['embarrassed to love one song', 'local-band listening night'], true),
+  ],
+  [
+    conversationSeed('clay-wobbly-cup', 'anecdote', 'A student apologized for a lopsided cup, then came back a week later carrying it full of tea. They now use that cup as the example of a successful class.', ['work', 'teaching', 'pottery', 'cups'], ['lopsided cup full of tea', 'successful class']),
+    conversationSeed('clay-neat-shelves', 'contradiction', 'They defend crooked handmade cups and then line every tool up square with the shelf edge. They know exactly how that sounds.', ['pottery', 'habits', 'perfection', 'work'], ['crooked cups and straight tools', 'square with the shelf edge']),
+    conversationSeed('clay-imperfect-collection', 'desire', 'They are trying to make a small collection of imperfect cups that feel good in the hand. They keep smoothing away the very irregularities they meant to leave; the collection is unfinished.', ['pottery', 'cups', 'making', 'ambition'], ['smoothing away the irregularities', 'imperfect cup collection'], true),
+  ],
+  [
+    conversationSeed('garden-mystery-seedlings', 'anecdote', 'A tray at the community plot lost its labels. Everyone adopted a mystery seedling, and one proud tomato owner spent weeks raising a very healthy marigold.', ['garden', 'plants', 'neighbors', 'work'], ['tomato was a marigold', 'mystery seedlings']),
+    conversationSeed('garden-window-herbs', 'opinion', 'They think a pot of herbs someone actually uses is more impressive than a spotless garden nobody touches. A plant is allowed to look as though dinner happened.', ['garden', 'food', 'herbs', 'cooking'], ['a plant dinner happened to', 'herbs someone actually uses']),
+    conversationSeed('garden-rooftop', 'desire', 'They want the rooftop herb garden with their neighbor to have enough room for two chairs, not just more planters. It is still a plan; agreeing what to grow has been easier than making space to sit.', ['garden', 'neighbors', 'home', 'ambition'], ['two chairs on the rooftop', 'more planters than seats'], true),
+  ],
+  [
+    conversationSeed('costume-backward-cape', 'anecdote', 'An actor put a cape on backward and insisted it was a bold character choice. They moved the fastening before the next show and let the actor keep the explanation.', ['work', 'theater', 'clothes', 'mistakes'], ['backward cape', 'bold character choice']),
+    conversationSeed('costume-movie-choice', 'contradiction', 'They can rescue a torn costume with minutes to spare, but choosing a film at home can take longer than the repair. A real deadline makes them remarkably decisive.', ['clothes', 'movies', 'decisions', 'work'], ['film takes longer than a repair', 'decisive with a deadline']),
+    conversationSeed('costume-own-outfit', 'desire', 'They want to design one outfit without a director giving notes. They have sketches, but keep inventing an imaginary director who wants another revision.', ['clothes', 'theater', 'design', 'ambition'], ['imaginary director giving notes', 'one outfit of their own'], true),
+  ],
+  [
+    conversationSeed('aquarium-food-thief', 'anecdote', 'The fish that steals everyone else\'s food once ignored a perfectly placed serving until a smaller fish approached it. Apparently it tastes better when somebody else wanted it.', ['work', 'fish', 'animals', 'food'], ['fish food tastes better stolen', 'smaller fish approached']),
+    conversationSeed('aquarium-patient-looking', 'opinion', 'They like watching one ordinary creature for a few minutes more than rushing past a hundred impressive ones. Most of the good bits happen after people stop posing for a photo.', ['animals', 'aquarium', 'photos', 'patience'], ['one ordinary creature', 'after people stop posing']),
+    conversationSeed('aquarium-tide-film', 'desire', 'They are learning to film tide pools on weekend trips. Their favorite attempt is mostly a crab refusing to emerge; they want to get better without making the animals perform.', ['animals', 'sea', 'film', 'ambition'], ['crab refusing to emerge', 'tide-pool film'], true),
+  ],
+  [
+    conversationSeed('radio-silent-kettle', 'anecdote', 'They once recorded a beautiful interview and a much louder office kettle. The guest cheerfully offered to re-create their most heartfelt answer after the tea was made.', ['work', 'radio', 'interviews', 'tea'], ['office kettle interview', 'heartfelt answer after tea']),
+    conversationSeed('radio-alarm', 'contradiction', 'They make calm, organized radio before most people wake up, then negotiate with an alarm clock as if it were an unreasonable coworker.', ['work', 'mornings', 'sleep', 'habits'], ['alarm clock coworker', 'calm radio before sunrise']),
+    conversationSeed('radio-strange-jobs', 'desire', 'They want to pitch a show about strange jobs, with workers explaining one thing outsiders always get wrong. They have a list of possible guests, not an approved show.', ['work', 'radio', 'people', 'ambition'], ['one thing outsiders get wrong', 'strange-jobs show'], true),
+  ],
+  [
+    conversationSeed('model-tiny-bench', 'anecdote', 'A client inspected an architectural model and moved a tiny bench so the miniature residents could have a nicer view. They left it there and adjusted the drawing.', ['work', 'buildings', 'design', 'details'], ['miniature residents nicer view', 'tiny bench moved']),
+    conversationSeed('model-useful-offcuts', 'contradiction', 'They dislike clutter but keep a box of model-making offcuts because each one could become the exact piece they need. They will admit the box is beginning to need its own room.', ['home', 'habits', 'making', 'clutter'], ['offcut box needs its own room', 'the exact piece they need']),
+    conversationSeed('model-childhood-street', 'desire', 'They are making a tiny replica of their childhood street. They keep wanting to include the crooked fence as they remember it, rather than straighten it to make the model look better.', ['home', 'childhood', 'making', 'ambition'], ['crooked childhood fence', 'tiny childhood street'], true),
+  ],
+  [
+    conversationSeed('records-biscuit', 'anecdote', 'A record player arrived with a note saying it sounded crunchy. There was a small biscuit under the platter. The owner said they were relieved the description had been accurate.', ['work', 'music', 'records', 'repairs'], ['biscuit under the platter', 'record player sounded crunchy']),
+    conversationSeed('records-bad-pop', 'opinion', 'They do not believe a record needs to be rare or tasteful to deserve playing. A ridiculous chorus that gets everyone singing has done its job.', ['music', 'pop', 'records', 'taste'], ['ridiculous chorus did its job', 'rare is not the point']),
+    conversationSeed('records-worst-party', 'desire', 'They want to host a bring-your-worst-record party where every guest gets one uninterrupted song. They have not hosted it yet, partly because they keep changing their own nomination.', ['music', 'friends', 'parties', 'ambition'], ['one uninterrupted terrible song', 'worst-record party'], true),
+  ],
+  [
+    conversationSeed('museum-dinosaur-map', 'anecdote', 'During a school visit, a child demanded to know where the museum kept its live dinosaurs. They made a map of the exhibits together, with an extremely clear distinction between alive and enormous.', ['work', 'museum', 'teaching', 'dinosaurs'], ['live dinosaur map', 'alive and enormous']),
+    conversationSeed('museum-no-exam', 'opinion', 'They think a museum visit should leave someone with one thing they want to tell a friend, not the feeling they have failed an exam.', ['museum', 'learning', 'art', 'school'], ['museum is not an exam', 'one thing to tell a friend']),
+    conversationSeed('museum-no-lecture', 'desire', 'They are planning a late-night museum event without a formal lecture. They want people to choose an object and argue about it over a drink, and are still figuring out how to persuade the committee.', ['museum', 'art', 'plans', 'ambition'], ['argue over one object', 'museum night without lectures'], true),
+  ],
+  [
+    conversationSeed('swim-forgotten-towel', 'anecdote', 'They packed snacks for everyone after a swimming session, then realized their own towel was still at home. The snacks were excellent; drying off was less well organized.', ['work', 'swimming', 'friends', 'food'], ['snacks but no towel', 'drying off less organized']),
+    conversationSeed('swim-last-place', 'contradiction', 'They tell nervous swimmers that getting in counts as a win, then become surprisingly competitive about catching the next buoy themselves.', ['swimming', 'competition', 'learning', 'habits'], ['getting in counts as a win', 'competitive about the next buoy']),
+    conversationSeed('swim-relay', 'desire', 'They want to finish an open-water relay with friends without quietly doing all the organizing. The relay is still ahead of them; asking someone else to handle transport is the next small step.', ['swimming', 'friends', 'plans', 'ambition'], ['relay without organizing everything', 'someone else handles transport'], true),
+  ],
+  [
+    conversationSeed('trains-platform-soup', 'anecdote', 'A traveler once thanked them for fixing a delay they had not fixed, because the extra wait had allowed time for a very good bowl of soup. They accepted credit for the soup alone.', ['work', 'trains', 'travel', 'food'], ['accepted credit for the soup', 'delay bowl of soup']),
+    conversationSeed('trains-off-duty', 'contradiction', 'They want an unplanned holiday but instinctively check the last train before agreeing to anything. Being off duty apparently requires some preparation.', ['travel', 'plans', 'work', 'habits'], ['off duty requires preparation', 'checking the last train']),
+    conversationSeed('trains-surprise-route', 'desire', 'They want to take a holiday where someone else chooses the route. They are practicing by agreeing not to inspect the plan in advance, rather than secretly dispatching the whole trip.', ['travel', 'trust', 'holidays', 'ambition'], ['secretly dispatching the holiday', 'someone else chooses the route'], true),
+  ],
+  [
+    conversationSeed('bakery-warm-van', 'anecdote', 'A delivery route once left them smelling so strongly of warm bread that a stranger followed them off the bus to ask where breakfast was happening. They gave directions, not a free loaf.', ['work', 'bread', 'mornings', 'food'], ['followed the bread smell off the bus', 'directions not a free loaf']),
+    conversationSeed('bakery-city-smells', 'opinion', 'They rank streets by how they smell before breakfast. A longer walk past a bakery beats a shortcut beside the bins, and they will defend those extra minutes.', ['city', 'walks', 'breakfast', 'food'], ['rank streets by breakfast smell', 'shortcut beside the bins']),
+    conversationSeed('bakery-own-pastry', 'desire', 'They are trying to learn one difficult pastry without asking the bakers to rescue it. The current result tastes better than it looks; they want to serve a version they finished themselves.', ['baking', 'food', 'learning', 'ambition'], ['pastry without a rescue', 'tastes better than it looks'], true),
+  ],
+];
+
+export const BLIND_VULNERABILITY_MOTIVES = [
+  'Keeps enlarging the plan for {ambition}; choosing a first version would mean leaving other good ideas out.',
+  'Worries that asking for help with {ambition} will turn a personal project into something everyone else gets to direct.',
+  'Wants {ambition} to stay enjoyable, and resists turning every interest into a second job or something to sell.',
+  'Finds it easier to meet somebody else\'s deadline than to protect time for {ambition}; an evening of their own still feels negotiable.',
+  'Keeps asking for opinions about {ambition}, then loses track of which decision was theirs in the first place.',
+  'Is used to being competent at work and finds being a beginner at {ambition} unexpectedly embarrassing.',
+  'Can make a convincing plan for {ambition} over and over; starting the dull first task is the part they avoid.',
+  'Would rather keep {ambition} small and personal than accept an impressive opportunity that changes why they wanted it.',
+  'Compares the rough work for {ambition} with other people\'s finished results, and forgets they are seeing different stages.',
+  'Wants someone to be pleased about {ambition} without immediately suggesting fixes; advice can make them stop sharing it.',
+  'Worries about whether {ambition} will still matter after the first exciting week, and is trying to trust small regular effort.',
+  'Can joke about {ambition} so quickly that people miss how much it actually matters; saying one plain sentence about it feels harder.',
+] as const;
+
+/** Three openings per existing rhythm: sociable, direct, quiet, and easygoing. */
+export const BLIND_OPENING_TEMPLATES = [
+  'There you are. I promised myself I’d leave work stories at the door. I’m giving that promise about five minutes.',
+  'Hi! I was early, so I’ve already changed my mind about dinner twice. Very decisive first impression.',
+  'Hi. I nearly rehearsed an introduction. Then I remembered you’d be allowed to answer, and the plan fell apart.',
+  'Hi. I’m glad you came. I vote we skip the impressive introductions and find out whether we actually enjoy dinner together.',
+  'Hi. Honest question: are we doing the polished first-date version of ourselves, or can I start with the ordinary one?',
+  'Hi. I’m glad we’re doing this. I’d rather have one good conversation than spend dinner trying to sound impressive.',
+  'Hi. This is a good table. Somewhere I can hear you without pretending I caught the last sentence.',
+  'Hi. I’m glad you’re here. I’m better at a conversation than an entrance.',
+  'Hi. I haven’t prepared anything clever. That saves us both a little time.',
+  'Hi. I had a whole clever introduction on the way here. Apparently I’ve decided to start with “hi.”',
+  'Hi. Good to meet you. Getting here was the organized part; I’m happy to see how dinner goes.',
+  'Hi. I’m glad I came out tonight. I was about to give the sofa a very convincing argument.',
+] as const;
 const hobbies = ['badminton in the park', 'collecting obscure dance-pop singles', 'night walks with a cheap film camera', 'pub quizzes with a very unserious team', 'learning bass guitar', 'old science-fiction movies', 'weekend birdwatching', 'improvised cooking with leftovers', 'social dance classes', 'small independent comics', 'indoor climbing', 'finding the best breakfast after a late night'];
 const histories = ['moved across the city last spring and is still finding a favorite local place', 'recently stopped taking extra shifts and is learning how to have an evening off', 'shares a flat with an old friend whose taste in music is completely different', 'grew up in a quiet coastal town and still misses the last bus arriving on time', 'has stayed close with a small group of friends since a disastrous first job', 'spent a year living with a sibling and finally has a place of their own'];
 const humor = ['dry observations, said flatly, never explained', 'mild exaggeration about their own habits, never about the human', 'a quick comment on something that just happened, then moving on', 'playful teasing about something the human just said, stopping when it is not welcome', 'a short true story with an understated ending', 'warm, self-aware jokes about their own mistakes'];
@@ -52,8 +151,15 @@ export function createBlindDate(seed: string): BlindDateIdentity {
   const random = generator(seed), pick = <T>(items: readonly T[]): T => items[Math.floor(random() * items.length)];
   const dateId = pick<DateId>(['mira', 'jules', 'dev']);
   const traits = { sociability: Math.floor(random() * 101), openness: Math.floor(random() * 101), competitiveness: Math.floor(random() * 101), directness: Math.floor(random() * 101), spontaneity: Math.floor(random() * 101) };
-  const [occupation, ambition, dailyDetail] = pick(jobs), hobby = pick(hobbies), history = pick(histories), voiceHabits = pick(humor), value = pick(values), dislike = pick(dislikes), flirting = pick(flirt);
+  const job = pick(jobs);
+  const [occupation, ambition, dailyDetail] = job, hobby = pick(hobbies), history = pick(histories), voiceHabits = pick(humor), value = pick(values), dislike = pick(dislikes), flirting = pick(flirt);
   const preferredMain = pick(MENU), preferredDessert = pick(DESSERTS).id;
+  // New choices follow every legacy draw: existing seeds keep their appearance,
+  // traits, job, history, tastes and voice rather than shifting the old stream.
+  const vulnerabilityMotive = pick(BLIND_VULNERABILITY_MOTIVES).replace('{ambition}', ambition);
+  const openingBank = traits.sociability > 65 ? 0 : traits.directness > 65 ? 3 : traits.sociability < 35 ? 6 : 9;
+  const opening = pick(BLIND_OPENING_TEMPLATES.slice(openingBank, openingBank + 3));
+  const conversationSeeds = BLIND_CONVERSATION_SEEDS[jobs.indexOf(job)]!;
   const sociability = traits.sociability > 65 ? 'Talkative and quick to offer a concrete story, while leaving room for the other person.' : traits.sociability < 35 ? 'Comfortable with pauses; offers short, observant answers and warms up gradually.' : 'Easy company in a small group; alternates a story with listening.';
   const directness = traits.directness > 65 ? 'States likes and disagreements plainly without being cruel.' : traits.directness < 35 ? 'Usually tests an opinion with a gentle joke before saying what they really mean.' : 'Can be tactful without pretending to agree.';
   const competition = traits.competitiveness > 65 ? 'Enjoys a bit of friendly competition and can laugh about losing.' : traits.competitiveness < 35 ? 'Prefers doing something together over keeping score.' : 'Gets unexpectedly invested in a small wager, then lets it go.';
@@ -62,18 +168,17 @@ export function createBlindDate(seed: string): BlindDateIdentity {
   const personality = `${sociability} ${directness} Humor: ${voiceHabits}. ${flirting}. ${competition} ${spontaneity} ${openness} Has their own opinions and may choose friendship, another date, or a courteous goodbye.`;
   const preferences = `Enjoys ${preferredMain.toLowerCase()}, ${hobby}, and ${value}. Dislikes ${dislike}. Food preferences are tastes, not allergies or medical conditions.`;
   const boundaries = `Will push back on ${dislike}. Other people choose their own food, drink, disclosures and physical contact. Repeated explicit pressure can make them leave. Kindness, winning an argument and paying for dinner never purchase affection.`;
-  const opening = traits.sociability > 65 ? `There you are. I promised myself I’d leave work stories at the door. I’m giving that promise about five minutes.` : traits.directness > 65 ? `Hi. I’m glad you came. I vote we skip the impressive introductions and find out whether we actually enjoy dinner together.` : traits.sociability < 35 ? `Hi. This is a good table. Somewhere I can hear you without pretending I caught the last sentence.` : `Hi. I had a whole clever introduction on the way here. Apparently I’ve decided to start with “hi.”`;
   const biography: CharacterStory = {
     occupation,
     backstory: `Works as a ${occupation}; ${history}. Has a real but unfinished personal goal: ${ambition}. This is not the biography associated with the reused visual character.`,
     everydayLife: `${dailyDetail}. Makes time for ${hobby}. Their current goal is ${ambition}; it is a work in progress, not an achievement already completed.`,
     voiceHabits: `${traits.sociability > 65 ? RHYTHM.bursts : traits.sociability < 35 ? RHYTHM.measured : traits.directness > 65 ? RHYTHM.punchy : RHYTHM.easy} Humor: ${voiceHabits}. Avoid excessive praise, stock pet names, repeated metaphors and therapy language.`,
     preferences, preferredMain, preferredDessert,
-    vulnerability: `Can put off ${ambition} because talking about it makes an unfinished idea feel exposed. Values ${value}; this is a specific preference, not a demand that a date prove their worth.`,
+    vulnerability: `${vulnerabilityMotive} Values ${value}; this is a specific preference, not a demand that a date prove their worth.`,
     dinnerArc: `Start with the actual restaurant and the human's conversation. A good moment might lead to a story about ${hobby} or work as a ${occupation}. Reveal the unfinished goal gradually when comfortable. React to the shared physical events. The ending depends on the evening, not on reaching a predetermined romantic result.`,
     disclosureRules: `Do not use the preset visual character's family, job, private project or backstory. Do not invent bereavement, allergies, medical diagnoses or trauma. The unfinished goal is ${ambition}. Reveal it in pieces when welcome; decline intrusive questions. A drawing's subject is unknown. Money does not buy intimacy.`,
   };
-  return { version: 1, seed, dateId, traits, personality, preferences, boundaries, opening, biography };
+  return { version: 1, seed, dateId, traits, personality, preferences, boundaries, opening, biography, conversationSeeds };
 }
 
 /** Blind-date wording for a hurt or guarded date; other keys borrow the preset's plain lines, which carry no preset biography. */

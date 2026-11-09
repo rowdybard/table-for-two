@@ -1,0 +1,76 @@
+name: Conversation quality and recovery
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'codex/conversation-depth']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conversation-quality-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  provider-disabled:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ANTHROPIC_API_KEY: ''
+      OPENROUTER_API_KEY: ''
+      ELEVENLABS_API_KEY: ''
+      AI_HORDE_API_KEY: ''
+      DATE_ALLOW_MODEL_SELECTION: '0'
+      DATE_SPEECH_PROVIDER: none
+      LFS_SOFTWARE_GPU: '1'
+      RESTAURANT_CAPTURE_SCREENSHOTS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.25.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - name: Deterministic unit and controller checks
+        env:
+          NODE_OPTIONS: --import=${{ github.workspace }}/tests/fixtures/evaluation-network-guard.mjs
+        run: pnpm exec tsx --test --test-concurrency=1 tests/*.test.ts
+      - name: Evaluation dry run (no API calls or report writes)
+        env:
+          NODE_OPTIONS: --import=${{ github.workspace }}/tests/fixtures/evaluation-network-guard.mjs
+        run: pnpm compare:models
+      - run: pnpm build
+      - name: Install the isolated deployment package
+        run: pnpm --dir deployment/cloudflare install --frozen-lockfile
+      - name: Validate and package the Worker without publishing
+        run: |
+          pnpm --dir deployment/cloudflare run check
+          pnpm --dir deployment/cloudflare run build
+          pnpm --dir deployment/cloudflare run dry-run
+      - name: Provider-disabled bundled runtime smoke (CI only)
+        env:
+          NODE_OPTIONS: --import=${{ github.workspace }}/tests/fixtures/evaluation-network-guard.mjs
+        run: pnpm --dir deployment/cloudflare run smoke
+      - name: Install the Chrome channel used by the existing Playwright config
+        run: pnpm exec playwright install --with-deps chrome
+      - name: Conversation, recovery, delivery and existing evening flows
+        env:
+          NODE_OPTIONS: --import=${{ github.workspace }}/tests/fixtures/evaluation-network-guard.mjs
+        run: pnpm exec playwright test tests/browser-conversation-depth.spec.ts tests/browser-restaurant.spec.ts tests/browser-speech.spec.ts tests/browser-double-date.spec.ts tests/browser-evening.spec.ts --reporter=line,html
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: conversation-quality-${{ github.run_id }}
+          path: |
+            playwright-report/
+            test-results/
+            .qa/**/*.png
+            .qa/**/*.json
+          if-no-files-found: warn
+          retention-days: 14
