@@ -28,6 +28,8 @@ export class SpeechPlayer {
   private deviceStarted?: number;
   private devicePrimed = false;
   private deviceFallbackUntil = 0;
+  /** Consecutive lines the server voice service itself reported as unavailable. */
+  private serverOutages = 0;
   private readonly deviceVoices = new Map<string, string>();
 
   constructor(private readonly callbacks: SpeechPlayerCallbacks, private readonly options: SpeechPlayerOptions = {}) {
@@ -124,6 +126,7 @@ export class SpeechPlayer {
       const streaming = response.body && typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported(mime);
       await Promise.all([finished, streaming ? this.stream(response, mime, signal) : this.blob(response, signal)]);
       completed = true;
+      this.serverOutages = 0;
     } catch (error) {
       if (!signal.aborted && generation === this.generation) {
         const status = (error as { status?: number }).status;
@@ -135,7 +138,10 @@ export class SpeechPlayer {
             await this.playDevice(utterance, signal, generation, requestedAt);
             signal.throwIfAborted();
             completed = true;
-            this.deviceFallbackUntil = performance.now() + 30000;
+            // One glitch voices only that line on the device; the next line tries the real voice again.
+            // Only a service that reports itself down twice in a row skips the wait for thirty seconds.
+            if (status !== undefined) this.serverOutages++;
+            if (this.serverOutages >= 2) this.deviceFallbackUntil = performance.now() + 30000;
           } catch (fallbackError) {
             this.deviceFallbackUntil = 0;
             if (!signal.aborted && generation === this.generation) { this.callbacks.onStatus(fallbackError instanceof Error ? fallbackError.message : String(fallbackError)); throw fallbackError; }

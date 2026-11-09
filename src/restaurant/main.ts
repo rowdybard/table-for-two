@@ -425,7 +425,7 @@ async function sendTurn(raw: string, explicitTarget?: ConversationTarget, via: T
   busy = true; updateTypedSubmit();
   log('You', text); el('turn-status').textContent = `${getDate(state.dateId)!.name} is listening…`;
   turnStartedAt = performance.now(); firstAudioMs = null;
-  let accepted = false;
+  let accepted = false, serverFailed = false;
   try {
     const response = await fetch(sessionPath() + '/turn', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ turnId: crypto.randomUUID(), text, model: preferences.model, via }), signal: turnAbort.signal });
     if (!response.ok) {
@@ -441,7 +441,7 @@ async function sendTurn(raw: string, explicitTarget?: ConversationTarget, via: T
       if (event.type === 'start') activeGeneration = event.generation;
       else if (event.type === 'utterance') { activeGeneration = event.generation; queueUtterance(event.utterance, event.generation, epoch); }
       else if (event.type === 'state') applyState(event.state);
-      else if (event.type === 'error') throw new Error(event.message);
+      else if (event.type === 'error') { serverFailed = true; throw new Error(event.message); }
     };
     while (true) {
       const result = await reader.read(); buffer += decoder.decode(result.value, { stream: !result.done });
@@ -451,8 +451,13 @@ async function sendTurn(raw: string, explicitTarget?: ConversationTarget, via: T
     if (epoch === generationEpoch) el('turn-status').textContent = '';
     return true;
   } catch (error) {
-    if ((error as Error).name !== 'AbortError' && epoch === generationEpoch) { toast((error as Error).message, 10000); el('turn-status').textContent = 'Conversation paused · you can try again'; log('Connection', (error as Error).message, true); }
-    return (error as Error).name === 'AbortError' || epoch !== generationEpoch ? accepted : false;
+    if ((error as Error).name !== 'AbortError' && epoch === generationEpoch) {
+      // The server drops a failed reply's lines and cuts their audio. Stop them here too, so the cut
+      // stream reads as a cancellation rather than a voice outage that switches to the device voice.
+      if (serverFailed) { generationEpoch++; speech.stop(); pendingSpeeches = 0; speechQueue = Promise.resolve(); playback = { speaker: null, amplitude: 0, emotion: 'neutral', caption: '' }; busy = false; turnAbort = undefined; updateTypedSubmit(); }
+      toast((error as Error).message, 10000); el('turn-status').textContent = 'Conversation paused · you can try again'; log('Connection', (error as Error).message, true);
+    }
+    return !serverFailed && ((error as Error).name === 'AbortError' || epoch !== generationEpoch) ? accepted : false;
   } finally {
     if (epoch === generationEpoch) { busy = false; turnAbort = undefined; updateTypedSubmit(); }
   }

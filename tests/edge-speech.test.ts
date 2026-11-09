@@ -113,3 +113,24 @@ test('an unavailable free voice never produces paid charges, invented generated 
   for (let attempt = 0; attempt < 2; attempt++) await assert.rejects(async () => { for await (const _ of api.app.services.streamSpeech(account, { text: 'A fresh line.', emotion: 'warm', voice: 'mira' }, new AbortController().signal)) {} }, /Free voice temporarily unavailable/);
   assert.equal(calls, 2); assert.equal(account.usage.speechCharacters, 0); assert.equal(account.usage.speechCost, 0); assert.equal(account.usage.cacheHits, 0); assert.equal(account.reserved, 0);
 });
+
+test('a dropped Edge connection before any audio gets one free second try', async t => {
+  let connections = 0;
+  const server = await socketServer(ws => { connections++; const first = connections === 1; ws.on('message', data => { if (!data.toString().includes('Path:ssml')) return; if (first) ws.close(); else { ws.send(audioFrame('ID3retry')); ws.send('Path:turn.end\r\n\r\n'); } }); });
+  t.after(() => server.close());
+  const chunks: Buffer[] = []; for await (const chunk of edgeSpeechAdapter(server.connect).stream(request(), new AbortController().signal)) chunks.push(Buffer.from(chunk));
+  assert.equal(connections, 2); assert.equal(Buffer.concat(chunks).toString(), 'ID3retry');
+});
+
+test('Edge retries only once and never after audio has started', async t => {
+  let connections = 0;
+  const failing = await socketServer(ws => { connections++; ws.on('message', data => { if (data.toString().includes('Path:ssml')) ws.close(); }); });
+  t.after(() => failing.close());
+  await assert.rejects(async () => { for await (const _ of edgeSpeechAdapter(failing.connect).stream(request(), new AbortController().signal)) {} }, (error: unknown) => error instanceof DateApiError && error.code === 'edge_speech');
+  assert.equal(connections, 2);
+  let partial = 0;
+  const cut = await socketServer(ws => { partial++; ws.on('message', data => { if (data.toString().includes('Path:ssml')) { ws.send(audioFrame('ID3half')); setTimeout(() => ws.close(), 20); } }); });
+  t.after(() => cut.close());
+  await assert.rejects(async () => { for await (const _ of edgeSpeechAdapter(cut.connect).stream(request(), new AbortController().signal)) {} }, (error: unknown) => error instanceof DateApiError);
+  assert.equal(partial, 1);
+});
