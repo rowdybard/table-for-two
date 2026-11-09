@@ -8,6 +8,7 @@ import { MENU } from '../src/restaurant/content';
 import { DESSERTS, EVENING_PACE, createEvening } from '../src/restaurant/evening';
 import { BEAT_CUES, CHARACTER_STORIES } from '../src/restaurant/story';
 import type { DateId, DinnerState } from '../src/restaurant/types';
+import { recordedAtTable } from './helpers/turn-note';
 
 before(async () => { await RAPIER.init(); });
 
@@ -76,7 +77,7 @@ test('dessert: the date picks their favourite when nobody chooses, declines when
       run(state, director, EVENING_PACE.dessertDecision - 1); assert.equal(state.evening.dessert.status, 'none');
       run(state, director, 1); assert.equal(state.evening.dessert.status, 'waiting'); assert.equal(state.evening.dessert.chosenBy, 'date');
       assert.equal(state.evening.dessert.choice, CHARACTER_STORIES[dateId].preferredDessert); assert.equal(count(state, 'dessert-date-choice'), 1);
-      assert.ok(state.memory.includes(DESSERTS.find(dessert => dessert.id === state.evening.dessert.choice)!.name.toLowerCase()), 'the date’s pick is remembered for the conversation');
+      assert.ok(recordedAtTable(state).includes(DESSERTS.find(dessert => dessert.id === state.evening.dessert.choice)!.name.toLowerCase()), 'the date’s pick is recorded for the conversation');
       run(state, director, EVENING_PACE.dessertKitchen); assert.equal(state.evening.dessert.status, 'served'); assert.equal(count(state, 'dessert-served'), 1);
       run(state, director, EVENING_PACE.dessertTalk); assert.ok(state.evening.sharedActivities.includes('dessert')); assert.ok(state.evening.moments.some(moment => moment.id === 'dessert')); assert.equal(count(state, 'dessert-shared'), 1);
       run(state, director, EVENING_PACE.dessertCourse - EVENING_PACE.dessertTalk - 1); assert.equal(state.evening.dessert.status, 'served');
@@ -120,7 +121,7 @@ test('the date breaks long silences with authored lines: paced by the variation,
       serveMain(state, director); const served = state.elapsed, silence = EVENING_PACE.beatSilence + variation * 17;
       run(state, director, silence - 1); assert.equal(state.evening.beats, 0);
       run(state, director, 1); assert.equal(state.evening.beats, 1); assert.equal(state.evening.cues.at(-1)!.key, BEAT_CUES.eating[0]); assert.equal(state.evening.cues.at(-1)!.utterances[0].speaker, 'date');
-      assert.ok(state.memory.includes('broke a silence')); assert.equal(state.evening.dialogueTurns, 0); assert.equal(state.usage.claudeRequests, 0);
+      assert.ok(recordedAtTable(state).includes('broke a silence')); assert.equal(state.evening.dialogueTurns, 0); assert.equal(state.usage.claudeRequests, 0);
       // The next line waits for both the beat spacing and a fresh silence after the first one.
       const gap = Math.max(EVENING_PACE.beatSpacing, silence);
       run(state, director, gap - 1); assert.equal(state.evening.beats, 1, 'two beats keep their distance');

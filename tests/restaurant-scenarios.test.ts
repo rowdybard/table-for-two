@@ -9,6 +9,8 @@ import type { DinnerState, DateId } from '../src/restaurant/types';
 import { EveningDirector } from '../server/restaurant/evening';
 import { attachRestaurantServer, validateCommand, type ClaudeAdapter } from '../server/restaurant';
 import { applyScenarioToView, scenarioStyle } from '../server/restaurant/scenario';
+import { tableFacts } from '../server/restaurant/table-facts';
+import { noteOf, section } from './helpers/turn-note';
 
 before(async () => { await RAPIER.init(); });
 function view(dateId: DateId = 'mira', seed?: string): DinnerState {
@@ -69,7 +71,7 @@ test('solo and blind directors activate the same stories, record both beats and 
       assert.throws(() => director.action({ type: 'evening', action: 'skip-dessert' }, 1000));
       director.scenario('boundary'); assert.equal(state.evening.scenario?.beat, 'follow-through');
       director.scenario('return-date'); assert.equal(state.evening.scenario?.phase, 'resolved');
-      assert.ok(state.memory.includes('family visit')); assert.ok(state.evening.moments.some(moment => moment.id === 'scenario-family-visit'));
+      assert.ok(tableFacts(state).some(fact => fact.includes('family visit')), 'the story is recorded as a table fact the model cannot overwrite'); assert.equal(state.memory, '', 'the model’s notebook is untouched by server facts'); assert.ok(state.evening.moments.some(moment => moment.id === 'scenario-family-visit'));
       assert.equal(state.usage.claudeRequests, 0);
     } finally { director.free(); }
   }
@@ -199,9 +201,9 @@ test('a resolved story earns a quiet interval before another physical interrupti
 });
 
 test('the single-call Claude context cannot anticipate an undisclosed dormant health story', async t => {
-  let captured: { scene?: { evening?: { scenario?: unknown; care?: unknown } } } | undefined;
+  let captured = '';
   const claude: ClaudeAdapter = { async *stream(request) {
-    captured = JSON.parse(request.messages.at(-1)!.content);
+    captured = noteOf(request);
     yield { type: 'text', text: JSON.stringify({ utterances: [{ speaker: 'date', text: 'Good to meet you. How was the walk over?', emotion: 'warm' }], emotion: 'warm', action: 'none', memory: 'We introduced ourselves.', social: { signal: 'none', reason: '', wantsToLeave: false } }) };
   } };
   const server = createServer((req, res) => { if (!app.handle(req, res)) res.writeHead(404).end(); });
@@ -212,6 +214,6 @@ test('the single-call Claude context cannot anticipate an undisclosed dormant he
   const created = await fetch(base + '/api/date/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ dateId: 'mira' }) }).then(response => response.json());
   const response = await fetch(base + `/api/date/sessions/${created.state.id}/turn`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${created.token}` }, body: JSON.stringify({ turnId: 'first-greeting', text: 'Hi, good to meet you.', model: 'claude-haiku-5-5' }) });
   assert.equal(response.status, 200); await response.text();
-  assert.deepEqual(captured?.scene?.evening?.scenario, { phase: 'dormant' });
-  assert.ok(captured?.scene?.evening?.care); assert.equal(JSON.stringify(captured).includes('Tourette'), false);
+  assert.equal(section(captured, 'Happening now'), undefined, 'a dormant story is not mentioned before it is disclosed');
+  assert.equal(/Tourette|tic\b|Something they choose to share/i.test(captured), false); assert.match(captured, /^Right now: /);
 });

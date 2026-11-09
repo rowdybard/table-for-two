@@ -153,7 +153,8 @@ test('playback receipts preserve heard and interrupted lines in the next single 
   const invalid = await api.request(path + '/playback', token, { generation: start.generation, speaker: 'date', text: 'Not an authorized line', completed: true, playedSeconds: 3 }); assert.equal(invalid.status, 409);
   await api.request(path + '/interrupt', token, {});
   await (await api.request(path + '/turn', token, { turnId: 'second', text: 'Sorry, what were you saying?', model: 'claude-haiku-5-5' })).text();
-  const context = JSON.stringify(contexts[1]); assert.match(context, /heard completely/); assert.match(context, /not heard; response was interrupted/); assert.match(context, /My favorite food is pasta/);
+  // The next request shows a plain transcript: a fully heard line carries no note, an unheard one says so.
+  const context = contexts[1].map((message: { content: string }) => message.content).join('\n'); assert.ok(context.includes(`Mira: ${turn.utterances[0].text}\n`), 'a heard line has no delivery note'); assert.match(context, /Eli \(waiter\): I will give you two another minute\. \(the human did not hear this\)/); assert.match(context, /My favorite food is pasta/);
 });
 
 test('Anthropic adapter sends fast model-specific thinking and structured output, parses split SSE usage without exposing provider secrets', async () => {

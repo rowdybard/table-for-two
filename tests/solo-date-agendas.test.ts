@@ -5,6 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { attachRestaurantServer, validateTurn } from '../server/restaurant';
 import type { ClaudeAdapter } from '../server/restaurant/providers';
 import type { DinnerState, SceneTurn, TurnEvent } from '../src/restaurant/types';
+import { humanLine, noteOf, privateAgenda, signalFor } from './helpers/turn-note';
 
 async function boot(claude: ClaudeAdapter) {
   let app: Awaited<ReturnType<typeof attachRestaurantServer>>;
@@ -34,12 +35,12 @@ for (const mode of ['ai-date', 'blind-date'] as const) test(`${mode}: private go
     calls++;
     assert.ok(request.system.includes('agenda {signal,evidence,clue}'));
     assert.ok(request.system.includes('Every date begins highly skeptical'), 'Solo and Blind both receive the universal skepticism policy');
-    const context = JSON.parse(request.messages.at(-1)!.content);
-    const agenda = context.scene.evening.dateAgenda;
+    const note = noteOf(request), agenda = privateAgenda(note), signal = signalFor(note);
     privateGoal ||= agenda.goal;
     assert.equal(agenda.goal, privateGoal);
-    const clue = calls === 1 ? `For tonight, I would like to ${privateGoal[0].toLowerCase()}${privateGoal.slice(1)}` : `A detail that matters to me: ${agenda.naturalHint}`;
-    const turn: SceneTurn = { ...neutral, utterances: [{ speaker: 'date', text: clue, emotion: 'warm' }], agenda: { signal: agenda.nextMilestone ?? 'none', evidence: agenda.nextMilestone ? context.playerSaid : '', clue } };
+    // The natural hint is offered on the third human turn and every third after; every other turn needs its own specific.
+    const clue = calls === 1 ? `For tonight, I would like to ${privateGoal[0].toLowerCase()}${privateGoal.slice(1)}` : `A detail that matters to me: ${agenda.hint ?? `something specific on turn ${calls}.`}`;
+    const turn: SceneTurn = { ...neutral, utterances: [{ speaker: 'date', text: clue, emotion: 'warm' }], agenda: { signal, evidence: signal === 'none' ? '' : humanLine(note), clue } };
     yield { type: 'usage', usage: { inputTokens: 100, outputTokens: 100 } };
     yield { type: 'text', text: JSON.stringify(turn) };
   } };

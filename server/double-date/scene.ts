@@ -9,6 +9,7 @@ import { setActorSeated } from '../restaurant/actor-controller';
 import { createSharedTabletopState, createTabletopState } from '../../src/restaurant/tabletop';
 import { diningOffsetZ } from '../../src/restaurant/dining-space';
 import { ensureScenarioCare } from '../restaurant/scenario-effects';
+import { clampMemory } from '../restaurant/memory';
 import { EVENING_PACE } from '../../src/restaurant/evening';
 
 const ids: DoubleHumanId[] = ['h1', 'h2'];
@@ -223,7 +224,7 @@ export class DoubleTableScene {
   redirectConversation(human: DoubleHumanId) { this.directors.get(human)!.redirectConversation(false); }
   social(human: DoubleHumanId, turn: SceneTurn, humanText = '', speaker: DoubleHumanId = human) {
     const view = this.state.views[human];
-    view.emotion = turn.emotion; view.memory = turn.memory; this.directors.get(human)!.social(turn, humanText, { humanId: speaker, paired: speaker === human, name: this.state.members.find(member => member.id === speaker)?.name });
+    view.emotion = turn.emotion; view.memory = clampMemory(turn.memory, view.memory); this.directors.get(human)!.social(turn, humanText, { humanId: speaker, paired: speaker === human, name: this.state.members.find(member => member.id === speaker)?.name });
   }
   viewEnding(human: DoubleHumanId, show: boolean) {
     if (this.state.views[human].phase !== 'ended') throw new Error('Finish your date before viewing its ending.');
