@@ -107,6 +107,13 @@ async function awaitCheck(page: Page) {
   await prompt(page);
   await expect(page.locator('#prompt-copy')).toHaveText('Eli left the check.');
 }
+/** Keep the real movement key held across slow render frames; short taps can all fall between frames. */
+async function walkUntil(page: Page, key: 'w' | 's', arrived: (snapshot: DinnerState) => boolean, message: string) {
+  await page.keyboard.down(key);
+  try {
+    await expect.poll(async () => arrived(await state(page)), { message, timeout: 15_000, intervals: [100] }).toBe(true);
+  } finally { await page.keyboard.up(key); }
+}
 /** Looking down at the chair stands a guest up; the door is a short walk behind the table. */
 async function walkToTheDoor(page: Page) {
   await prompt(page);
@@ -115,11 +122,12 @@ async function walkToTheDoor(page: Page) {
     await page.mouse.move(viewport.width / 2, viewport.height * .2); await page.mouse.down();
     await page.mouse.move(viewport.width / 2, viewport.height * .95, { steps: 10 }); await page.mouse.up();
   }
+  await expect(page.locator('#interaction')).toBeVisible();
   await expect(page.locator('#interaction-label')).toHaveText('Stand up');
   await page.keyboard.press('e');
   await expect.poll(async () => (await state(page)).seated).toBe(false);
   await waitForRestaurantScene(page);
-  for (let i = 0; i < 25 && (await state(page)).participants[0].position[2] < 4.2; i++) { await page.keyboard.down('s'); await page.waitForTimeout(160); await page.keyboard.up('s'); }
+  await walkUntil(page, 's', snapshot => snapshot.participants[0].position[2] >= 4.2, 'walking back to the restaurant door');
   await expect.poll(async () => (await state(page)).participants[0].position[2]).toBeGreaterThanOrEqual(4.2);
   await expect(page.locator('#prompt-copy')).toHaveText('One last thing, at the door.');
 }
@@ -127,14 +135,16 @@ async function arrive(page: Page, dateId: string, mode: 'solo' | 'blind' = 'solo
   await page.goto(base);
   await expect(page.locator('#title-start')).toBeFocused({ timeout: 15000 });
   await page.keyboard.press('Enter');
-  if (mode === 'blind') await page.locator('#mode-blind').click();
+  // Starting Blind is a same-page transition; the HUD and scene gates below establish readiness.
+  if (mode === 'blind') await page.locator('#mode-blind').click({ noWaitAfter: true });
   else { await page.locator('#mode-solo').click(); await page.locator(`[data-date="${dateId}"]`).click(); await page.locator('#start-date').click(); }
   await expect(page.locator('#dinner-hud')).toBeVisible();
   await waitForRestaurantScene(page);
   await expect(page.locator('#prompt-line')).toBeHidden();
-  for (let i = 0; i < 24 && (await state(page)).participants[0].position[2] > 1.5; i++) { await page.keyboard.down('w'); await page.waitForTimeout(180); await page.keyboard.up('w'); }
+  await walkUntil(page, 'w', snapshot => snapshot.participants[0].position[2] <= 1.5, 'walking within reach of the table seat');
   await page.mouse.move(640, 390); await page.mouse.down(); await page.mouse.move(640, 610, { steps: 9 }); await page.mouse.up();
-  await expect(page.locator('#interaction')).toContainText(/seat/i); await page.keyboard.press('e');
+  await expect(page.locator('#interaction')).toBeVisible();
+  await expect(page.locator('#interaction-label')).toHaveText('Take your seat'); await page.keyboard.press('e');
   await expect.poll(async () => (await state(page)).seated).toBe(true);
   // Escape releases captured mouse and pauses; Resume keeps the physical seat.
   await page.keyboard.press('Escape'); await expect(page.locator('#pause-dialog')).toBeVisible(); await page.locator('#resume-date').click();

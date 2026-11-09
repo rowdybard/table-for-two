@@ -801,7 +801,7 @@ mobile = new MobileControls(el('restaurant-app'), {
 async function restoreSession() {
   if (await doubleClient.restore()) return;
   const invite = new URL(location.href).searchParams.get('invite');
-  if (invite) { el('arrival-screen').hidden = true; doubleLobby.setInviteCode(invite); doubleLobby.show('join'); return; }
+  if (invite) { el('arrival-screen').hidden = true; doubleLobby.setInviteCode(invite); doubleLobby.show('join'); menuNavigation.refresh('gameplay'); return; }
   await resumeStoredDinner();
 }
 

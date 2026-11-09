@@ -70,10 +70,15 @@ export const BEAT_CUES = { waiting: ['beat-waiting-1', 'beat-waiting-2'], eating
 export type BeatPhase = keyof typeof BEAT_CUES;
 /** The one silence breaker that fits a table where the human has not said anything yet. */
 export const BEAT_COLD = 'beat-cold' satisfies StoryCueKey;
+export const ENDING_MOTIFS = ['toast-tonight', 'toast-honesty', 'toast-friends', 'toast-mischief', 'tasting', 'dessert-lemon', 'dessert-chocolate', 'dessert-berries'] as const;
+export type EndingMotif = typeof ENDING_MOTIFS[number];
+export type EndingVoice = 'warm' | 'measured' | 'direct' | 'easy';
 export interface StoryCueContext {
   choice?: string; dish?: string; resolution?: string;
   /** Existing per-evening variation; never advances a clock or consumes another aside. */
   variation?: number;
+  /** Only supplied after this couple actually shared the event and heard the date acknowledge it. */
+  endingMotif?: EndingMotif;
   /** The date's dessert follows what the human said they wanted, rather than the date's own favourite. */
   named?: boolean;
   /** Little has been earned yet: no confession, no praise and no warm farewell, just a plain line. */
@@ -85,6 +90,61 @@ export interface StoryCueContext {
 }
 const date = (text: string, emotion: Emotion = 'warm'): SceneUtterance => ({ speaker: 'date', text, emotion });
 const waiter = (text: string, emotion: Emotion = 'warm'): SceneUtterance => ({ speaker: 'waiter', text, emotion });
+
+const ENDING_RECOLLECTIONS: Record<EndingVoice, Record<EndingMotif, string>> = {
+  warm: {
+    'toast-tonight': 'Okay, I’m glad we made that toast to tonight.',
+    'toast-honesty': 'I’m glad we made that toast to honesty.',
+    'toast-friends': 'I liked our toast to friends.',
+    'toast-mischief': 'I liked that little toast to mischief.',
+    tasting: 'Thanks for sharing a bite of your dinner.',
+    'dessert-lemon': 'I’m glad we shared the lemon posset.',
+    'dessert-chocolate': 'I’m glad we made room for that chocolate fondant.',
+    'dessert-berries': 'I liked sharing the strawberries with you.',
+  },
+  measured: {
+    'toast-tonight': 'That toast to tonight was worth making.',
+    'toast-honesty': 'I liked the toast to honesty.',
+    'toast-friends': 'A good toast. To friends.',
+    'toast-mischief': 'I enjoyed our carefully rationed mischief toast.',
+    tasting: 'I’m glad I tried a little of yours.',
+    'dessert-lemon': 'Sharing the lemon posset was good.',
+    'dessert-chocolate': 'I enjoyed sharing the chocolate fondant.',
+    'dessert-berries': 'The strawberries were good to share.',
+  },
+  direct: {
+    'toast-tonight': 'That toast to tonight was a good call.',
+    'toast-honesty': 'I’m glad we made that toast to honesty.',
+    'toast-friends': 'I liked making that toast to friends with you.',
+    'toast-mischief': 'Good call on the toast to a little mischief.',
+    tasting: 'Thanks for letting me try a bite. Glad I said yes.',
+    'dessert-lemon': 'Yeah, I’m glad we shared the lemon posset.',
+    'dessert-chocolate': 'Sharing that chocolate fondant was a good call.',
+    'dessert-berries': 'I liked sharing the strawberries. Good way to finish dinner.',
+  },
+  easy: {
+    'toast-tonight': 'I’m glad we made a toast to tonight.',
+    'toast-honesty': 'I liked our toast to honesty.',
+    'toast-friends': 'That toast to friends was nice.',
+    'toast-mischief': 'I enjoyed that toast to a little mischief.',
+    tasting: 'I’m glad you offered me a taste.',
+    'dessert-lemon': 'I liked sharing the lemon posset.',
+    'dessert-chocolate': 'I’m glad we shared the chocolate fondant.',
+    'dessert-berries': 'I enjoyed sharing the strawberries and cream.',
+  },
+};
+const ENDING_INTENTIONS: Record<EndingVoice, Record<'ending-another-evening' | 'ending-new-friend' | 'ending-second-chance', string>> = {
+  warm: { 'ending-another-evening': 'I’d like another evening with you.', 'ending-new-friend': 'I’d like to stay in touch as friends.', 'ending-second-chance': 'I’m glad we talked it through. I’d try a coffee another day.' },
+  measured: { 'ending-another-evening': 'I’d like to see you again.', 'ending-new-friend': 'I’d like to keep in touch. As friends.', 'ending-second-chance': 'I appreciated the apology. We could try coffee.' },
+  direct: { 'ending-another-evening': 'I’d like to do this again.', 'ending-new-friend': 'Friends sounds good to me.', 'ending-second-chance': 'I’m glad you owned what happened. I’d give coffee another go.' },
+  easy: { 'ending-another-evening': 'I’d like to see you again.', 'ending-new-friend': 'I’d be happy to keep in touch as friends.', 'ending-second-chance': 'I appreciated the apology. I’d be open to trying again.' },
+};
+/** A completed event, not a proposed plan: no human promise, private biography or new outcome is added. */
+export function groundedEndingCue(key: string, voice: EndingVoice, context: StoryCueContext): SceneUtterance | undefined {
+  if (!context.endingMotif || context.reserved || isGuardedStance(context.resolution)) return undefined;
+  const intention = ENDING_INTENTIONS[voice][key as keyof typeof ENDING_INTENTIONS[EndingVoice]];
+  return intention ? date(`${ENDING_RECOLLECTIONS[voice][context.endingMotif]} ${intention}`, 'warm') : undefined;
+}
 
 const CUES: Record<DateId, Record<Exclude<StoryCueKey, 'order-nudge'>, SceneUtterance>> = {
   mira: {
@@ -335,6 +395,8 @@ export function getStoryCue(key: string, dateId: DateId, context: StoryCueContex
   const quiet = isGuardedStance(context.resolution) ? GUARDED[dateId][cue] : undefined;
   const plain = !quiet && context.reserved ? RESERVED[dateId][cue] : undefined;
   let line = quiet ? date(quiet, 'neutral') : plain ? date(plain) : { ...base };
+  const ending = groundedEndingCue(key, { mira: 'warm', jules: 'measured', dev: 'direct' }[dateId] as EndingVoice, context);
+  if (ending) line = { ...ending, emotion: base.emotion };
   const extra: SceneUtterance[] = [];
   if (cue === 'ordered' && !quiet && context.humanDish) {
     const own = context.dish ?? CHARACTER_STORIES[dateId].preferredMain;
@@ -379,6 +441,7 @@ export const STORY_CUE_VARIANTS: { id: string; context: StoryCueContext }[] = [
   { id: 'default', context: {} },
   { id: 'variation-1', context: { variation: 1 } },
   { id: 'variation-2', context: { variation: 2 } },
+  ...ENDING_MOTIFS.map(endingMotif => ({ id: `ending-${endingMotif}`, context: { endingMotif } })),
   ...DESSERTS.map(item => ({ id: item.id, context: { choice: item.id } })),
   ...DESSERTS.map(item => ({ id: `named-${item.id}`, context: { choice: item.id, named: true } })),
   ...['split', 'treat', 'separate'].map(choice => ({ id: choice, context: { choice } })),

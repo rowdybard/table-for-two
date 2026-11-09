@@ -49,12 +49,16 @@ Implement the user's approved “Make Table for Two's conversations worth sharin
 - Prepared an isolated baseline bench at `08fceff2408c7597601c993e7b7d7a73e93e1610`, preserving evaluated source `05ff06a5...`. Frozen-source parity and all 660 injected turns pass; no live baseline capture exists.
 - Added offline counterbalanced human-review packets and a gate calculator. Nine checks pass; human judgments remain null, and missing capture/review coverage blocks a pass.
 - First remote browser run exposed two recovery mock fixtures matching old failed transcript text and existing software-browser test assumptions. Source/unit/package checks passed; browser verification and artifact review remain pending the corrected integrated run.
+- The integrated Node suite subsequently passed all 608 checks. The five recovery/caption browser cases and four speech cases pass; remaining existing browser-flow failures are being corrected from remote traces, without launching locally.
+- Complete baseline/candidate prompt comparison covers 2,640 matched requests across all scripts, natural/comfortable stances and Haiku/Horde. Maximum increase is 419 estimated tokens; no request exceeds the 600-token allowance. Reproducible evidence is saved under the isolated checkout's ignored `.qa/` directory.
+- Final authored farewells now recall only this couple's actual shared acts with completed own-listener delivery evidence. Outcome selection, earned confidence, reserved wording and medical handoffs remain unchanged; Blind uses seeded voice rather than preset biography.
 
 ## Remaining release gates
 
 - [ ] Remote provider-disabled CI passes the complete integrated suite, package checks and browser recovery flows.
 - [ ] CI screenshot artifacts reviewed for actual framing, captions and performance handoff.
-- [ ] Approved live spending cap and a compatible baseline benchmark are available; run neither implicitly.
+- [x] Compatible baseline benchmark is prepared and verified offline.
+- [ ] A separate explicit live spending cap is authorized and matched baseline/candidate captures are completed; run neither implicitly.
 - [ ] Two human reviewers complete the documented preference, relevance, cast-identification and memorable-beat gates.
 - [ ] Publish only after the quality and deployment gates; preserve current live provider configuration and secrets.
 

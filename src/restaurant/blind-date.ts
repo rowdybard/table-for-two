@@ -1,6 +1,6 @@
 import { MENU } from './content';
 import { DESSERTS } from './evening';
-import { getStoryCue, guardedLine, isGuardedStance, spokenDessert, spokenDish, type CharacterStory, type StoryCueContext } from './story';
+import { getStoryCue, groundedEndingCue, guardedLine, isGuardedStance, spokenDessert, spokenDish, type CharacterStory, type StoryCueContext } from './story';
 import type { DateId, Emotion, SceneUtterance } from './types';
 import type { ConversationSeed } from './conversation-content';
 
@@ -237,7 +237,8 @@ export function getBlindDateCue(identity: BlindDateIdentity, key: string, contex
   const cast = getStoryCue(key, identity.dateId, context).filter(line => line.speaker !== 'date');
   // A hurt or guarded date speaks plainly here too, and Eli's lines still land.
   const quiet = isGuardedStance(context.resolution) ? BLIND_GUARDED[key] ?? guardedLine(identity.dateId, key) : undefined;
-  const chosen: [string, Emotion?] | undefined = quiet ? [quiet, 'neutral'] : lines[key];
+  const ending = groundedEndingCue(key, active ? 'warm' : dry ? 'measured' : identity.traits.directness > 65 ? 'direct' : 'easy', context);
+  const chosen: [string, Emotion?] | undefined = quiet ? [quiet, 'neutral'] : ending ? [ending.text, ending.emotion] : lines[key];
   if (!chosen) return cast;
   const dateLine: SceneUtterance = { speaker: 'date', text: chosen[0], emotion: chosen[1] ?? 'neutral' };
   // Little earned yet: Eli brings the check and the date says nothing about the evening.

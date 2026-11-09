@@ -123,9 +123,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      - name: Install the Chrome channel used by the existing Playwright config
+      - name: Install the headless Chromium pinned by Playwright
         timeout-minutes: 8
-        run: pnpm exec playwright install --with-deps chrome
+        run: pnpm exec playwright install --with-deps --only-shell chromium
       - name: Run the isolated browser group
         timeout-minutes: 22
         shell: bash

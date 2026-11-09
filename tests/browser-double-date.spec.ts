@@ -68,7 +68,7 @@ test.beforeAll(async () => {
   doubles = await attachDoubleDateServer(http, restaurant, { env: {}, storyRate: 30, scenarioId: 'family-visit' });
   await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${(http.address() as { port: number }).port}`;
-  const launchOptions = { channel: 'chrome', headless: true, args: [...(process.env.LFS_SOFTWARE_GPU === '1' ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : []), '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required', '--disable-background-timer-throttling', '--disable-renderer-backgrounding'] };
+  const launchOptions = { channel: process.env.CI ? undefined : 'chrome', headless: true, args: [...(process.env.LFS_SOFTWARE_GPU === '1' ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : []), '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required', '--disable-background-timer-throttling', '--disable-renderer-backgrounding'] };
   browser = await chromium.launch(launchOptions);
   try { friendBrowser = await chromium.launch(launchOptions); }
   catch (error) { await browser.close(); throw error; }
@@ -96,6 +96,38 @@ async function api(page: Page, route: string, body: unknown) {
 type Receipt = { lineId: string; generation: number; completed: boolean; playedSeconds: number };
 type TransportProbe = { signals: { kind: string; epoch?: number }[]; httpErrors: { path: string; status: number }[] };
 type Pair = { a: Page; b: Page; aContext: BrowserContext; bContext: BrowserContext; errors: string[]; receipts: Record<'a'|'b', Receipt[]>; transport: Record<'a'|'b', TransportProbe>; close(): Promise<void> };
+async function boundedDiagnostic(task: Promise<unknown>, milliseconds = 1500): Promise<unknown> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try { return await Promise.race([task.catch(error => ({ unavailable: String(error) })), new Promise(resolve => { timer = setTimeout(() => resolve({ unavailable: 'Diagnostic deadline exceeded.' }), milliseconds); })]); }
+  finally { clearTimeout(timer); }
+}
+async function inviteDiagnostics(page: Page) {
+  const dom = await boundedDiagnostic(page.evaluate(() => {
+    const button = document.querySelector<HTMLButtonElement>('#double-join'), bounds = button?.getBoundingClientRect();
+    const canvas = document.querySelector<HTMLCanvasElement>('.restaurant-canvas');
+    return { visibility: document.visibilityState, hasFocus: document.hasFocus(), readyState: document.readyState, focus: document.activeElement?.id,
+      inputMode: document.getElementById('restaurant-app')?.dataset.inputMode, error: document.getElementById('start-error')?.textContent,
+      lobbyHidden: document.getElementById('double-date-lobby')?.hidden, inviteCode: document.querySelector<HTMLInputElement>('#double-code')?.value,
+      join: button ? { hidden: button.hidden, disabled: button.disabled, visible: button.checkVisibility({ checkVisibilityCSS: true }), bounds: bounds ? { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height } : null } : null,
+      viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio }, canvas: canvas ? { width: canvas.width, height: canvas.height, busy: canvas.getAttribute('aria-busy') } : null };
+  }));
+  const [raf, gpu] = await Promise.all([
+    boundedDiagnostic(page.evaluate(() => new Promise<{ frames: number; elapsedMs: number }>(resolve => {
+      const started = performance.now(); let frames = 0, pending = 0;
+      const finish = () => { clearTimeout(timer); cancelAnimationFrame(pending); resolve({ frames, elapsedMs: Math.round(performance.now() - started) }); };
+      const timer = setTimeout(finish, 750);
+      const tick = () => { if (++frames === 2) finish(); else pending = requestAnimationFrame(tick); };
+      pending = requestAnimationFrame(tick);
+    }))),
+    boundedDiagnostic(page.evaluate(() => {
+      const gl = document.querySelector<HTMLCanvasElement>('.restaurant-canvas')?.getContext('webgl2');
+      if (!gl) return null;
+      const debug = gl.getExtension('WEBGL_debug_renderer_info');
+      return { renderer: String(gl.getParameter(debug ? debug.UNMASKED_RENDERER_WEBGL : gl.RENDERER)), contextLost: gl.isContextLost(), parallelCompile: !!gl.getExtension('KHR_parallel_shader_compile') };
+    })),
+  ]);
+  return { location: page.url(), browser: page.context().browser()?.version(), dom, raf, gpu };
+}
 async function diagnose(p: Pair, label: string) {
   const data: unknown[] = [];
   for (const [id,page] of [['a',p.a],['b',p.b]] as const) {
@@ -175,13 +207,16 @@ async function pair(speechEnabled = false, voiceProbe = false): Promise<Pair> {
   await expect(a.locator('.double-invite-code strong')).not.toHaveText('');
   const code = (await a.locator('.double-invite-code strong').innerText()).trim();
   await expect(a.locator('#double-start')).toBeDisabled();
+  await b.bringToFront();
   await b.goto(`${base}/?invite=${encodeURIComponent(code)}`);
-  try { await expect(b.locator('#double-code')).toHaveValue(code, { timeout: 15000 }); }
+  try {
+    await expect(b.locator('#double-code')).toHaveValue(code, { timeout: 15000 });
+    await b.locator('#double-name').fill('Sam'); await b.locator('#double-join').click();
+  }
   catch (error) {
-    await test.info().attach('invite-startup', { contentType: 'application/json', body: JSON.stringify({ errors, error: await b.locator('#start-error').textContent(), location: b.url() }) });
+    await test.info().attach('invite-startup', { contentType: 'application/json', body: JSON.stringify({ errors, expectedInviteCode: code, diagnostics: await inviteDiagnostics(b) }) });
     throw error;
   }
-  await b.locator('#double-name').fill('Sam'); await b.locator('#double-join').click();
   await expect(a.locator('.double-people')).toContainText('Sam');
   await expect(b.locator('.double-people')).toContainText('Alex');
   await captureRestaurantScene(b, '.qa/double-date/room-1000.png');
