@@ -53,7 +53,7 @@ export const CHARACTER_STORIES: Record<DateId, CharacterStory> = {
 
 export const STORY_CUE_KEYS = [
   'welcome', 'seated', 'order-nudge', 'ordered', 'main-served', 'taste', 'main-finished', 'quiet-window',
-  'beat-waiting-1', 'beat-waiting-2', 'beat-eating-1', 'beat-eating-2', 'beat-after-1', 'beat-after-2',
+  'beat-cold', 'beat-waiting-1', 'beat-waiting-2', 'beat-eating-1', 'beat-eating-2', 'beat-after-1', 'beat-after-2',
   'dessert-date-choice', 'dessert-ordered', 'dessert-served', 'dessert-shared', 'dessert-skipped',
   'bill-requested', 'bill-settled', 'farewell-invite',
   'wrong-order', 'wrong-order-returned', 'wrong-order-kept', 'spill', 'spill-help', 'spill-wiped', 'spill-fixed',
@@ -68,47 +68,60 @@ export const WAITER_ONLY_CUES: Partial<Record<StoryCueKey, SceneUtterance>> = {
 /** Silence breakers the date offers without a model request, in course order. */
 export const BEAT_CUES = { waiting: ['beat-waiting-1', 'beat-waiting-2'], eating: ['beat-eating-1', 'beat-eating-2'], after: ['beat-after-1', 'beat-after-2'] } as const satisfies Record<string, readonly StoryCueKey[]>;
 export type BeatPhase = keyof typeof BEAT_CUES;
-export interface StoryCueContext { choice?: string; dish?: string; resolution?: string }
+/** The one silence breaker that fits a table where the human has not said anything yet. */
+export const BEAT_COLD = 'beat-cold' satisfies StoryCueKey;
+export interface StoryCueContext {
+  choice?: string; dish?: string; resolution?: string;
+  /** The date's dessert follows what the human said they wanted, rather than the date's own favourite. */
+  named?: boolean;
+  /** Little has been earned yet: no confession, no praise and no warm farewell, just a plain line. */
+  reserved?: boolean;
+  /** What the human ordered, so the date can react to it. */
+  humanDish?: string;
+  /** How many bites the human took from the main course before Eli cleared it. */
+  bites?: number;
+}
 const date = (text: string, emotion: Emotion = 'warm'): SceneUtterance => ({ speaker: 'date', text, emotion });
 const waiter = (text: string, emotion: Emotion = 'warm'): SceneUtterance => ({ speaker: 'waiter', text, emotion });
 
 const CUES: Record<DateId, Record<Exclude<StoryCueKey, 'order-nudge'>, SceneUtterance>> = {
   mira: {
-    welcome: date('There you are. I was pretending to be less curious about you than I am.', 'amused'),
-    seated: date('Good. No camera, no seating chart, and nobody asking me to get their good side. I like this already.'),
-    ordered: date('I’m getting the tomato rigatoni. A bold choice for someone who owns too many white shirts.', 'amused'),
+    welcome: date('Hi! You found it. I got here a bit early, so I’ve read the menu twice already.', 'warm'),
+    seated: date('Good table. Nobody needs me for anything for the next hour. I like this already.'),
+    ordered: date('I’m getting the tomato rigatoni. It’s the one I’d be annoyed to watch someone else eat.', 'amused'),
     'main-served': date('Oh, that smells good. My plan to be very elegant about dinner is in danger.', 'amused'),
     taste: date('Mm. I was going to make a clever observation, but the sauce has taken over.', 'amused'),
     'main-finished': date('I spend a lot of dinners photographing other people’s big nights. It’s nice having one without a camera.'),
-    'quiet-window': date('That’s the light I keep trying to photograph. The little bit after everyone stops looking. We can just enjoy it, though.'),
-    'beat-waiting-1': date('I keep catching myself framing the room. Occupational hazard. Tell me something I wouldn’t guess from across a table.', 'amused'),
-    'beat-waiting-2': date('My sister just texted to ask if I’d arrived safely. The restaurant is eleven minutes from my flat. Who worries about you like that?', 'amused'),
-    'beat-eating-1': date('I have to say it: this bread is doing more work than most of the wedding speeches I’ve photographed. What’s your actual favourite thing to eat? No performance answers.', 'amused'),
-    'beat-eating-2': date('You’ve got a thinking face. It’s a good one. What are you not saying?'),
-    'beat-after-1': date('I had a whole plan to be mysterious tonight. It lasted until the bread. For the record, I’m glad it didn’t work.', 'amused'),
-    'beat-after-2': date('Honest question, no wrong answer: do you like nights like this, or do you mostly like having done them?'),
-    'dessert-date-choice': date('Can I be bold? The chocolate fondant. I’ve been eyeing it since we sat down. Two spoons.', 'amused'),
+    'quiet-window': date('This is nice. We can just sit for a minute.'),
+    'beat-cold': date('I’m better at small talk than silence, and I haven’t heard a word about your week yet. Start anywhere.', 'amused'),
+    'beat-waiting-1': date('Sorry, I keep looking round the room like I’m about to take a photo. Old habit. How was your day, actually?', 'amused'),
+    'beat-waiting-2': date('My sister makes me text her when I get home from a first date. Who worries about you like that?', 'amused'),
+    'beat-eating-1': date('I’ll say it before I lose my nerve: this is a very good dinner. What’s your actual favourite thing to eat?', 'amused'),
+    'beat-eating-2': date('You’ve gone a bit quiet. All good?'),
+    'beat-after-1': date('Plates cleared. This is usually where I decide how the night is going. I’m still deciding.', 'amused'),
+    'beat-after-2': date('Do you go out much, or is this a rare thing for you?'),
+    'dessert-date-choice': date('I’m going to order the chocolate fondant, with two spoons in case you change your mind.', 'amused'),
     'dessert-ordered': date('Dessert is an excellent reason to stay a little longer.'),
     'dessert-served': date('Well. That has my full attention.', 'amused'),
     'dessert-shared': date('I’ve been putting off a small photo show. I might choose the prints this week. No announcement. Just choose them.'),
-    'dessert-skipped': date('No pudding tribunal, then. A very respectable decision. I’ll try not to appeal.', 'amused'),
+    'dessert-skipped': date('No dessert? Fine by me. I’m pretty full anyway.', 'amused'),
     'bill-requested': date('Somehow we’ve reached the receipt part. That went quickly.'),
-    'bill-settled': date('Half each sounds good. I spent my mathematics ability on camera settings.', 'amused'),
+    'bill-settled': date('Half each sounds good.', 'amused'),
     'farewell-invite': date('Come on. I’ll walk out with you. I’m not quite ready for the evening to become an email.'),
     'wrong-order': date('That is a very confident entrance for a dish neither of us ordered.', 'surprised'),
     'wrong-order-returned': date('Good. That was easy. A mistake doesn’t need its own dramatic soundtrack.'),
     'wrong-order-kept': date('An unexpected dinner detour. All right, as long as you actually want it.', 'amused'),
     spill: date('Whoa. You okay? That reached the edge in a hurry.', 'surprised'),
     'spill-help': date('Here, take my napkin. We can rescue the table together.'),
-    'spill-wiped': date('Excellent technique. The table has never looked so briefly like a tiny lake.', 'amused'),
+    'spill-wiped': date('Nice, that’s most of it.'),
     'spill-fixed': date('Crisis over. Nobody needs to turn this into the story of their worst shift.'),
-    diner: date('I now know that stranger’s entire travel itinerary. I didn’t even get a welcome packet.', 'annoyed'),
-    'diner-quiet': date('Thank you. I’d rather hear you than somebody negotiating a hotel upgrade.'),
-    'diner-ignored': date('Fair enough. I’m borrowing the part of my brain that edits out wedding speeches.', 'amused'),
+    diner: date('I can hear every word of that call, and I didn’t sign up for any of it.', 'annoyed'),
+    'diner-quiet': date('Thank you. I’d much rather hear you than that call.'),
+    'diner-ignored': date('Fair enough. I’ll tune it out.', 'amused'),
     repair: date('Thank you for saying that. I needed you to hear me. We can take the next bit slowly.'),
     'boundary-warning': date('Hold on. I’m not okay with that. Please listen when I tell you what I’m comfortable with.', 'annoyed'),
     'date-leaving': date('I’ve said what I’m comfortable with. I’m going to head home now. Take care.', 'defensive'),
-    'ending-another-evening': date('I’d like another evening. Maybe a gallery next time. I promise not to make you inspect every frame.', 'flirtatious'),
+    'ending-another-evening': date('I’d like another evening. You pick the place this time.', 'flirtatious'),
     'ending-new-friend': date('Friends sounds right. When I put my photographs on a wall, you’re welcome to come see them.'),
     'ending-second-chance': date('I’d try a coffee another day. I appreciate the apology. Let’s give the next conversation a little more room.'),
     'ending-quiet-goodbye': date('I think we leave it here. No hard feelings. Thank you for dinner, and get home safe.'),
@@ -116,35 +129,36 @@ const CUES: Record<DateId, Record<Exclude<StoryCueKey, 'order-nudge'>, SceneUtte
     'ending-walked-away': date('I’ve asked you to stop. I’m going home now, and I don’t want another date. Good night.', 'defensive'),
   },
   jules: {
-    welcome: date('Hello. I’ve established that the chair is comfortable and the music is an argument. A promising start.', 'amused'),
+    welcome: date('Hi. I got here a little early and read the whole menu. How was your day?', 'warm'),
     seated: date('This is a good table. We can hear each other without participating in everyone else’s dinner.'),
     ordered: date('I’ve settled on mushroom risotto. That took less time than choosing a book for the train.'),
     'main-served': date('That smells like someone gave the mushrooms time. A good sign.'),
     taste: date('I was prepared to defend mushrooms. Apparently they don’t need me.', 'amused'),
     'main-finished': date('My grandmother writes corrections in all her cookbooks. Half my cooking is arguing with her handwriting.'),
     'quiet-window': date('We don’t have to fill every minute. I like a conversation that leaves a little space.'),
-    'beat-waiting-1': date('I restored a cookbook last week that someone had used as a coaster for forty years. It had the shape of every cup. I liked it better than the clean ones. What do you wear out from using it too much?'),
-    'beat-waiting-2': date('I’m comfortable with a pause, so this isn’t a complaint. I’d still like to know what you were thinking just then.'),
-    'beat-eating-1': date('A good risotto takes someone standing still for twenty minutes. Most people won’t. I suspect that’s true of most things worth doing. What do you stand still for?'),
-    'beat-eating-2': date('My grandmother would already have sent this back once, on principle. I’m enjoying it, which she’d call a character flaw. Do you take after anyone like that?', 'amused'),
-    'beat-after-1': date('I noticed you listen before you answer. That’s rarer than it should be.'),
-    'beat-after-2': date('Here’s a question I ask when an evening is going well: what’s a small thing you’ve kept for no sensible reason?'),
-    'dessert-date-choice': date('If you’ve no objection, the lemon posset. It’s a family argument I’d like to continue.', 'amused'),
-    'dessert-ordered': date('A small additional chapter. I’m in favor.'),
-    'dessert-served': date('That looks carefully made. I appreciate a dessert that doesn’t require a structural survey.', 'amused'),
+    'beat-cold': date('I don’t mind quiet, but I’d like to hear something about your week. Anything will do.'),
+    'beat-waiting-1': date('I fixed a cookbook last week with a coffee ring on nearly every page. Sorry, work talk. What did you get up to today?'),
+    'beat-waiting-2': date('That’s a comfortable pause for me. If it isn’t for you, say so and I’ll find a better subject.'),
+    'beat-eating-1': date('Mm. This is properly creamy. Do you cook much?'),
+    'beat-eating-2': date('My grandmother would have sent this back once, on principle. I’m enjoying it, which she’d call a character flaw.', 'amused'),
+    'beat-after-1': date('Quiet suits me, but I’d rather not spend the whole evening guessing. Say something I can disagree with.'),
+    'beat-after-2': date('What’s something small you’ve kept for no sensible reason? I keep old bus tickets as bookmarks.'),
+    'dessert-date-choice': date('I’m going to order the lemon posset. There will be two spoons, if you’d like one.', 'amused'),
+    'dessert-ordered': date('Good idea. I’m in favor.'),
+    'dessert-served': date('That looks nice. Someone took care over it.', 'amused'),
     'dessert-shared': date('I should put one of my own recipes in my grandmother’s cookbook. There’s room. I keep acting as if there isn’t.'),
     'dessert-skipped': date('Of course. We can end a meal without giving it an extra assignment.'),
-    'bill-requested': date('Whenever you’re ready. I’ve enjoyed having time to finish a thought.'),
+    'bill-requested': date('I’ve enjoyed having time to finish a thought.'),
     'bill-settled': date('Half each works. I like knowing where I stand.'),
     'farewell-invite': date('I’ll walk to the door with you. We can leave the table to its next conversation.'),
-    'wrong-order': date('That appears to belong to a different plot.', 'surprised'),
-    'wrong-order-returned': date('There. A correction in the margin. No need to tear out the page.'),
+    'wrong-order': date('I don’t think that’s ours. Let’s check the ticket.', 'surprised'),
+    'wrong-order-returned': date('There, sorted. No harm done.'),
     'wrong-order-kept': date('As long as you want it. Accepting a surprise is optional, even at dinner.'),
-    spill: date('Careful. Did any get on you? Good thing the books are at home.', 'surprised'),
-    'spill-help': date('Use my napkin. This is one kind of water damage we can fix.'),
-    'spill-wiped': date('That’s nearly dry. I spend enough time repairing water damage; this is a pleasantly simple case.', 'amused'),
+    spill: date('Careful. Did any get on you?', 'surprised'),
+    'spill-help': date('Here, use my napkin.'),
+    'spill-wiped': date('That’s nearly dry. Easier than I expected.', 'amused'),
     'spill-fixed': date('All right. A new glass, and nobody has to spend the evening feeling mortified.'),
-    diner: date('I had hoped to be an observer of that conversation, rather than its involuntary stenographer.', 'annoyed'),
+    diner: date('I really didn’t need to hear that call.', 'annoyed'),
     'diner-quiet': date('Much better. Thank you for asking without making the room choose sides.'),
     'diner-ignored': date('All right. I can ignore a little noise. I’m making no promises about my expression.', 'amused'),
     repair: date('I appreciate the apology. I’d rather be clear about it than pretend I wasn’t bothered.'),
@@ -158,35 +172,36 @@ const CUES: Record<DateId, Record<Exclude<StoryCueKey, 'order-nudge'>, SceneUtte
     'ending-walked-away': date('I don’t want to keep explaining that boundary. I’m leaving. Good night.', 'defensive'),
   },
   dev: {
-    welcome: date('Hey. I managed not to inspect the kitchen on my way in. Personal growth, before we’ve even sat down.', 'amused'),
-    seated: date('Good table. And I’m going to let you read the menu before offering twelve opinions.'),
+    welcome: date('Hey, there you are. I got here early, so I already have opinions about the menu. I’ll hold them for now.', 'amused'),
+    seated: date('Good table. Take your time with the menu, I won’t talk you through it.'),
     ordered: date('I’ll have the lemon chicken. And, against instinct, I will let someone else cook it.', 'amused'),
-    'main-served': date('Okay, that looks good. I can stop doing the imaginary inspection now.'),
-    taste: date('Good lemon, proper seasoning. That’s my entire restaurant review. I’m off duty now.', 'amused'),
+    'main-served': date('Okay, that looks good.'),
+    taste: date('Good lemon, proper seasoning. That’s my whole review.', 'amused'),
     'main-finished': date('I test recipes after work. Calling it dinner is easier than admitting it’s a plan.'),
     'quiet-window': date('This is nice. I keep thinking of something to say, then realizing I don’t need to.'),
-    'beat-waiting-1': date('Confession: I checked what oil they fry in before I sat down. I’m working on it. What’s the thing you can’t switch off?', 'amused'),
-    'beat-waiting-2': date('I almost ordered for both of us out of habit. Deeply unpopular habit. I’m glad I didn’t. What would you have said?', 'amused'),
-    'beat-eating-1': date('All right, honest review, one sentence, no lecture: good acid, proper seasoning, I’d eat it again. Your turn. One sentence.', 'amused'),
-    'beat-eating-2': date('I usually fill a quiet patch with a story about a bike or a sauce. I’m practising not doing that. So. Your move.'),
+    'beat-cold': date('I’m bad at silences. Tell me about your week and I’ll try not to turn it into a story about me.', 'amused'),
+    'beat-waiting-1': date('I’m terrible at waiting for food. Distract me. How was your week?', 'amused'),
+    'beat-waiting-2': date('I almost ordered for both of us out of habit. Deeply unpopular habit. I’m glad I didn’t.', 'amused'),
+    'beat-eating-1': date('This is really good, actually. How’s yours?', 'amused'),
+    'beat-eating-2': date('I usually fill a quiet patch with a story about a bike or a sauce. I’m practising not doing that. So, what’s on your mind?'),
     'beat-after-1': date('Thursday nights I play pickup ball with people who’d rather argue about fouls than win. Best part of my week. What’s yours?'),
-    'beat-after-2': date('You know what I like about tonight? Nobody’s needed me to fix anything. Don’t ruin it by asking about your brakes.', 'amused'),
-    'dessert-date-choice': date('Strawberries and cream. Something simple after all that. I’ll let Eli know.'),
+    'beat-after-2': date('Nobody’s needed me to fix anything tonight. I don’t know what to do with my hands.', 'amused'),
+    'dessert-date-choice': date('Strawberries and cream for me. Two spoons, in case you want in. I’ll let Eli know.'),
     'dessert-ordered': date('Good call. I can make room. That’s not a challenge, just a fact.'),
-    'dessert-served': date('There we go. I’m putting the food critic away before the first bite.'),
+    'dessert-served': date('There we go. That looks right.'),
     'dessert-shared': date('I’ve been planning a food truck. Second Helping. I hide the numbers in a file called Bike Parts, which probably isn’t fooling anyone.'),
     'dessert-skipped': date('Fine by me. Stopping when you’ve had enough is a skill. Allegedly.'),
     'bill-requested': date('Yeah. It’s been good having a night I didn’t have to run.'),
     'bill-settled': date('Half each. No competitive card-grabbing. I’m practicing.', 'amused'),
     'farewell-invite': date('I’ll walk out with you. I can manage a goodbye without making a speech. Probably.'),
-    'wrong-order': date('That’s not our order. Let’s check the ticket before anybody starts a courtroom drama.', 'surprised'),
-    'wrong-order-returned': date('That’s sorted. I’ve sent out the wrong thing at a dinner before. It feels bad enough already.'),
+    'wrong-order': date('Hang on, I don’t think that’s ours. Let’s check the ticket.', 'surprised'),
+    'wrong-order-returned': date('That’s sorted. A wrong plate happens. No need to make it worse for Eli.'),
     'wrong-order-kept': date('All right. Your dinner, your call. I’m keeping my opinions out of the way.'),
     spill: date('You all right? That was close.', 'surprised'),
     'spill-help': date('Take my napkin. No point two people watching one wet table.'),
     'spill-wiped': date('Nearly there. Turns out teamwork is useful outside a basketball court.'),
-    'spill-fixed': date('Good. Nobody’s hurt. We can retire this incident from active service.', 'amused'),
-    diner: date('That speakerphone is doing a lot of work for a conversation nobody asked to join.', 'annoyed'),
+    'spill-fixed': date('Good. Nobody’s hurt, and the table’s dry.', 'amused'),
+    diner: date('Ugh, that’s on speakerphone. We can all hear this.', 'annoyed'),
     'diner-quiet': date('Good. You handled that without turning it into a contest.'),
     'diner-ignored': date('Your call. I’m going to look at you instead of glaring across the room.'),
     repair: date('Thanks for owning it. I can work with an apology. I don’t want another round of the same argument.'),
@@ -201,10 +216,29 @@ const CUES: Record<DateId, Record<Exclude<StoryCueKey, 'order-nudge'>, SceneUtte
   },
 };
 
+const GUARDED_STANCES: readonly string[] = ['guarded', 'hurt', 'leaving'];
+/** A date who has been hurt, put on guard or is leaving speaks plainly: no biography, no warmth the evening did not earn. */
+export const isGuardedStance = (resolution?: string) => GUARDED_STANCES.includes(resolution ?? '');
 const GUARDED: Record<DateId, Partial<Record<StoryCueKey, string>>> = {
-  mira: { 'main-finished': 'Thanks for giving me time to finish. I don’t like being hurried through dinner.', 'quiet-window': 'A little quiet is welcome. I’d like a minute to myself.', 'dessert-shared': 'Thanks for sharing. I’m still a little quiet after earlier.', 'dessert-skipped': 'I’ll pass on dessert tonight. We can ask for the bill when you’re ready.', 'farewell-invite': 'I’ll head to the entrance. We can say good night there.' },
-  jules: { 'main-finished': 'That was a good meal. I’m content to leave a little space after it.', 'quiet-window': 'I’d like a quiet minute here. You don’t need to fill it.', 'dessert-shared': 'Thank you. I’m not quite ready to pick up where we left off.', 'dessert-skipped': 'No dessert for me, thank you. The bill whenever it suits you.', 'farewell-invite': 'I’ll walk to the entrance. Then I’m going to make my own way home.' },
-  dev: { 'main-finished': 'Good meal. I’m going to sit with that for a minute.', 'quiet-window': 'I need a quiet minute. Let’s leave it at that for now.', 'dessert-shared': 'Thanks. I’m still thinking about what happened earlier.', 'dessert-skipped': 'I’m going to skip dessert. We can get the bill when you’re ready.', 'farewell-invite': 'I’m heading to the entrance. We can say good night there.' },
+  mira: { 'main-finished': 'Thanks for giving me time to finish. I don’t like being hurried through dinner.', 'quiet-window': 'A little quiet is welcome. I’d like a minute to myself.', 'dessert-shared': 'Thanks for sharing. I’m still a little quiet after earlier.', 'dessert-skipped': 'I’ll pass on dessert tonight. We can ask for the bill when you’re ready.', 'farewell-invite': 'I’ll head to the entrance. We can say good night there.',
+    'main-served': 'Thank you.', taste: 'It’s good.', 'dessert-ordered': 'All right. Dessert, then.', 'dessert-served': 'Thank you.', 'bill-requested': 'Thanks. I’m ready to settle up when you are.', 'bill-settled': 'That’s settled.', 'spill-wiped': 'That’s most of it.', 'diner-quiet': 'Thanks for dealing with that.', 'diner-ignored': 'Fine. I’ll ignore it.' },
+  jules: { 'main-finished': 'That was a good meal. I’m content to leave a little space after it.', 'quiet-window': 'I’d like a quiet minute here. You don’t need to fill it.', 'dessert-shared': 'Thank you. I’m not quite ready to pick up where we left off.', 'dessert-skipped': 'No dessert for me, thank you. The bill whenever it suits you.', 'farewell-invite': 'I’ll walk to the entrance. Then I’m going to make my own way home.',
+    'main-served': 'Thank you.', taste: 'It’s good.', 'dessert-ordered': 'All right. Dessert, then.', 'dessert-served': 'Thank you.', 'bill-requested': 'Thank you. I’m ready to settle up.', 'bill-settled': 'That’s settled.', 'spill-wiped': 'That’s most of it.', 'diner-quiet': 'Thanks for dealing with that.', 'diner-ignored': 'Fine. I’ll ignore it.' },
+  dev: { 'main-finished': 'Good meal. I’m going to sit with that for a minute.', 'quiet-window': 'I need a quiet minute. Let’s leave it at that for now.', 'dessert-shared': 'Thanks. I’m still thinking about what happened earlier.', 'dessert-skipped': 'I’m going to skip dessert. We can get the bill when you’re ready.', 'farewell-invite': 'I’m heading to the entrance. We can say good night there.',
+    'main-served': 'Thank you.', taste: 'It’s fine.', 'dessert-ordered': 'All right. Dessert, then.', 'dessert-served': 'Thank you.', 'bill-requested': 'Thanks. Let’s settle up.', 'bill-settled': 'That’s settled.', 'spill-wiped': 'That’s most of it.', 'diner-quiet': 'Thanks for dealing with that.', 'diner-ignored': 'Fine. I’ll ignore it.' },
+};
+/** The plain neutral line for a guarded date, for the blind date to share (none of it mentions a preset's life). */
+export const guardedLine = (dateId: DateId, key: string): string | undefined => GUARDED[dateId]?.[key as StoryCueKey];
+
+/**
+ * Plain stand-ins for the few lines that confide something or look back warmly. They play while
+ * little has been earned yet (the human has said very little), so an early scripted line never
+ * hands over a confession, a compliment or an invitation the conversation has not led to.
+ */
+const RESERVED: Record<DateId, Partial<Record<StoryCueKey, string>>> = {
+  mira: { 'dessert-shared': 'This was worth saving room for. I’m not going to be dignified about the last spoonful.', 'farewell-invite': 'I’ll walk out with you.', 'ending-new-friend': 'Friends is fine by me. Take care of yourself.' },
+  jules: { 'dessert-shared': 'This was worth saving room for. I’d have been annoyed to skip it.', 'farewell-invite': 'I’ll walk to the door with you.', 'ending-new-friend': 'Friends is fine. Take care.' },
+  dev: { 'dessert-shared': 'This was worth saving room for. I could go again.', 'farewell-invite': 'I’ll walk out with you.', 'ending-new-friend': 'Friends works. Take care of yourself.' },
 };
 
 const ALIASES: Record<string, string> = {
@@ -212,12 +246,27 @@ const ALIASES: Record<string, string> = {
   'dessert-arrived': 'dessert-served', 'dessert-finished': 'dessert-shared',
   apology: 'repair', boundary: 'boundary-warning', leaving: 'date-leaving',
 };
-const DESSERT_OFFER = 'All finished here? I’ll take these. There’s lemon posset, chocolate fondant, or strawberries and cream, whenever you like.';
+const DESSERT_MENU = 'There’s lemon posset, chocolate fondant, or strawberries and cream, whenever you like.';
+const DESSERT_OFFER = `All finished here? I’ll take these. ${DESSERT_MENU}`;
+/** Eli clears whatever is on the table, so what he says depends on how much of it was eaten. */
+const mainOffer = (bites?: number) => bites === undefined || bites >= 3 ? DESSERT_OFFER : bites === 0 ? `I’ll take these away for you. ${DESSERT_MENU}` : `Not hungry after all? I’ll take these. ${DESSERT_MENU}`;
+const BILL_LEFT = 'Whenever you’re ready, I’ll leave the bill here. No rush at all.';
 const MAIN_DELIVERY: Record<string, string> = {
   'Roasted tomato rigatoni': 'The rigatoni is yours. Careful, the plates are warm.',
   'Lemon & herb chicken': 'Lemon chicken for you. Careful, the plates are warm.',
   'Wild mushroom risotto': 'Your mushroom risotto. Careful, the plates are warm.',
 };
+const SPOKEN_DISH: Record<string, string> = { 'Roasted tomato rigatoni': 'the tomato rigatoni', 'Lemon & herb chicken': 'the lemon and herb chicken', 'Wild mushroom risotto': 'the mushroom risotto' };
+/** How a dish is said aloud when the date reacts to what the human ordered. */
+export const spokenDish = (dish: string) => SPOKEN_DISH[dish] ?? `the ${dish.toLowerCase()}`;
+const SAME_DISH: Record<DateId, string> = {
+  mira: 'Oh, the same dish. Good taste, or the only sensible choice.',
+  jules: 'The same dish? Then we can compare notes honestly.',
+  dev: 'Same dish, then. We’ll both find out if it’s good.',
+};
+const SPOKEN_DESSERT: Record<typeof DESSERTS[number]['id'], string> = { lemon: 'Lemon posset', chocolate: 'Chocolate fondant', berries: 'Strawberries and cream' };
+/** How a dessert is said aloud when the date goes with the one the human named. */
+export const spokenDessert = (id: string) => SPOKEN_DESSERT[id as keyof typeof SPOKEN_DESSERT];
 
 /** Finite authored responses; scene facts select a line, never arbitrary user text. */
 export function getStoryCue(key: string, dateId: DateId, context: StoryCueContext = {}): SceneUtterance[] {
@@ -230,16 +279,21 @@ export function getStoryCue(key: string, dateId: DateId, context: StoryCueContex
   if (staffOnly) return [{ ...staffOnly }];
   const base = CUES[dateId][cue as Exclude<StoryCueKey, 'order-nudge'>];
   if (!base) return [];
-  const guarded = ['guarded', 'hurt', 'leaving'].includes(context.resolution ?? '');
-  if (guarded && GUARDED[dateId][cue]) return [date(GUARDED[dateId][cue]!, 'neutral')];
-  let line = { ...base };
+  // A hurt date still hears Eli's lines; only the date's own remark turns plain.
+  const quiet = isGuardedStance(context.resolution) ? GUARDED[dateId][cue] : undefined;
+  const plain = !quiet && context.reserved ? RESERVED[dateId][cue] : undefined;
+  let line = quiet ? date(quiet, 'neutral') : plain ? date(plain) : { ...base };
   const extra: SceneUtterance[] = [];
-  if (cue === 'bill-settled') {
-    if (context.choice === 'treat') line = date({ mira: 'Thank you. That was a kind offer.', jules: 'Thank you. I promise not to annotate the receipt.', dev: 'Thanks. I’ll accept that without turning it into an arm-wrestling match.' }[dateId]);
+  if (cue === 'ordered' && !quiet && context.humanDish) {
+    const own = context.dish ?? CHARACTER_STORIES[dateId].preferredMain;
+    line = date(context.humanDish === own ? SAME_DISH[dateId] : `Nice, ${spokenDish(context.humanDish)}. ${line.text}`, line.emotion);
+  }
+  if (cue === 'bill-settled' && !quiet) {
+    if (context.choice === 'treat') line = date({ mira: 'Thank you. That was a kind offer.', jules: 'Thank you. That was generous.', dev: 'Thanks. I’ll accept that without turning it into an arm-wrestling match.' }[dateId]);
     if (context.choice === 'separate') line = date({ mira: 'Sure. I’ll cover mine. That’s easy.', jules: 'Our own orders, then. That works for me.', dev: 'Separate checks. Fair enough. No argument from me.' }[dateId]);
   }
   const dessert = DESSERTS.find(item => item.id === context.choice);
-  if (dessert && cue === 'dessert-ordered') {
+  if (dessert && !quiet && cue === 'dessert-ordered') {
     const reactions: Record<DateId, Record<typeof DESSERTS[number]['id'], string>> = {
       mira: { chocolate: 'Chocolate fondant. Yes. I’m prepared to be very undignified about the middle.', lemon: 'Lemon it is. I usually go for chocolate, but I’m curious about this.', berries: 'Strawberries and cream. Uncomplicated. That sounds good tonight.' },
       jules: { lemon: 'Lemon posset. Excellent. My grandmother would immediately have notes.', chocolate: 'Chocolate, then. I favor lemon, but a warm middle makes a reasonable argument.', berries: 'Berries and cream. I respect a dessert that gets to the point.' },
@@ -247,11 +301,13 @@ export function getStoryCue(key: string, dateId: DateId, context: StoryCueContex
     };
     line = date(reactions[dateId][dessert.id]);
   }
-  // Eli leads the course changes; the date reacts after the plates move.
-  if (cue === 'main-finished') return [waiter(DESSERT_OFFER), line];
-  if (cue === 'bill-requested') return [waiter('Whenever you’re ready, I’ll leave the bill here. No rush at all.'), line];
+  // The human already said which one they wanted: the date goes with it instead of their own favourite.
+  if (dessert && !quiet && cue === 'dessert-date-choice' && context.named) line = date(`${spokenDessert(dessert.id)} it is, then. I’ll let Eli know.`);
+  // Eli leads the course changes; the date reacts after the plates move. Little earned yet means no remark at the check.
+  if (cue === 'main-finished') return [waiter(mainOffer(context.bites)), line];
+  if (cue === 'bill-requested') return context.reserved && !quiet ? [waiter(BILL_LEFT)] : [waiter(BILL_LEFT), line];
   if (cue === 'welcome') extra.push(waiter('Welcome in. Your table is ready whenever you are.'));
-  if (cue === 'ordered') extra.push(waiter('Lovely. I’ll put that through for you.'));
+  if (cue === 'ordered') extra.push(waiter(context.humanDish ? 'Lovely. I’ll put both of those through.' : 'Lovely. I’ll put that through for you.'));
   if (cue === 'main-served') extra.push(waiter(MAIN_DELIVERY[context.dish ?? ''] ?? 'Here we are. Careful, the plates are warm.'));
   if (cue === 'dessert-served') extra.push(waiter(dessert ? { lemon: 'Lemon posset, with shortbread. Enjoy.', chocolate: 'Chocolate fondant. The plate is warm; mind the middle.', berries: 'Strawberries and cream. Two spoons, and I’ll leave you to it.' }[dessert.id] : 'Here’s dessert. Two spoons, and I’ll leave you to it.'));
   if (cue === 'wrong-order') extra.push(waiter('Oh, that’s for the next table. I’m sorry. Let me check the ticket.', 'embarrassed'));
@@ -262,14 +318,20 @@ export function getStoryCue(key: string, dateId: DateId, context: StoryCueContex
   if (cue === 'diner') extra.push({ speaker: 'diner', text: 'I’m having a conversation. I didn’t realize the entire restaurant was listening.', emotion: 'defensive' });
   if (cue === 'diner-quiet') extra.push({ speaker: 'diner', text: 'All right. I’ll take it outside.', emotion: 'defensive' });
   if (cue === 'bill-settled') extra.push(waiter('All taken care of. Thank you both, and have a good evening.'));
-  return [line, ...extra];
+  // A plain "Thank you." belongs after the plate is down, not before.
+  return quiet && (cue === 'main-served' || cue === 'dessert-served') ? [...extra, line] : [line, ...extra];
 }
 
 /** Enumerated variants let the clip CLI pre-generate every fixed response. */
 export const STORY_CUE_VARIANTS: { id: string; context: StoryCueContext }[] = [
   { id: 'default', context: {} },
   ...DESSERTS.map(item => ({ id: item.id, context: { choice: item.id } })),
+  ...DESSERTS.map(item => ({ id: `named-${item.id}`, context: { choice: item.id, named: true } })),
   ...['split', 'treat', 'separate'].map(choice => ({ id: choice, context: { choice } })),
   ...['guarded', 'hurt', 'leaving'].map(resolution => ({ id: resolution, context: { resolution } })),
+  { id: 'reserved', context: { reserved: true } },
   ...Object.keys(MAIN_DELIVERY).map((dish, index) => ({ id: `main-${index}`, context: { dish } })),
+  ...Object.keys(MAIN_DELIVERY).map((humanDish, index) => ({ id: `ordered-${index}`, context: { humanDish } })),
+  { id: 'bites-0', context: { bites: 0 } },
+  { id: 'bites-1', context: { bites: 1 } },
 ];

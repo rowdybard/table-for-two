@@ -91,7 +91,8 @@ test('an evening with no course actions still reaches the door: Eli nudges, serv
     f.action('inspect-ticket'); f.action('keep-order'); f.spill();
     f.until('Eli clearing the plates', () => f.scene.state.evening.main.status === 'finished', 260);
     assert.ok(f.scene.state.evening.main.finishedAt! - f.scene.state.evening.main.servedAt! >= 199, 'an untouched plate runs the full course clock');
-    assert.ok(f.scene.state.evening.beats >= 1, 'the date filled a long silence with a line of their own'); assert.ok(recordedAtTable(f.scene.state).includes('broke a silence'));
+    assert.ok(f.scene.state.evening.beats >= 1, 'the date filled a long silence with a line of their own'); assert.ok(f.scene.state.evening.cues.some(cue => cue.key === 'beat-cold'), 'nobody had spoken, so the line was a plain invitation to start');
+    assert.equal(f.scene.state.memory.includes('silence'), false, 'an authored line is not written into the model’s memory');
     assert.equal(f.scene.state.evening.dialogueTurns, 0, 'an authored beat is not a human turn');
     f.until('the date choosing dessert', () => f.scene.state.evening.dessert.status !== 'none');
     assert.equal(f.scene.state.evening.dessert.chosenBy, 'date'); assert.equal(f.scene.state.evening.dessert.choice, CHARACTER_STORIES.dev.preferredDessert);
