@@ -339,7 +339,7 @@ tabletopInspector = new TabletopInspector(el('restaurant-app'), {
   async use(target) { await useTableTarget(target); },
   async command(body) { await command(body); },
   releasePointer,
-  changed() { keys.clear(); recognition.setPaused(state.phase !== 'playing' || visibleModal() || !doubleClient.active && !scenePresenceAvailable(state)); },
+  changed() { clearWalkingKeys(); recognition.setPaused(state.phase !== 'playing' || visibleModal() || !doubleClient.active && !scenePresenceAvailable(state)); },
 });
 
 function saveSessionReference() {
@@ -566,16 +566,39 @@ function showEnding() {
   eveningUI.closeDialogs(); eveningUI.renderEnding(state); ambience.cue('ending');
   try { sessionStorage.removeItem('table-for-two-session'); } catch { /* Optional. */ }
 }
-function releasePointer() {
-  keys.clear(); dragging = false; mobile?.clear();
+function walkingInput() {
+  const touchBlocked = !!mobile?.enabled && (mobile.portrait || !!mobile.menuScope);
+  const controlsBlocked = menuInputOpen() || !el('conversation-form').hidden || pageSuspended || document.hidden;
+  const typing = controlsBlocked || touchBlocked || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+  const analog = mobile?.movement ?? { horizontal: 0, forward: 0 };
+  const horizontal = !typing ? Math.max(-1, Math.min(1, Number(keys.has('d') || keys.has('arrowright')) - Number(keys.has('a') || keys.has('arrowleft')) + analog.horizontal)) : 0;
+  const forward = !typing ? Math.max(-1, Math.min(1, Number(keys.has('w') || keys.has('arrowup')) - Number(keys.has('s') || keys.has('arrowdown')) + analog.forward)) : 0;
+  const canWalk = renderer.isReady && joined && state.phase === 'playing' && !state.seated && !pageSuspended && !document.hidden;
+  const moving = canWalk && !!(horizontal || forward);
+  const vector = renderer.getMovement(moving ? horizontal : 0, moving ? forward : 0);
+  const magnitude = Math.max(1, Math.hypot(vector.x, vector.z));
+  return { touchBlocked, controlsBlocked, horizontal, forward, canWalk, moving, moveX: vector.x / magnitude, moveZ: vector.z / magnitude };
+}
+function sendWalkingInput(now = performance.now()) {
+  const intent = walkingInput();
   if (joined && state.phase === 'playing') {
     const room = state.id, membership = doubleClient.credentials, sessionToken = token;
-    movementSendGate.stop(room, performance.now(), complete => {
+    const yaw = renderer.getYaw();
+    movementSendGate.submit(room, now, intent.moving, intent.horizontal, intent.forward, complete => {
       // The old request may finish after leaving or rejoining a different seat.
       if (!joined || state.id !== room || doubleClient.credentials !== membership || token !== sessionToken || state.phase !== 'playing') { complete(); return; }
-      void command({ type: 'move', x: 0, z: 0, yaw: renderer.getYaw() }, true).finally(complete);
+      void command({ type: 'move', x: intent.moveX, z: intent.moveZ, yaw }, true).finally(complete);
     });
   }
+  return intent;
+}
+function clearWalkingKeys() {
+  if (!keys.size) return;
+  keys.clear(); sendWalkingInput();
+}
+function releasePointer() {
+  keys.clear(); dragging = false; mobile?.clear();
+  sendWalkingInput();
   if (document.pointerLockElement) { intentionalPointerRelease = true; document.exitPointerLock(); }
 }
 async function resumeDinner(after?: () => void) {
@@ -1048,14 +1071,14 @@ document.addEventListener('pointerlockchange', () => {
   const locked = document.pointerLockElement === renderer.canvas, lost = hadPointerLock && !locked;
   hadPointerLock = locked;
   el('capture-pointer').hidden = locked || !joined || visibleModal();
-  if (!locked) keys.clear();
+  if (!locked) clearWalkingKeys();
   if (lost && !intentionalPointerRelease && joined && state.phase === 'playing' && !visibleModal()) void pauseDinner();
   intentionalPointerRelease = false;
 });
 document.addEventListener('keydown', event => {
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((event.target as HTMLElement)?.tagName);
   if (event.key === 'Escape') {
-    event.preventDefault(); keys.clear();
+    event.preventDefault(); clearWalkingKeys();
     if (event.repeat) return;
     if (!el('ending-screen').hidden) return;
     if (tabletopInspector?.isOpen) { tabletopInspector.close(); return; }
@@ -1070,22 +1093,27 @@ document.addEventListener('keydown', event => {
     else void pauseDinner();
     return;
   }
-  if (menuNavigation.handle(event)) { keys.clear(); return; }
+  if (menuNavigation.handle(event)) { clearWalkingKeys(); return; }
   if (startingDinner || typing || !joined || visibleModal() || state.phase !== 'playing' || (mobile?.enabled && mobile.portrait) || mobile?.menuScope) return;
   const key = event.key.toLowerCase();
   if (key === 'j' && !event.repeat) { event.preventDefault(); btn('journal-toggle').click(); return; }
   if (!el('journal').hidden) return;
   if (key === 'm' && !event.repeat) { event.preventDefault(); btn('mic-toggle').click(); return; }
   if (/^[1-4]$/.test(key) && !event.repeat && el('conversation-form').hidden) {
-    if (eveningUI.chip(Number(key))) { event.preventDefault(); keys.clear(); }
+    if (eveningUI.chip(Number(key))) { event.preventDefault(); clearWalkingKeys(); }
     return;
   }
-  if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) { keys.add(key); event.preventDefault(); }
+  if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
+    if (!keys.has(key)) { keys.add(key); sendWalkingInput(); }
+    event.preventDefault();
+  }
   if (key === 'e' && !event.repeat) { event.preventDefault(); void interact(); }
   if (key === 'r' && !event.repeat) { event.preventDefault(); inspectTableAt(); }
   if (key === 't' && !event.repeat) { event.preventDefault(); showTypedInput(); }
 });
-document.addEventListener('keyup', event => keys.delete(event.key.toLowerCase()));
+document.addEventListener('keyup', event => {
+  if (keys.delete(event.key.toLowerCase())) sendWalkingInput();
+});
 window.addEventListener('blur', () => releasePointer());
 function suspendPage() {
   releasePointer(); cancelLocalPlayback(); microphoneAttempt++;
@@ -1136,21 +1164,8 @@ function frame(now: number) {
     else renderer.setListeningPreview(cue);
   }
   renderer.setDateThinking(busy && !playback.speaker);
-  const touchBlocked = !!mobile?.enabled && (mobile.portrait || !!mobile.menuScope);
-  const controlsBlocked = menuInputOpen() || !el('conversation-form').hidden || pageSuspended || document.hidden;
-  const typing = controlsBlocked || touchBlocked || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
-  const analog = mobile?.movement ?? { horizontal: 0, forward: 0 };
-  const horizontal = !typing ? Math.max(-1, Math.min(1, Number(keys.has('d') || keys.has('arrowright')) - Number(keys.has('a') || keys.has('arrowleft')) + analog.horizontal)) : 0;
-  const forward = !typing ? Math.max(-1, Math.min(1, Number(keys.has('w') || keys.has('arrowup')) - Number(keys.has('s') || keys.has('arrowdown')) + analog.forward)) : 0;
-  const canWalk = renderer.isReady && joined && state.phase === 'playing' && !state.seated && !pageSuspended && !document.hidden;
-  const moving = canWalk && !!(horizontal || forward);
-  const vector = renderer.getMovement(moving ? horizontal : 0, moving ? forward : 0);
-  const magnitude = Math.max(1, Math.hypot(vector.x, vector.z));
-  const moveX = vector.x / magnitude, moveZ = vector.z / magnitude;
-  // Send changes immediately when the previous request finishes; the 80 ms
-  // interval is a heartbeat, not a delay on starting, stopping or turning.
-  const completeMove = renderer.isReady && joined && state.phase === 'playing' && !pageSuspended && !document.hidden ? movementSendGate.begin(state.id, now, moving, horizontal, forward) : undefined;
-  if (completeMove) void command({ type: 'move', x: moveX, z: moveZ, yaw: renderer.getYaw() }, true).finally(completeMove);
+  // Keyboard events use the same ordered sender without waiting for this frame.
+  const { touchBlocked, controlsBlocked, canWalk, moveX, moveZ } = sendWalkingInput(now);
   const humanIndex = state.participants.findIndex(participant => participant.kind === 'human');
   const human = state.participants[humanIndex];
   const viewPosition = human && walkingView.sample(state.id, human.position, canWalk, moveX, moveZ, dt);

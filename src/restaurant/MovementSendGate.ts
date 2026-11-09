@@ -7,7 +7,7 @@ export class MovementSendGate {
   private moving = false;
   private horizontal = 0;
   private forward = 0;
-  private deferredStop?: { room: string; now: number; send: (complete: () => void) => void };
+  private deferred?: { room: string; now: number; moving: boolean; horizontal: number; forward: number; send: (complete: () => void) => void };
 
   begin(room: string, now: number, moving: boolean, horizontal: number, forward: number): (() => void) | undefined {
     if (room !== this.room) {
@@ -16,12 +16,12 @@ export class MovementSendGate {
       this.sentAt = 0;
       this.moving = false;
       this.horizontal = this.forward = 0;
-      this.deferredStop = undefined;
+      this.deferred = undefined;
       this.serial++;
     }
     if (this.pending) {
       // A new movement supersedes a queued stop if controls became active again.
-      if (moving) this.deferredStop = undefined;
+      if (moving) this.deferred = undefined;
       return;
     }
     // Ignore tiny analog-stick jitter; meaningful turns and all keyboard changes
@@ -37,19 +37,21 @@ export class MovementSendGate {
     return () => {
       if (this.serial !== serial) return;
       this.pending = false;
-      const stop = this.deferredStop;
-      this.deferredStop = undefined;
-      if (stop) {
-        const complete = this.begin(stop.room, stop.now, false, 0, 0);
-        if (complete) stop.send(complete);
-      }
+      const next = this.deferred;
+      this.deferred = undefined;
+      if (next) this.submit(next.room, next.now, next.moving, next.horizontal, next.forward, next.send);
     };
   }
 
-  /** Send or queue a stop even if rendering never runs another frame. */
-  stop(room: string, now: number, send: (complete: () => void) => void) {
-    const complete = this.begin(room, now, false, 0, 0);
+  /** Send or retain the latest input, even if rendering never runs another frame. */
+  submit(room: string, now: number, moving: boolean, horizontal: number, forward: number, send: (complete: () => void) => void) {
+    const complete = this.begin(room, now, moving, horizontal, forward);
     if (complete) send(complete);
-    else if (room === this.room && this.pending) this.deferredStop = { room, now, send };
+    else if (room === this.room && this.pending) this.deferred = { room, now, moving, horizontal, forward, send };
+  }
+
+  /** Compatibility for callers that need to send or queue only a stop. */
+  stop(room: string, now: number, send: (complete: () => void) => void) {
+    this.submit(room, now, false, 0, 0, send);
   }
 }

@@ -79,3 +79,49 @@ test('new movement supersedes a queued stop when focus returns before completion
   assert.deepEqual(sends, []);
   assert.ok(gate.begin('date', 116, true, 1, 0));
 });
+
+test('a direction event behind an in-flight move is sent on completion without another frame', () => {
+  const gate = new MovementSendGate(), sent: string[] = [];
+  let finishFirst!: () => void, finishTurn!: () => void;
+  gate.submit('date', 100, true, 0, 1, complete => { sent.push('forward'); finishFirst = complete; });
+  gate.submit('date', 110, true, 1, 0, complete => { sent.push('right'); finishTurn = complete; });
+  assert.deepEqual(sent, ['forward']);
+  finishFirst();
+  assert.deepEqual(sent, ['forward', 'right']);
+  finishTurn();
+});
+
+test('the latest event wins when direction and release arrive before the pending response', () => {
+  const gate = new MovementSendGate(), sent: string[] = [];
+  let finishFirst!: () => void, finishStop!: () => void;
+  gate.submit('date', 100, true, 0, 1, complete => { sent.push('forward'); finishFirst = complete; });
+  gate.submit('date', 110, true, 1, 0, () => sent.push('obsolete right'));
+  gate.submit('date', 120, false, 0, 0, complete => { sent.push('stop'); finishStop = complete; });
+  finishFirst();
+  assert.deepEqual(sent, ['forward', 'stop']);
+  finishStop();
+});
+
+test('a new event after release supersedes the stop and keeps the latest direction', () => {
+  const gate = new MovementSendGate(), sent: string[] = [];
+  let finishFirst!: () => void, finishTurn!: () => void;
+  gate.submit('date', 100, true, 0, 1, complete => { sent.push('forward'); finishFirst = complete; });
+  gate.submit('date', 110, false, 0, 0, () => sent.push('obsolete stop'));
+  gate.submit('date', 120, true, -1, 0, complete => { sent.push('left'); finishTurn = complete; });
+  finishFirst();
+  assert.deepEqual(sent, ['forward', 'left']);
+  finishTurn();
+});
+
+test('queued input and late completions cannot cross room identities', () => {
+  const gate = new MovementSendGate(), sent: string[] = [];
+  let finishOld!: () => void, finishNew!: () => void;
+  gate.submit('old', 100, true, 0, 1, complete => { sent.push('old forward'); finishOld = complete; });
+  gate.submit('old', 110, false, 0, 0, () => sent.push('old stop'));
+  gate.submit('new', 111, true, 1, 0, complete => { sent.push('new right'); finishNew = complete; });
+  finishOld();
+  gate.submit('new', 112, false, 0, 0, () => sent.push('new stop'));
+  assert.deepEqual(sent, ['old forward', 'new right']);
+  finishNew();
+  assert.deepEqual(sent, ['old forward', 'new right', 'new stop']);
+});

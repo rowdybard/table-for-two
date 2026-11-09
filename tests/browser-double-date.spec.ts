@@ -7,6 +7,7 @@ import { attachDoubleDateServer } from '../server/double-date';
 import type { ClaudeRequest, SpeechRequest } from '../server/restaurant/providers';
 import type { DoubleDateRoomState, DoubleRoomCredentials } from '../src/restaurant/double-date-types';
 import type { DinnerState } from '../src/restaurant/types';
+import { EVENING_PACE } from '../src/restaurant/evening';
 import { doubleContext } from './helpers/double-note';
 import { RESTAURANT_BROWSER_STORY_RATE, captureRestaurantScene, restaurantEvening, restaurantInterrupted, restaurantScenario, resolveRestaurantScenario, waitForRestaurantScene } from './restaurant-browser-helpers';
 
@@ -318,6 +319,19 @@ async function resolveInterruption(page: Page): Promise<boolean> {
   await expect.poll(async () => !!restaurantEvening(await state(page)).resolutions[incident.event]).toBe(true);
   return true;
 }
+/** The friend's active story or incident takes priority over the ending chip. */
+async function openWingmanEnding(page: Page) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (await resolveInterruption(page)) continue;
+    try { await chip(page, '#view-own-ending'); return; }
+    catch (error) {
+      // A new authored interruption can arrive after the initial check.
+      if (restaurantInterrupted(await state(page))) continue;
+      throw error;
+    }
+  }
+  throw new Error('The wingman ending remained blocked by table interruptions.');
+}
 async function course(page: Page, predicate: (snapshot: DinnerState) => boolean, timeout = 15000) {
   const deadline = Date.now() + timeout;
   while (!predicate(await state(page)) && Date.now() < deadline) if (!await resolveInterruption(page)) await page.waitForTimeout(100);
@@ -570,7 +584,7 @@ test('friend voice uses one opted-in microphone per browser and exchanges native
     await p.b.goto('about:blank');
     await expect.poll(async () => (await room(p.a)).pauseReason).toBe('reconnect');
     await expect.poll(async () => (await media(p.a)).tracks.every(track => track.readyState === 'ended')).toBe(true);
-    await p.b.goto(base); await expect(p.b.locator('#dinner-hud')).toBeVisible({ timeout: 15000 }); await waitForRestaurantScene(p.b);
+    await p.b.goto(base); await waitForRestaurantScene(p.b); await expect(p.b.locator('#dinner-hud')).toBeVisible({ timeout: 15000 });
     expect((await media(p.b)).calls).toBe(0);
     for (const page of [p.a,p.b]) await expect(page.locator('#mic-toggle')).toHaveAttribute('aria-pressed', 'false');
     await p.a.locator('#mic-toggle').click(); await p.b.locator('#mic-toggle').click();
@@ -615,7 +629,7 @@ test('a finished date can stay as a wingman, help the active pair and return fro
     await expect(p.a.locator('#ending-screen')).toBeHidden(); await expect(p.a.locator('#dinner-hud')).toBeVisible();
     expect((await room(p.a)).views.h1.order).toBeNull();
     const departedMemory = (await room(p.a)).views.h1.memory;
-    await chip(p.a, '#view-own-ending');
+    await openWingmanEnding(p.a);
     await expect(p.a.locator('#ending-screen')).toBeVisible();
     const earlyHistory = await p.a.evaluate(() => JSON.parse(localStorage.getItem('table-for-two-evenings') || '[]'));
     expect(earlyHistory).toHaveLength(1);
@@ -634,7 +648,7 @@ test('a finished date can stay as a wingman, help the active pair and return fro
     // A wingman keeps their friend company; no course, dessert or check of their own is on offer.
     await expect(p.a.locator('#prompt-copy')).toHaveText('Here for your friend.');
     await expect(p.a.locator('#prompt-chips [data-evening="skip-dessert"], #prompt-chips [data-evening="order-dessert"], #prompt-chips [data-evening="settle-bill"]')).toHaveCount(0);
-    await chip(p.a, '#view-own-ending');
+    await openWingmanEnding(p.a);
     await expect(p.a.locator('#ending-screen')).toBeVisible(); expect((await room(p.b)).phase).toBe('playing');
     const updatedHistory = await p.a.evaluate(() => JSON.parse(localStorage.getItem('table-for-two-evenings') || '[]') as { moments: { description: string }[] }[]);
     expect(updatedHistory).toHaveLength(1);
@@ -690,19 +704,25 @@ test('complete double evening: both dinners, a shared dessert, one check for the
     for (const page of [p.a,p.b]) await expect(page.locator('#prompt-chips [data-evening="taste"], #prompt-chips [data-evening="finish-main"]')).toHaveCount(0);
     // Two dinners, each eaten from its own plate; Eli clears both on his own clock.
     for (let bite = 1; bite <= 3; bite++) for (const page of [p.a,p.b]) await eat(page, 'meal', bite);
-    for (const page of [p.a,p.b]) await course(page, snapshot => snapshot.evening.main.status === 'finished', 20000);
+    await course(p.a, snapshot => snapshot.evening.main.status === 'finished', 20000);
     expect((await room(p.a)).views.h1.evening.cues.some(cue => cue.key === 'main-finished' && cue.utterances[0]!.speaker === 'waiter')).toBe(true);
-    await captureRestaurantScene(p.a, '.qa/double-date/plates-cleared-1280.png');
     // Each pair can choose while the offer is open; otherwise the date makes the choice.
-    // The table's check waits for both pairs' dessert decisions.
+    // Eat the first pair's dessert when it is served; the second main and a
+    // software PNG readback can otherwise outlast the authored serving window.
     await chooseDessert(p.a, 'lemon');
-    await chooseDessert(p.b, 'skip');
     await course(p.a, snapshot => snapshot.evening.dessert.status === 'served', 20000);
     expect((await state(p.b)).evening.bill.requested).toBe(false);
     await eat(p.a, 'dessert', 2);
+    await course(p.b, snapshot => snapshot.evening.main.status === 'finished', 20000);
+    await captureRestaurantScene(p.a, '.qa/double-date/plates-cleared-1280.png');
+    // The table's check waits for both pairs' dessert decisions.
+    await chooseDessert(p.b, 'skip');
     await captureRestaurantScene(p.a, '.qa/double-date/shared-dessert-1280.png');
     await course(p.a, snapshot => snapshot.evening.dessert.status === 'finished', 30000);
-    for (const page of [p.a,p.b]) await course(page, snapshot => snapshot.evening.bill.requested, 30000);
+    // The other pair may let their date order and finish dessert unaided.
+    const unattendedDessertSeconds = EVENING_PACE.dessertDecision + EVENING_PACE.dessertKitchen + EVENING_PACE.dessertCourse + EVENING_PACE.checkDelay;
+    const billWaitMs = 15000 + Math.ceil(unattendedDessertSeconds * 1000 / RESTAURANT_BROWSER_STORY_RATE);
+    for (const page of [p.a,p.b]) await course(page, snapshot => snapshot.evening.bill.requested, billWaitMs);
     const billed = await room(p.a), money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
     expect(billed.views.h1.evening.bill.arrivedAt).toBe(billed.views.h2.evening.bill.arrivedAt);
     await prompt(p.a); await expect(p.a.locator('#prompt-copy')).toHaveText('Eli left the check.');

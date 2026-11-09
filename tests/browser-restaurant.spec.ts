@@ -174,15 +174,49 @@ test('solo restaurant: roster, real movement, seat, order, streamed cast, privat
   await waitForRestaurantScene(page);
   const before = (await state(page)).participants[0].position[2];
   await page.locator('#conversation-input').blur();
-  for (let i = 0; i < 20 && (await state(page)).participants[0].position[2] > 1.4; i++) {
-    await page.keyboard.down('w'); await page.waitForTimeout(220); await page.keyboard.up('w');
+  // Hold animation callbacks to verify keyboard movement and release do not
+  // depend on another rendered frame, then restore all queued callbacks.
+  const movementResponse = (moving: boolean) => page.waitForResponse(response => {
+    const request = response.request();
+    if (request.method() !== 'POST' || !new URL(request.url()).pathname.endsWith('/command')) return false;
+    const command = request.postDataJSON();
+    return command.type === 'move' && (Math.hypot(command.x, command.z) > 0) === moving;
+  }, { timeout: 15000 });
+  await page.evaluate(() => {
+    const win = window as typeof window & { __testRafGate?: { original: typeof requestAnimationFrame; pending: FrameRequestCallback[] } };
+    const original = window.requestAnimationFrame.bind(window), pending: FrameRequestCallback[] = [];
+    win.__testRafGate = { original, pending };
+    window.requestAnimationFrame = callback => { pending.push(callback); return -pending.length; };
+  });
+  try {
+    // Let any frame already queued before interception finish; new frames stay held.
+    await page.evaluate(() => new Promise<void>(resolve => {
+      const gate = (window as typeof window & { __testRafGate: { original: typeof requestAnimationFrame } }).__testRafGate;
+      gate.original(() => gate.original(() => resolve()));
+    }));
+    await expect.poll(() => page.evaluate(() => (window as typeof window & { __testRafGate?: { pending: FrameRequestCallback[] } }).__testRafGate!.pending.length), { timeout: 15000 }).toBeGreaterThan(0);
+    const start = movementResponse(true);
+    await page.keyboard.down('w');
+    expect((await start).status()).toBe(200);
+    const stop = movementResponse(false);
+    await page.keyboard.up('w');
+    expect((await stop).status()).toBe(200);
+  } finally {
+    await page.keyboard.up('w');
+    await page.evaluate(() => {
+      const win = window as typeof window & { __testRafGate?: { original: typeof requestAnimationFrame; pending: FrameRequestCallback[] } };
+      const gate = win.__testRafGate;
+      if (gate) { window.requestAnimationFrame = gate.original; gate.pending.forEach(callback => gate.original(callback)); delete win.__testRafGate; }
+    });
   }
-  expect((await state(page)).participants[0].position[2]).toBeLessThan(before - 2);
-  // Real mouse-look points at the physical chair/table, then E performs the interaction.
+  // Aim at the real chair, walk to its interaction, and sit before releasing W.
   await page.mouse.move(640, 400); await page.mouse.down(); await page.mouse.move(640, 610, { steps: 8 }); await page.mouse.up();
-  await expect(page.locator('#interaction')).toBeVisible();
-  await expect(page.locator('#interaction')).toContainText(/seat/i);
-  await page.keyboard.press('e');
+  await page.keyboard.down('w');
+  try {
+    await expect.poll(async () => (await state(page)).participants[0].position[2], { timeout: 15000 }).toBeLessThan(before - 2);
+    await expect(page.locator('#interaction').filter({ hasText: /seat/i })).toBeVisible({ timeout: 15000 });
+    await page.keyboard.press('e');
+  } finally { await page.keyboard.up('w'); }
   await expect.poll(async () => (await state(page)).seated).toBe(true);
   await expect.poll(async () => {
     const date = (await state(page)).participants.find(participant => participant.kind === 'ai')!;
