@@ -39,6 +39,10 @@ export class DoubleDateClient {
   get active() { return !!this.membership; }
   private get path() { return '/api/double-date/rooms/' + encodeURIComponent(this.membership!.roomId); }
   private get headers() { return { 'Content-Type': 'application/json', Authorization: `Bearer ${this.membership?.token ?? ''}` }; }
+  private get requestTimeoutMs() {
+    const configured = this.options.requestTimeoutMs ?? ROOM_REQUEST_TIMEOUT_MS;
+    return Number.isFinite(configured) ? Math.max(1, Math.min(60000, configured)) : ROOM_REQUEST_TIMEOUT_MS;
+  }
 
   async create(name: string, model: ClaudeModel, sessionLimit: number) {
     const response = await this.json<DoubleRoomResponse>('/api/double-date/rooms', { name, model, sessionLimit });
@@ -92,9 +96,22 @@ export class DoubleDateClient {
     const url = new URL('/', location.href); url.searchParams.set('invite', this.room.code); return url.href;
   }
   async leave(forget = true) {
+    const membership = this.membership;
     this.stopPolling();
-    if (this.membership) await fetch(this.path + '/leave', { method: 'POST', headers: this.headers, body: '{}', keepalive: true }).catch(() => {});
-    if (forget) {
+    if (membership) {
+      const controller = new AbortController();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<void>(resolve => { timer = setTimeout(() => { controller.abort(); resolve(); }, this.requestTimeoutMs); });
+      try {
+        const path = '/api/double-date/rooms/' + encodeURIComponent(membership.roomId) + '/leave';
+        const leaving = fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${membership.token}` }, body: '{}', keepalive: true, signal: controller.signal })
+          .then(response => { if (controller.signal.aborted) void response.body?.cancel().catch(() => {}); }).catch(() => {});
+        // A transport that ignores abort must not hold navigation forever.
+        await Promise.race([leaving, deadline]);
+      } catch { /* Leaving is best effort. */ }
+      finally { clearTimeout(timer); }
+    }
+    if (forget && this.membership === membership) {
       try { sessionStorage.removeItem(storageKey); } catch {}
       this.membership = undefined; this.room = undefined; this.seen.clear(); this.cursor = 0;
     }
@@ -153,8 +170,7 @@ export class DoubleDateClient {
   }
   private async json<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
     const controller = new AbortController();
-    const configured = this.options.requestTimeoutMs ?? ROOM_REQUEST_TIMEOUT_MS;
-    const timeout = setTimeout(() => controller.abort(), Number.isFinite(configured) ? Math.max(1, Math.min(60000, configured)) : ROOM_REQUEST_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
     const cancel = () => controller.abort(signal?.reason);
     signal?.addEventListener('abort', cancel, { once: true });
     if (signal?.aborted) cancel();

@@ -9,7 +9,7 @@ import type { DoubleDateRoomState, DoubleRoomCredentials } from '../src/restaura
 import type { DinnerState } from '../src/restaurant/types';
 import { EVENING_PACE } from '../src/restaurant/evening';
 import { doubleContext } from './helpers/double-note';
-import { RESTAURANT_BROWSER_STORY_RATE, activateDisplayedChoice, captureRestaurantScene, reloadRestaurantScene, restaurantEvening, restaurantInterrupted, restaurantScenario, resolveRestaurantScenario, waitForRestaurantScene } from './restaurant-browser-helpers';
+import { RESTAURANT_BROWSER_STORY_RATE, activateDisplayedChoice, captureRestaurantScene, playAgainRestaurantScene, reloadRestaurantScene, restaurantEvening, restaurantInterrupted, restaurantScenario, resolveRestaurantScenario, waitForRestaurantScene } from './restaurant-browser-helpers';
 
 let http: Server, restaurant: Awaited<ReturnType<typeof attachRestaurantServer>>;
 let doubles: Awaited<ReturnType<typeof attachDoubleDateServer>>, browser: Browser, friendBrowser: Browser, base = '';
@@ -804,7 +804,7 @@ test('complete double evening: both dinners, a shared dessert, one check for the
     for (const view of Object.values(completed.views)) expect(view.evening.moments.some(moment => moment.id === 'scenario-family-visit')).toBe(true);
     expect(completed.usage.claudeRequests).toBe(1);
     await captureRestaurantScene(p.a, '.qa/double-date/ending-mira-1280.png'); await captureRestaurantScene(p.b, '.qa/double-date/ending-jules-1000.png');
-    await p.a.locator('#new-date').click();
+    await playAgainRestaurantScene(p.a);
     await expect(p.a.locator('#title-start')).toBeVisible({ timeout: 15000 });
     await expect(p.a.locator('#arrival-screen')).toHaveAttribute('data-screen', 'title');
     expect(await credentials(p.a)).toBeNull();

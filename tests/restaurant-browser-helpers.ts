@@ -19,6 +19,15 @@ export async function reloadRestaurantScene(page: Page) {
   await waitForRestaurantScene(page);
 }
 
+/** Play again can navigate asynchronously to the same URL after leaving a room. */
+export async function playAgainRestaurantScene(page: Page) {
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: 'commit', timeout: 30000 }),
+    page.locator('#new-date').click({ noWaitAfter: true }),
+  ]);
+  await waitForRestaurantScene(page);
+}
+
 export async function captureRestaurantScene(page: Page, path: string) {
   if (process.env.RESTAURANT_CAPTURE_SCREENSHOTS === '1') await page.bringToFront();
   await waitForRestaurantScene(page);

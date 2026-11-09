@@ -6,7 +6,7 @@ import { attachRestaurantServer } from '../server/restaurant';
 import { CHARACTER_STORIES } from '../src/restaurant/story';
 import { EVENING_PACE } from '../src/restaurant/evening';
 import type { DinnerCommand, DinnerState } from '../src/restaurant/types';
-import { RESTAURANT_BROWSER_STORY_RATE, captureRestaurantScene, reloadRestaurantScene, restaurantInterrupted, restaurantScenario, resolveRestaurantScenario, waitForRestaurantScene } from './restaurant-browser-helpers';
+import { RESTAURANT_BROWSER_STORY_RATE, captureRestaurantScene, playAgainRestaurantScene, reloadRestaurantScene, restaurantInterrupted, restaurantScenario, resolveRestaurantScenario, waitForRestaurantScene } from './restaurant-browser-helpers';
 
 let http: Server, app: Awaited<ReturnType<typeof attachRestaurantServer>>, base = '';
 const state = (page: Page) => page.evaluate(() => (window as unknown as { __restaurantState: DinnerState }).__restaurantState);
@@ -211,7 +211,7 @@ test('complete authored evening: a wrong plate, a spill, dinner, a shared desser
   const downloadEvent = page.waitForEvent('download'); await page.locator('#save-postcard').click(); const download = await downloadEvent;
   expect(download.suggestedFilename()).toBe('table-for-two-mira.png');
   await captureRestaurantScene(page, '.qa/full-evening-ending.png');
-  await page.locator('#new-date').click();
+  await playAgainRestaurantScene(page);
   // Play again reloads the title, so wait for the same initialized menu as arrival.
   await expect(page.locator('#title-start')).toBeFocused({ timeout: 15000 });
   await expect(page.locator('#past-evenings')).toBeVisible();
