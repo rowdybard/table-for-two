@@ -3,7 +3,7 @@ import { before, test } from 'node:test';
 import * as THREE from 'three';
 import {
   SCENARIOS, TABLE_TOP, applyFrame, auditFlats, auditQuietTable, auditShadows, auditTargets, auditTransition, browserFixtureChecks, buildState,
-  collectProps, createLayoutFixture, forkSides, mods as m, napkinClearances, runScenarios, shadowProblem, shown, type Finding, type LayoutFixture, type Scenario,
+  collectProps, createLayoutFixture, forkSides, mods as m, napkinClearances, restedCutlerySupport, runScenarios, shadowProblem, shown, type Finding, type LayoutFixture, type Mod, type Scenario,
 } from './fixtures/tabletop-layout-harness';
 import { CONTACT_SHADOW_MAX, DYNAMIC_SHADOW_LAYER, VENUE_ENV } from '../src/restaurant/render/VenueContract';
 import { PLACE_SETTING, SPILLED_GLASS } from '../src/restaurant/render/TabletopProps';
@@ -24,11 +24,11 @@ const puddleOnPaper = (x: Finding) => x.type === 'flat-stack' && (x.a === 'spill
 
 test('every scenario rests: no interpenetration past .5 mm, nothing sinking, floating or hanging past the flat top', () => {
   assert.ok(SCENARIOS.length >= 170, `${SCENARIOS.length} scenarios`);
-  assert.deepEqual(describe(findings.filter(x => x.type !== 'flat-stack' && x.type !== 'decal-on-paper')), []);
+  assert.deepEqual(describe(findings.filter(x => x.type !== 'flat-stack' && x.type !== 'decal-on-paper' && x.type !== 'decal-under-solid')), []);
 });
 
-test('flat items never z-fight: paper and decals within .5 mm with overlapping footprints, or a stain on paper', () => {
-  assert.deepEqual(describe(findings.filter(x => (x.type === 'flat-stack' || x.type === 'decal-on-paper') && !puddleOnPaper(x))), []);
+test('flat items never z-fight: paper and decals within .5 mm with overlapping footprints, or a stain on paper or under a prop', () => {
+  assert.deepEqual(describe(findings.filter(x => (x.type === 'flat-stack' || x.type === 'decal-on-paper' || x.type === 'decal-under-solid') && !puddleOnPaper(x))), []);
 });
 
 test('the spill puddle clears the paper once it is raised to .7843', t => {
@@ -50,6 +50,34 @@ test('the silverware lies beside every napkin, at least 10 mm clear', () => {
   const issues = SCENARIOS.flatMap(s => { const state = buildState(s); applyFrame(f, state, s.motion); return napkinClearances(f, state).filter(c => (measured++, c.mm < 10)).map(c => `${s.label} ${c.seat}.${c.utensil} ${c.mm.toFixed(1)} mm`); });
   assert.deepEqual(issues, []);
   assert.ok(measured > 1500, `${measured} napkin/utensil pairs measured`);
+});
+
+test('finished cutlery bridges the plate touching it at both ends, whichever way the plate is turned', () => {
+  let measured = 0;
+  const issues = SCENARIOS.flatMap(s => { applyFrame(f, buildState(s), s.motion); return restedCutlerySupport(f).filter(r => (measured++, Math.max(r.tipMm, r.handleMm) > .6)).map(r => `${s.label} ${r.seat}.${r.utensil} tip half ${r.tipMm.toFixed(2)} mm, handle half ${r.handleMm.toFixed(2)} mm`); });
+  assert.deepEqual(issues, []);
+  assert.ok(measured >= 150, `${measured} rested pieces measured`);
+});
+
+test('each human napkin lies in the same place for both Double observers; the place-setting napkins are the dates\'', () => {
+  const issues: string[] = [];
+  const rooms: [Mod[], Mod[]][] = [[[], []], [[m.folded], []], [[], [m.folded, m.crossed]], [[m.served, m.folded], [m.served, m.folded]]];
+  for (const [h1, h2] of rooms) {
+    const seen = new Map<string, { matrix: number[]; folded: boolean; observer: string }>();
+    for (const observer of ['h1', 'h2'] as const) {
+      const friend = observer === 'h1' ? 'h2' : 'h1';
+      applyFrame(f, buildState({ label: 'napkins', mode: observer, local: observer === 'h1' ? h1 : h2, other: observer === 'h1' ? h2 : h1 }));
+      for (const p of f.tabletop.placeGroups) if (shown(p.group) && p.z > -1.15 && shown(p.napkin)) issues.push(`${observer} sees a place-setting napkin at the human seat x ${p.x}`);
+      for (const [owner, napkin] of [[observer, f.table.napkin], [friend, f.table.friendNapkin]] as const) {
+        if (!shown(napkin)) { issues.push(`${observer} cannot see ${owner}'s napkin`); continue; }
+        const view = { matrix: [...napkin.matrixWorld.elements], folded: napkin.children[0]!.visible, observer }, first = seen.get(owner);
+        if (!first) { seen.set(owner, view); continue; }
+        if (first.folded !== view.folded || first.matrix.some((value, i) => Math.abs(value - view.matrix[i]!) > 1e-9)) issues.push(`${owner}'s napkin differs between ${first.observer} and ${observer}`);
+      }
+    }
+  }
+  assert.deepEqual(issues, []);
+  applyFrame(f, buildState({ label: 'solo', mode: 'solo' })); assert.equal(shown(f.table.friendNapkin), false);
 });
 
 test('far settings are turned so each date has the fork on their left and the napkin beyond it', () => {

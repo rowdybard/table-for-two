@@ -9,8 +9,9 @@
  * with a recording canvas stub, drives them with DinnerState objects, mirrors the placement lines that live
  * in RestaurantRenderer.update(), then tests every pair of visible props with exact triangle/triangle
  * separating-axis tests plus analytic solid containment. No WebGL, server or RAPIER.
- * It also audits support and table-edge overhang, flat paper/decal stacking, napkin-to-cutlery clearance, which side
- * each fork is on, the contact blobs, interaction targets, the quiet-table move and real-frame transitions.
+ * It also audits support (including each end of finished cutlery bridging the plate) and table-edge overhang, flat
+ * paper/decal stacking, stains under props, napkin-to-cutlery clearance, which side each fork is on, the contact blobs,
+ * interaction targets, the quiet-table move and real-frame transitions.
  * tests/tabletop-layout.test.ts asserts all of it.
  */
 import * as THREE from 'three';
@@ -62,7 +63,7 @@ export type TabletopInternals = {
 export type EveningInternals = {
   root: THREE.Group; targets: THREE.Mesh[]; meals: THREE.Group[][]; dessert: THREE.Group; otherDessert: THREE.Group;
   extraOrders: { root: THREE.Group; serving: THREE.Group; carton: THREE.Group }[];
-  cleanupCloth: THREE.Group; offeredBites: THREE.Group[]; friendGlass: THREE.Group; napkin: THREE.Mesh; ticket: THREE.Group; wineStain: THREE.Group;
+  cleanupCloth: THREE.Group; offeredBites: THREE.Group[]; friendGlass: THREE.Group; napkin: THREE.Mesh; friendNapkin: THREE.Mesh; ticket: THREE.Group; wineStain: THREE.Group;
   update(state: DinnerState): void;
 };
 type Shadows = ReturnType<typeof import('../../src/restaurant/render/PlaceSettingShadows').createPlaceSettingShadows>;
@@ -152,6 +153,7 @@ export const mods = {
   pour: act('pour-water'), salt: act('salt-meal'), pepper: act('pepper-meal'),
   seasoned: (v: DinnerState) => { v.evening.tabletop!.salt = 2 as never; v.evening.tabletop!.pepper = 2 as never; },
   plateTurned: (v: DinnerState) => { v.evening.tabletop!.plateTurn = 3; },
+  turn: (n: number) => (v: DinnerState) => { v.evening.tabletop!.plateTurn = n; },
   vaseTurned: (v: DinnerState) => { v.evening.tabletop!.shared.vaseTurn = 4; },
   lampOff: (v: DinnerState) => { v.evening.tabletop!.shared.lampLevel = 0; },
 };
@@ -186,12 +188,15 @@ function seatScenarios(mode: Scenario['mode']): Scenario[] {
     L('cloth+spilled', [m.clothReady, m.spilled], [], mode === 'solo' ? undefined : { incidentOwner: mode, scenarioTarget: mode }),
     // A stain that waits for its cloth while service carries on around it.
     L('wine-stain+mains', [m.wineWet, m.served], [m.served], own('scenarioTarget')), L('wine-stain+wrong-order', [m.wineWet, m.wrongOrder], [], mode === 'solo' ? undefined : { incidentOwner: mode, scenarioTarget: mode }),
-    L('wine-stain+bill', [m.wineWet, m.bill], [], own('scenarioTarget')), L('wine-stain+extras', [m.wineWet, m.served, m.extras('served')], [], own('scenarioTarget')),
+    // One story runs per evening, so a stain never shares the table with the extra dishes of an oversized order.
+    L('wine-stain+bill', [m.wineWet, m.bill], [], own('scenarioTarget')),
     L('wine-stain+dessert', [m.wineWet, m.dessert('berries')], [], own('scenarioTarget')),
     // Moving states: beats at their peak, the raised glass, a turned plate and vase, the lamp off.
     L('pour', [m.pour], [], undefined, true, ['carafe']), L('salt-shake', [m.served, m.salt], [m.served], undefined, true, ['salt']), L('pepper-shake', [m.dish(1), m.pepper], [m.served], undefined, true, ['pepper']),
     L('glass-raised', [m.raised], [], undefined, true, ['glass.you']), L('plate-turned+chicken', [m.dish(1), m.plateTurned], [m.dish(2), m.plateTurned], undefined, true),
     L('vase-turned+lamp-off', [m.vaseTurned, m.lampOff], [], undefined, true), L('dessert+pour', [m.dessert('lemon'), m.pour], [], undefined, true, ['carafe']),
+    // Finished cutlery over every turn of the plate, so the rim marks pass under the resting fork and knife ('mains+crossed' is turn 0).
+    ...Array.from({ length: 11 }, (_, i) => L(`crossed+plate-turn${i + 1}`, [m.dish((i + 1) % 3), m.crossed, m.turn(i + 1)], [m.dish(i % 3), m.crossed, m.turn(i + 1)])),
   ];
   if (mode !== 'solo') list.push(
     L('both-desserts', [m.dessert()], [m.dessert('berries')]), L('both-desserts+glasses-cleared', [m.dessert(), m.glassesCleared], [m.dessert(), m.glassesCleared]),
@@ -237,8 +242,11 @@ export function applyFrame(f: LayoutFixture, state: DinnerState, motion = false,
 }
 
 /* ------------------------------------------------------------------ props */
-/** `decal` lies on the cloth (wine, water). A stain must never lie on paper; a water puddle may spread under or over it, but never at its height. */
-export interface Prop { id: string; kind: 'solid' | 'flat' | 'food' | 'decal'; meshes: THREE.Mesh[]; root: THREE.Object3D; paperOk?: boolean }
+/**
+ * `decal` lies on the cloth (wine, water). A stain must never lie on paper; a water puddle may spread under or over it, but
+ * never at its height. A decal lies on open linen, clear of every solid prop, unless `solidsOk` (a puddle round its glass).
+ */
+export interface Prop { id: string; kind: 'solid' | 'flat' | 'food' | 'decal'; meshes: THREE.Mesh[]; root: THREE.Object3D; paperOk?: boolean; solidsOk?: boolean }
 export const shown = (o: THREE.Object3D | null): boolean => { for (let p = o; p; p = p.parent) if (!p.visible) return false; return true; };
 function meshesOf(root: THREE.Object3D): THREE.Mesh[] {
   const out: THREE.Mesh[] = [];
@@ -281,10 +289,10 @@ export function collectProps(f: LayoutFixture, state: DinnerState): Prop[] {
   add('glass.friend', 'solid', t.friendGlass);
   const bell = t.root.children.filter(o => o instanceof THREE.Mesh && !o.userData.target && Math.abs(o.position.x - .61) < 1e-6);
   if (bell.length) add('service-bell', 'solid', bell[0]!, ...bell.slice(1));
-  add('paper-napkin', 'flat', t.napkin); add('ticket', 'flat', t.ticket);
+  add('paper-napkin', 'flat', t.napkin); add('friend-napkin', 'flat', t.friendNapkin); add('ticket', 'flat', t.ticket);
   add('wine-stain', 'decal', t.wineStain);
   add('bill-folio', 'solid', f.set.bill);
-  add('spill-puddle', 'decal', f.set.spill); const puddle = props.at(-1); if (puddle?.id === 'spill-puddle') puddle.paperOk = true;
+  add('spill-puddle', 'decal', f.set.spill); const puddle = props.at(-1); if (puddle?.id === 'spill-puddle') puddle.paperOk = puddle.solidsOk = true;
   return props;
 }
 
@@ -396,7 +404,7 @@ export function clearance(a: Prop, b: Prop) {
 }
 
 /* ------------------------------------------------------------------ audit */
-export type FindingType = 'interpenetration' | 'sinks-into-table' | 'floating' | 'off-table-edge' | 'flat-stack' | 'decal-on-paper';
+export type FindingType = 'interpenetration' | 'sinks-into-table' | 'floating' | 'off-table-edge' | 'flat-stack' | 'decal-on-paper' | 'decal-under-solid';
 export interface Finding { scenario: string; type: FindingType; a: string; b?: string; mm: Record<string, number>; detail?: string }
 export const TABLE_TOP = .782;
 export const flatRadius = (state: DinnerState) => state.doubleDate ? 1.285 : .885;
@@ -462,11 +470,31 @@ export function auditState(f: LayoutFixture, scenario: string, state: DinnerStat
         if (onTable < gap) { gap = onTable; support = 'table'; } if (onTable < visibleGap) { visibleGap = onTable; visibleSupport = 'table'; }
         for (const q of others) for (const qm of q.meshes) { const d = dropOnto(shapeOf(qm), x, y, z); if (d.any < gap) { gap = d.any; support = q.id; } if (d.front < visibleGap) { visibleGap = d.front; visibleSupport = q.id; } }
       } }
+      // A ridge (a plate's rim crest) can carry a prop between the prop's own vertices: raise the support's vertices to its underside.
+      if (gap > .0015 || visibleGap > .0015) for (const q of others) for (const qm of q.meshes) {
+        const r = riseOnto(p, shapeOf(qm), box); if (r < gap) { gap = r; support = q.id; } if (r < visibleGap) { visibleGap = r; visibleSupport = q.id; }
+      }
       if (gap > .0015) out.push({ scenario, type: 'floating', a: p.id, b: support, mm: round({ gap: gap * 1000, bottomAboveTable: (box.min.y - TABLE_TOP) * 1000 }) });
       else if (visibleGap > .0015) out.push({ scenario, type: 'floating', a: p.id, b: visibleSupport, mm: round({ visibleGap: visibleGap * 1000, geometricGap: gap * 1000 }), detail: `rests on ${support} geometrically, but that surface is back-face culled from above` });
     }
   }
-  out.push(...auditFlats(scenario, props));
+  out.push(...auditFlats(scenario, props), ...auditDecalsUnderSolids(scenario, props));
+  return out;
+}
+/** A decal's own triangles against each solid prop's plan footprint: a stain lies beside the props, never under one. */
+export function auditDecalsUnderSolids(scenario: string, props: Prop[]): Finding[] {
+  const out: Finding[] = [], solids = props.filter(p => p.kind === 'solid').map(p => ({ p, print: footprint(p) }));
+  for (const decal of props.filter(p => p.kind === 'decal' && !p.solidsOk)) {
+    const box = propBox(decal);
+    for (const { p, print } of solids) {
+      let triangles = 0, total = 0;
+      for (const mesh of decal.meshes) { const t = shapeOf(mesh).tri; for (let i = 0; i < t.length; i += 9, total++) {
+        const tri: [number, number][] = [[t[i]!, t[i + 2]!], [t[i + 3]!, t[i + 5]!], [t[i + 6]!, t[i + 8]!]];
+        if (hullsOverlap(tri, print.hull, .0005)) triangles++;
+      } }
+      if (triangles) out.push({ scenario, type: 'decal-under-solid', a: decal.id, b: p.id, mm: { triangles, of: total, decalY: round({ y: box.min.y * 1000 }, 2).y!, solidBottom: round({ y: print.minY * 1000 }, 2).y! } });
+    }
+  }
   return out;
 }
 /** Paper and decals: two flat items within .5 mm of each other with overlapping footprints z-fight; a stain never lies on paper. */
@@ -481,6 +509,19 @@ export function auditFlats(scenario: string, props: Prop[], extra: Prop[] = []):
     else if ((a.kind === 'decal') !== (b.kind === 'decal') && !(a.paperOk || b.paperOk)) out.push({ scenario, type: 'decal-on-paper', a: a.id, b: b.id, mm: round({ heightGap: gap * 1000 }, 2) });
   }
   return out;
+}
+/** Smallest rise from a vertex of `support` to the underside of `p` just above it (0 when embedded up to 3 mm), near p's lowest level. */
+function riseOnto(p: Prop, support: Shape, box: THREE.Box3) {
+  let best = Infinity; const v = support.verts;
+  if (support.box.max.y < box.min.y - .003 || support.box.min.y > box.min.y + .0015) return best;
+  for (let k = 0; k < v.length; k += 3) {
+    const x = v[k]!, y = v[k + 1]!, z = v[k + 2]!;
+    if (x < box.min.x || x > box.max.x || z < box.min.z || z > box.max.z || y < box.min.y - .003 || y > box.min.y + .0015) continue;
+    let underside = Infinity; for (const mesh of p.meshes) underside = Math.min(underside, surfaceAt(shapeOf(mesh), x, z, 'lowest'));
+    if (underside > box.min.y + .0015) continue;
+    best = Math.min(best, Math.max(0, underside - y));
+  }
+  return best;
 }
 /** Vertical distance from (x,y,z) down to the highest triangle of `s` below it: any winding / up-facing front faces only. */
 function dropOnto(s: Shape, x: number, y: number, z: number) {
@@ -523,7 +564,8 @@ function hullGap(A: [number, number][], B: [number, number][]) {
 }
 /**
  * Minimum horizontal distance between each visible napkin and every utensil of the same setting, in mm. That is each
- * place-setting napkin with its own cutlery, and the local human's own linen napkin (EveningTable) with theirs.
+ * place-setting napkin with its own cutlery, and each human's linen napkin (EveningTable: the local one, and in Double the
+ * friend's) with theirs.
  */
 export function napkinClearances(f: LayoutFixture, state?: DinnerState) {
   const out: { seat: string; utensil: string; mm: number }[] = [];
@@ -534,6 +576,7 @@ export function napkinClearances(f: LayoutFixture, state?: DinnerState) {
     const napkins: [string, THREE.Object3D][] = [];
     if (shown(p.napkin)) napkins.push(['napkin', p.napkin]);
     if (state && p.x === localX && p.z === nearZ && shown(f.table.napkin)) napkins.push(['linen-napkin', f.table.napkin]);
+    if (state?.doubleDate && p.x === -localX && p.z === nearZ && shown(f.table.friendNapkin)) napkins.push(['linen-napkin', f.table.friendNapkin]);
     for (const [which, napkin] of napkins) {
       const hull = hullOf(napkin);
       p.cutlery.children.forEach((utensil, i) => out.push({ seat: which === 'napkin' ? seat : `${seat}.${which}`, utensil: ['fork', 'knife', 'spoon'][i]!, mm: hullGap(hull, hullOf(utensil)) * 1000 }));
@@ -557,6 +600,51 @@ export function forkSides(f: LayoutFixture) {
     return { seat: seatLabel(p.x, p.z, p.group.parent === f.tabletop.doubles), rested,
       forkOnLeft: rested ? forkLeft > knifeLeft + .01 : forkLeft > .15, knifeOnRight: rested ? knifeLeft < 0 : knifeLeft < -.15, napkinOutsideFork: napkinLeft > forkLeft + .03 };
   });
+}
+
+/** Height of the surface of `s` at plan point (x, z): its lowest triangle there, or its highest at or below `ceiling`. */
+function surfaceAt(s: Shape, x: number, z: number, pick: 'lowest' | 'highest', ceiling = Infinity) {
+  let best = pick === 'lowest' ? Infinity : -Infinity;
+  if (x < s.box.min.x || x > s.box.max.x || z < s.box.min.z || z > s.box.max.z) return best;
+  const t = s.tri, b = s.triBox;
+  for (let i = 0, j = 0; i < t.length; i += 9, j += 6) {
+    if (x < b[j]! || x > b[j + 3]! || z < b[j + 2]! || z > b[j + 5]!) continue;
+    const ax = t[i]!, ay = t[i + 1]!, az = t[i + 2]!, bx = t[i + 3]!, by = t[i + 4]!, bz = t[i + 5]!, cx = t[i + 6]!, cy = t[i + 7]!, cz = t[i + 8]!;
+    const det = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz); if (Math.abs(det) < 1e-14) continue;
+    const l1 = ((bz - cz) * (x - cx) + (cx - bx) * (z - cz)) / det, l2 = ((cz - az) * (x - cx) + (ax - cx) * (z - cz)) / det, l3 = 1 - l1 - l2;
+    if (l1 < -1e-9 || l2 < -1e-9 || l3 < -1e-9) continue;
+    const y = l1 * ay + l2 * by + l3 * cy;
+    if (pick === 'lowest') best = Math.min(best, y); else if (y <= ceiling) best = Math.max(best, y);
+  }
+  return best;
+}
+/**
+ * A rested (finished) fork or knife bridges the plate's well, so its lowest point alone proves little: a rigid piece
+ * touching the rim at one end can float at the other. Each piece's underside is sampled on a 1.5 mm grid in its own
+ * frame (so a rim crest between its vertices still counts), and for each half along its axis this returns the smallest
+ * gap down to that setting's plate, in mm (0 where they touch). Laid cutlery, on the cloth, is skipped.
+ */
+export function restedCutlerySupport(f: LayoutFixture) {
+  const out: { seat: string; utensil: string; tipMm: number; handleMm: number }[] = [];
+  const point = new THREE.Vector3(), step = .0015;
+  for (const p of f.tabletop.placeGroups) {
+    if (!shown(p.group)) continue;
+    const plate = meshesOf(p.plate).map(mesh => shapeOf(mesh)), seat = seatLabel(p.x, p.z, p.group.parent === f.tabletop.doubles);
+    p.cutlery.children.slice(0, 2).forEach((utensil, i) => {
+      if (Math.abs(utensil.rotation.y) < 1e-6 || !shown(utensil) || !(utensil instanceof THREE.Mesh)) return;
+      const shape = shapeOf(utensil), g = utensil.geometry; g.computeBoundingBox(); const local = g.boundingBox!, halves = [Infinity, Infinity];
+      for (let u = local.min.x; u <= local.max.x + 1e-9; u += step) for (let v = local.min.z; v <= local.max.z + 1e-9; v += step) {
+        point.set(u, 0, v).applyMatrix4(utensil.matrixWorld);
+        const underside = surfaceAt(shape, point.x, point.z, 'lowest'); if (!Number.isFinite(underside)) continue;
+        // A plate surface up to 3 mm above the underside is embedded (touching); the overlap checks judge its depth.
+        let top = -Infinity; for (const q of plate) top = Math.max(top, surfaceAt(q, point.x, point.z, 'highest', underside + .003));
+        if (!Number.isFinite(top)) continue;
+        const half = v > 0 ? 1 : 0; halves[half] = Math.min(halves[half]!, Math.max(0, underside - top));
+      }
+      out.push({ seat, utensil: i ? 'knife' : 'fork', tipMm: halves[0]! * 1000, handleMm: halves[1]! * 1000 });
+    });
+  }
+  return out;
 }
 
 /* ------------------------------------------------------------------ contact shadows */
@@ -725,16 +813,17 @@ async function main() {
   const f = await createLayoutFixture(), started = Date.now();
   const scenarios = SCENARIOS.filter(s => !only || s.label.includes(only));
   const findings = runScenarios(f, scenarios, { clearance: !args.has('--fast') });
-  const shadowIssues: string[] = [], napkinIssues: string[] = [], forkIssues: string[] = [], targetIssues: string[] = [];
+  const shadowIssues: string[] = [], napkinIssues: string[] = [], forkIssues: string[] = [], targetIssues: string[] = [], restIssues: string[] = [];
   for (const s of scenarios) {
     const state = buildState(s); applyFrame(f, state, s.motion);
     for (const r of auditShadows(f)) { const problem = shadowProblem(r); if (problem) shadowIssues.push(`${s.label} ${problem} ${JSON.stringify(r)}`); }
     for (const c of napkinClearances(f, state)) if (c.mm < 10) napkinIssues.push(`${s.label} ${c.seat}.${c.utensil} ${c.mm.toFixed(1)} mm`);
     for (const side of forkSides(f)) if (!side.forkOnLeft || !side.knifeOnRight || !side.napkinOutsideFork) forkIssues.push(`${s.label} ${JSON.stringify(side)}`);
     for (const issue of auditTargets(f, state)) targetIssues.push(`${s.label} ${issue}`);
+    for (const r of restedCutlerySupport(f)) if (Math.max(r.tipMm, r.handleMm) > .6) restIssues.push(`${s.label} ${r.seat}.${r.utensil} tip ${r.tipMm.toFixed(2)} mm handle ${r.handleMm.toFixed(2)} mm`);
   }
   const quiet = (['solo', 'h1', 'h2'] as const).map(mode => ({ mode, issues: auditQuietTable(f, mode) }));
-  if (args.has('--json')) { console.log(JSON.stringify({ findings, shadowIssues, napkinIssues, forkIssues, targetIssues, quiet }, null, 1)); return; }
+  if (args.has('--json')) { console.log(JSON.stringify({ findings, shadowIssues, napkinIssues, forkIssues, targetIssues, restIssues, quiet }, null, 1)); return; }
   const groups = new Map<string, { f: Finding; scenarios: string[] }>();
   for (const x of findings) { const key = `${x.type}|${x.a}|${x.b ?? ''}|${JSON.stringify(x.mm)}`; const g = groups.get(key); if (g) g.scenarios.push(x.scenario); else groups.set(key, { f: x, scenarios: [x.scenario] }); }
   console.log(`# tabletop layout audit: ${scenarios.length} scenarios, ${findings.length} findings in ${groups.size} groups (${((Date.now() - started) / 1000).toFixed(1)} s)`);
@@ -743,6 +832,7 @@ async function main() {
   console.log(`\n# contact shadows: ${f.shadows.sources().length} sources, ${shadowIssues.length} issues`); shadowIssues.slice(0, 40).forEach(line => console.log(line));
   console.log(`\n# napkin clearance (>= 10 mm): ${napkinIssues.length} issues`); napkinIssues.slice(0, 40).forEach(line => console.log(line));
   console.log(`\n# fork on each diner's left: ${forkIssues.length} issues`); forkIssues.slice(0, 40).forEach(line => console.log(line));
+  console.log(`\n# finished cutlery touches the plate at both ends (<= .6 mm): ${restIssues.length} issues`); restIssues.slice(0, 40).forEach(line => console.log(line));
   console.log(`\n# interaction targets on their props: ${targetIssues.length} issues`); targetIssues.slice(0, 40).forEach(line => console.log(line));
   console.log('\n# quiet-table move consistency'); for (const q of quiet) console.log(`${q.mode}: ${q.issues.length ? q.issues.join('; ') : 'ok'}`);
 }

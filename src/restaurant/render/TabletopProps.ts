@@ -23,8 +23,12 @@ export function dessertLayout(state: DinnerState) {
 export const PLACE_SETTING = {
   napkin: { x: -.305, y: .004, z: -.05, size: [.072, .008, .17] as const, foldedScaleZ: .55 },
   fork: { x: -.235, z: .013 }, knife: { x: .22, z: -.00575 }, spoon: { x: .265, z: .003 },
-  /** Finished: fork and knife parallel across the right of the plate, handles toward four o'clock, resting on the rim. */
-  rest: { yaw: .5, fork: { d: .112, y: .0278 }, knife: { d: .144, y: .0288 } },
+  /**
+   * Finished: fork and knife parallel across the right of the plate, handles toward four o'clock. `d` is each piece's
+   * distance from the plate centre and `along` slides it toward its handle, so a rigid piece bridges the well touching
+   * the porcelain at both ends: the fork on the rising rim (clear of a risotto mound), the knife on the rim's crest.
+   */
+  rest: { yaw: .5, fork: { d: .12, along: .012, y: .0273 }, knife: { d: .152, along: 0, y: .029 } },
 } as const;
 /** Real proportions of the lathed dinner plate: well .012, rim .029, standing on its foot ring. */
 const PLATE_PROFILE = [[0,.005],[.105,.005],[.126,.007],[.165,.016],[.182,.021],[.181,.027],[.171,.029],[.145,.023],[.125,.014],[.105,.012],[0,.012]] as const;
@@ -55,9 +59,10 @@ export const CLEARED_GLASS_DOUBLE = { x: .78, z: -1.12 } as const;
 const SHARED_SPOTS = { lamp: { rest: [-.20, -1.12], clear: [-.37, -1.30] }, basket: { rest: [.34, -1.28], clear: [.50, -1.55], park: [.45, -.83] } } as const;
 
 /** Home position beside the plate, or the finished pose resting across the rim. */
-function layCutlery(piece: THREE.Object3D, home: { x: number; z: number }, rested: { d: number; y: number }, crossed: boolean) {
-  const yaw = PLACE_SETTING.rest.yaw;
-  if (crossed) { piece.position.set(Math.cos(yaw) * rested.d, rested.y, -Math.sin(yaw) * rested.d); piece.rotation.y = yaw; }
+function layCutlery(piece: THREE.Object3D, home: { x: number; z: number }, rested: { d: number; along: number; y: number }, crossed: boolean) {
+  const yaw = PLACE_SETTING.rest.yaw, c = Math.cos(yaw), s = Math.sin(yaw);
+  // The piece's handle points along its local +z, which the yaw turns to (sin, cos).
+  if (crossed) { piece.position.set(c * rested.d + s * rested.along, rested.y, -s * rested.d + c * rested.along); piece.rotation.y = yaw; }
   else { piece.position.set(home.x, 0, home.z); piece.rotation.y = 0; }
 }
 
@@ -116,9 +121,10 @@ export class TabletopProps {
     const knifeGeo = merged('knife', () => [combine([handle(.038), placed(new THREE.BoxGeometry(.022, .004, .105), 0, .002, -.066, 1, 1, 1, 0, -.035)])]);
     const spoonGeo = merged('spoon', () => [combine([handle(.036), placed(new THREE.SphereGeometry(1, 12, 8), 0, .0035, -.072, .014, .0035, .027)])]);
     const plateGeo = merged('plate', () => [new THREE.LatheGeometry(profile(PLATE_PROFILE), 48), flatTorus(.098, .004, .004)]);
-    // The two gold rim marks follow the rim's slope instead of hovering over it.
+    // The two gold rim marks are painted on: they follow the rim's slope, a fraction of a millimetre proud of the glaze,
+    // so cutlery resting across the rim lies on the porcelain rather than on them, whichever way the plate is turned.
     const markR = .163, markSlope = Math.atan2(plateSurfaceY(markR + .006) - plateSurfaceY(markR - .006), .012);
-    const plateMarkGeo = merged('plate-mark', () => [-.006, .006].map(dx => placed(new THREE.BoxGeometry(.003, .001, .012), dx, plateSurfaceY(markR) + .0006, -markR, 1, 1, 1, markSlope, dx * 4, 0)));
+    const plateMarkGeo = merged('plate-mark', () => [-.006, .006].map(dx => placed(new THREE.BoxGeometry(.003, .0002, .012), dx, plateSurfaceY(markR) + .00025, -markR, 1, 1, 1, markSlope, dx * 4, 0)));
     const napkinGeo = geo('napkin', () => new THREE.BoxGeometry(...PLACE_SETTING.napkin.size));
     const foldGeo = geo('napkin-fold', () => new THREE.BoxGeometry(PLACE_SETTING.napkin.size[0] - .006, .004, PLACE_SETTING.napkin.size[2] / 2));
     const grainGeo = geo('grain', () => new THREE.SphereGeometry(.0018, 5, 4));
@@ -232,7 +238,8 @@ export class TabletopProps {
       const placeState=active?(p.x===x?tt:double&&p.x===-x?otherTabletop:undefined):undefined;
       const placeEvening=p.x===x?state.evening:state.doubleDate?.otherView?.evening;
       const plateAngle=(placeState?.plateTurn??0)*Math.PI/6;p.plate.rotation.y+=Math.atan2(Math.sin(plateAngle-p.plate.rotation.y),Math.cos(plateAngle-p.plate.rotation.y))*ease;
-      p.napkin.visible=!(active&&p.x===x);
+      // The place-setting napkin is the dates'. Each human's own napkin is EveningTable's linen one, which both Double observers see alike.
+      p.napkin.visible=!active;
       // Crossed means finished: fork and knife lie side by side across the rim; the spoon keeps its place.
       const crossed=!!placeState?.cutleryCrossed; const fork=p.cutlery.children[0]!,knife=p.cutlery.children[1]!;
       layCutlery(fork,s.fork,rest.fork,crossed);layCutlery(knife,s.knife,rest.knife,crossed);

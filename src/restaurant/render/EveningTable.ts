@@ -78,13 +78,16 @@ function sauceSmear() {
 }
 
 /**
- * The wine stain lies on open linen, never on paper. Solo: between the plates, clear of the order ticket. Double: beside
- * the human's place, rotated lengthwise, clear of the menu and napkin. Its height sits apart from the paper props (.783)
- * and from a spilled-water puddle (.783-.7843), so overlapping decals never z-fight.
+ * The wine stain lies on open linen, never on paper or under a prop. Solo: between the plates, clear of the order ticket
+ * and the bill folio. Double: beside the human's place, rotated lengthwise, clear of the menu and napkin. Its height sits
+ * apart from the paper props (.783) and from a spilled-water puddle (.783-.7843), so overlapping decals never z-fight.
  */
-const WINE_STAIN = { y: .7836, solo: { x: .09, z: -.96 }, double: { dx: .055, z: -.72 } } as const;
-/** The cleaning cloth lies beside the stain. In solo it stays clear of the bill, which arrives where a used cloth would wait. */
-const CLEANUP_CLOTH = { solo: { x: .29, z: -.86 }, double: { dx: .06, z: -.66 } } as const;
+const WINE_STAIN = { y: .7836, solo: { x: .04, z: -.96 }, double: { dx: .055, z: -.72 } } as const;
+/**
+ * The cleaning cloth lies beside the stain, never on it: in solo toward the bill, which arrives where a used cloth would
+ * wait; in Double on the outer side of the lengthwise stain, between it and the table edge, clear of the napkin.
+ */
+const CLEANUP_CLOTH = { solo: { x: .29, z: -.86 }, double: { dx: .19, z: -.66 } } as const;
 /** An offered taste rests on the date's plate, toward the human. */
 const OFFERED_BITE = { dx: .105, y: .818, dz: .105 } as const;
 /** Extra dishes in a 2x2 grid at the table centre, shifted left so the fourth stays clear of the bill folio at x .31. */
@@ -112,6 +115,8 @@ export class EveningTable {
   private friendWater!: THREE.Mesh;
   private readonly napkin: THREE.Mesh;
   private readonly napkinFold: THREE.Mesh;
+  private readonly friendNapkin: THREE.Mesh;
+  private readonly friendNapkinFold: THREE.Mesh;
 
   constructor() {
     const mat = (color: string, roughness = .8, metalness = 0) => { const m = new THREE.MeshStandardMaterial({ color, roughness, metalness }); this.materials.push(m); return m; };
@@ -255,6 +260,9 @@ export class EveningTable {
     const linen = own(createProceduralMaterial('linen', '#ebe2cc', { roughness: 1, bumpScale: .0004 }));
     this.napkin = mesh(this.root, new THREE.PlaneGeometry(.16, .16), linen, .39, .783, -.50); this.napkin.rotation.x = -Math.PI / 2; this.napkin.rotation.z = -.12; this.napkin.receiveShadow = true;
     this.napkinFold = mesh(this.napkin, new THREE.PlaneGeometry(.16, .08), linen, 0, .04, .002); this.napkinFold.visible = false;
+    // In Double the friend's napkin lies where the friend sees their own, so both humans see each napkin in one place.
+    this.friendNapkin = mesh(this.root, this.napkin.geometry, linen, -.84, .783, -.80); this.friendNapkin.rotation.x = -Math.PI / 2; this.friendNapkin.rotation.z = -.12; this.friendNapkin.receiveShadow = true;
+    this.friendNapkinFold = mesh(this.friendNapkin, this.napkinFold.geometry, linen, 0, .04, .002); this.friendNapkinFold.visible = false; this.friendNapkin.visible = false;
     const ticketCanvas = document.createElement('canvas'); this.ticketCanvas = ticketCanvas; ticketCanvas.width = 256; ticketCanvas.height = 384;
     const tc = ticketCanvas.getContext('2d')!; tc.fillStyle = '#f4ead4'; tc.fillRect(0, 0, 256, 384); tc.fillStyle = '#4d4d38'; tc.font = 'bold 26px monospace'; tc.textAlign = 'center'; tc.fillText('TABLE 02', 128, 62); tc.font = '17px monospace'; tc.fillText('ORDER TICKET', 128, 105);
     tc.textAlign = 'left'; tc.font = '15px monospace'; ['DINNER SERVICE', '--------------------', '1  RIGATONI', '1  RISOTTO', '--------------------', 'THANK YOU'].forEach((line, i) => tc.fillText(line, 29, 150 + i * 33));
@@ -305,7 +313,7 @@ export class EveningTable {
     const friendSpilled = friendEvening?.incident?.event === 'spilled-drink' && (!state.doubleDate?.incidentOwner || state.doubleDate.incidentOwner!==state.doubleDate.localHumanId);
     this.friendGlass.position.set(friendCleared?Math.sign(-doubleX)*CLEARED_GLASS_DOUBLE.x:-doubleX+.25, friendSpilled ? SPILLED_GLASS.y : .782, friendCleared?CLEARED_GLASS_DOUBLE.z:-.48);
     this.friendGlass.rotation.z = friendSpilled ? SPILLED_GLASS.tilt : 0;
-    const friendTabletop = (friendEvening as (typeof friendEvening & { tabletop?: { glassFill: number } }))?.tabletop;
+    const friendTabletop = (friendEvening as (typeof friendEvening & { tabletop?: { glassFill: number; napkinFolded?: boolean } }))?.tabletop;
     const friendWaterLevel = friendTabletop ? THREE.MathUtils.clamp(friendTabletop.glassFill / 4, 0, 1) : friendEvening?.care.water.status === 'served' ? 1 : .55;
     this.friendWater.scale.y = Math.max(.001, friendWaterLevel); this.friendWater.position.y = .002 + .04 * friendWaterLevel; this.friendWater.visible = friendWaterLevel > .001;
     for (let plate = 0; plate < 4; plate++) {
@@ -323,8 +331,10 @@ export class EveningTable {
     }
     const layout=dessertLayout(state), otherDessert=state.doubleDate?.otherView?.evening.dessert;
     this.dessert.visible=layout.own;this.otherDessert.visible=!!state.doubleDate&&layout.other;
-    this.napkin.position.set(state.doubleDate ? Math.sign(doubleX) * .84 : .39, .783, state.doubleDate ? -.80 : -.50);
-    const folded = !!e.tabletop?.napkinFolded; this.napkin.scale.y = folded ? .62 : 1; this.napkin.rotation.z = folded ? .26 : -.12; this.napkinFold.visible = folded;
+    // Each human's napkin: Solo to the right of the place, Double at that human's outer corner of the table, seen alike by both.
+    EveningTable.layNapkin(this.napkin, this.napkinFold, state.doubleDate ? Math.sign(doubleX) * .84 : .39, state.doubleDate ? -.80 : -.50, !!e.tabletop?.napkinFolded);
+    this.friendNapkin.visible = !!state.doubleDate;
+    if (state.doubleDate) EveningTable.layNapkin(this.friendNapkin, this.friendNapkinFold, -Math.sign(doubleX) * .84, -.80, !!friendTabletop?.napkinFolded);
     // Parked desserts leave the centre to extra dishes or to the other pair's dessert. A lone parked dessert goes right, clear of the carafe.
     const center=(other:boolean)=>{const side=other?-Math.sign(doubleX):Math.sign(doubleX);return {x:!layout.park?.06:layout.dual?(side<0?-.45:.47):state.doubleDate?.47:.53,z:layout.park?-1.55:-1.16};};
     const arrange=(root:THREE.Group,variants:THREE.Group[],value:typeof e.dessert|undefined,other:boolean)=>{
@@ -355,6 +365,10 @@ export class EveningTable {
       target.visible = name === 'window' || state.seated && scenario?.phase !== 'active' && (name === 'meal' ? !wingman && e.main.status === 'served' && !e.scenarioCare?.kitchen.held && !e.incident : name === 'ticket' ? this.ticket.visible : name === 'dessert' ? !wingman && this.dessert.visible && !e.scenarioCare?.kitchen.held : name === 'service-bell' ? interactionEvening.incident?.event === 'disruptive-diner' || (interactionEvening.incident?.event === 'wrong-order' && interactionEvening.incident.progress > 0) || (!interactionEvening.incident && (interactionEvening.care.water.status === 'none' || ((interactionEvening.tabletop?.shared.carafeFill ?? 6) === 0 && (interactionEvening.tabletop?.glassFill ?? 4) < 4)) && !interactionEvening.bill.requested) : name === 'napkin' && wingman ? interactionEvening.incident?.event === 'spilled-drink' : !interactionEvening.bill.settlement);
       if (name === 'dessert') { const c=center(false);target.position.set(c.x,.86,c.z); }
     }
+  }
+
+  private static layNapkin(napkin: THREE.Mesh, fold: THREE.Mesh, x: number, z: number, folded: boolean) {
+    napkin.position.set(x, .783, z); napkin.scale.y = folded ? .62 : 1; napkin.rotation.z = folded ? .26 : -.12; fold.visible = folded;
   }
 
   dispose() {
