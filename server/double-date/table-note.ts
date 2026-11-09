@@ -10,6 +10,9 @@ import { AGENDA_INSTRUCTIONS } from '../restaurant/agendas';
 import { BOUNDARY_INSTRUCTIONS } from '../restaurant/boundaries';
 import { NOTES_EMPTY, agendaLine, asksAboutLine, boundaryLines, clean, heardPrefix, hintTurn, lastQuestion, quote, serviceFacts } from '../restaurant/turn-note';
 import type { AgendaPrompt, BoundaryPrompt } from '../restaurant/turn-note';
+import { getDate } from '../../src/restaurant/content';
+import { CHARACTER_STORIES } from '../../src/restaurant/story';
+import type { DateId } from '../../src/restaurant/types';
 
 type Entry = { role: 'user' | 'assistant'; content: string };
 
@@ -32,6 +35,12 @@ export interface DateSheet {
   date: { name: string; age: number; pronouns: string; personality: string; preferences: string; boundaries: string };
   /** Biography with the voice habits split out; preferences, dishes and the dinner arc stay in the data. */
   life: unknown; voiceHabits: string;
+}
+
+/** Pure extraction of the baseline director's original persona-sheet construction. */
+export function presetDateSheet(actorId: DoubleDateActorId, humanId: DoubleHumanId, dateId: DateId): DateSheet {
+  const { voiceHabits, dinnerArc: _arc, preferences: _preferences, preferredMain: _main, preferredDessert: _dessert, occupation: _job, ...life } = CHARACTER_STORIES[dateId];
+  return { actorId, humanId, date: getDate(dateId)!, life, voiceHabits };
 }
 
 const TABLE_RULES = [

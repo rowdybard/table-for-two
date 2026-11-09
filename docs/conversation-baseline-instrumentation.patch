@@ -1,0 +1,115 @@
+diff --git a/server/double-date/conversation.ts b/server/double-date/conversation.ts
+index 54004dee1ddc048b473c445abf3b8c86a59c23d4..e972c6543cbb8f785c10f8c247adb7b4317a5eb1 100644
+--- a/server/double-date/conversation.ts
++++ b/server/double-date/conversation.ts
+@@ -18,7 +18,7 @@ import type { ConversationRoutingContext } from '../restaurant/conversation-rout
+ import { MEMORY_REJECT } from '../restaurant/memory';
+ import { tableFacts } from '../restaurant/table-facts';
+ import { QUIET_GAP_SECONDS, heardPrefix } from '../restaurant/turn-note';
+-import { doubleMessages, doubleSystem, doubleTurnNote, friendNames, renderDoubleHistory } from './table-note';
++import { doubleMessages, doubleSystem, doubleTurnNote, friendNames, presetDateSheet, renderDoubleHistory } from './table-note';
+ import type { Couple, DateSheet, DoubleFlow } from './table-note';
+ 
+ const humans: DoubleHumanId[] = ['h1', 'h2'];
+@@ -31,6 +31,7 @@ const schema = { type: 'object', additionalProperties: false, required: ['uttera
+   utterances: { type: 'array', minItems: 0, maxItems: 2, items: { type: 'object', additionalProperties: false, required: ['speaker', 'text', 'emotion'], properties: { speaker: { type: 'string', enum: ['d1', 'd2', 'waiter', 'diner'] }, text: { type: 'string' }, emotion: emotions } } },
+   dateUpdates: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'object', additionalProperties: false, required: ['actorId', 'emotion', 'memory', 'social', 'agenda'], properties: { actorId: { type: 'string', enum: actors }, emotion: emotions, memory: { type: 'string' }, social: socialSchema, agenda: AGENDA_SCHEMA } } },
+ } };
++export const DOUBLE_TURN_SCHEMA = schema;
+ type Delivery = { completed: boolean; playedSeconds: number };
+ type History = { human?: DoubleHumanId; text?: string; target?: string; lines?: DoubleDialogueLine[]; authored?: boolean };
+ type QueuedTurn = { human: DoubleHumanId; request: DoubleTurnRequest; fingerprint: string; key: string; boundaries: Record<DoubleHumanId, ReturnType<DoubleTableScene['boundaryContext']>>; /** Questions each date was still waiting on, and the quiet before this turn, as they stood when it was spoken. */ pending: Record<DoubleHumanId, string | null>; quiet: number };
+@@ -226,8 +227,8 @@ export class DoubleConversation {
+         const names = friendNames(this.state.members), dateOf = (id: DoubleDateActorId) => this.state.dates.find(date => date.id === id)!;
+         const dateNames = { d1: getDate(dateOf('d1').dateId)!.name, d2: getDate(dateOf('d2').dateId)!.name };
+         const sheets: DateSheet[] = actors.map(id => {
+-          const actor = dateOf(id), { voiceHabits, dinnerArc: _arc, preferences: _preferences, preferredMain: _main, preferredDessert: _dessert, occupation: _job, ...life } = CHARACTER_STORIES[actor.dateId];
+-          return { actorId: id, humanId: actor.humanId, date: getDate(actor.dateId)!, life, voiceHabits };
++          const actor = dateOf(id);
++          return presetDateSheet(id, actor.humanId, actor.dateId);
+         });
+         const system = doubleSystem(sheets, roleplayInstructions(effectiveModel), { emotions: EMOTIONS, signals: SOCIAL_SIGNALS });
+         const couples: Couple[] = actors.map(id => {
+@@ -372,3 +373,4 @@ function validate(text: string): { utterances: ReturnType<typeof validateLine>[]
+   }
+   return { ...value, utterances } as ReturnType<typeof validate>;
+ }
++export const validateDoubleTurn = validate;
+diff --git a/server/double-date/table-note.ts b/server/double-date/table-note.ts
+index 94660ebaf73e9be298c2bbd6c0641ed449fcb7d5..5c9b1fbb8d469c0c2d3eee77c9511cab27c0f283 100644
+--- a/server/double-date/table-note.ts
++++ b/server/double-date/table-note.ts
+@@ -10,6 +10,9 @@ import { AGENDA_INSTRUCTIONS } from '../restaurant/agendas';
+ import { BOUNDARY_INSTRUCTIONS } from '../restaurant/boundaries';
+ import { NOTES_EMPTY, agendaLine, asksAboutLine, boundaryLines, clean, heardPrefix, hintTurn, lastQuestion, quote, serviceFacts } from '../restaurant/turn-note';
+ import type { AgendaPrompt, BoundaryPrompt } from '../restaurant/turn-note';
++import { getDate } from '../../src/restaurant/content';
++import { CHARACTER_STORIES } from '../../src/restaurant/story';
++import type { DateId } from '../../src/restaurant/types';
+ 
+ type Entry = { role: 'user' | 'assistant'; content: string };
+ 
+@@ -34,6 +37,12 @@ export interface DateSheet {
+   life: unknown; voiceHabits: string;
+ }
+ 
++/** Pure extraction of the baseline director's original persona-sheet construction. */
++export function presetDateSheet(actorId: DoubleDateActorId, humanId: DoubleHumanId, dateId: DateId): DateSheet {
++  const { voiceHabits, dinnerArc: _arc, preferences: _preferences, preferredMain: _main, preferredDessert: _dessert, occupation: _job, ...life } = CHARACTER_STORIES[dateId];
++  return { actorId, humanId, date: getDate(dateId)!, life, voiceHabits };
++}
++
+ const TABLE_RULES = [
+   'THE TABLE. Two real friends, h1 and h2, sit with two fictional adult AI dates: d1 is paired with h1 and d2 with h2 (the sheets above say who is who; the latest message names the friends). You write for both dates in one response, so each date is a separate person with their own voice, history, preferences, boundaries and private notes. In the rules below “you” means the date who is speaking or being updated, and “the human” means the friend who just spoke. Never speak for a friend. Both dates hear everything said aloud and can answer either friend or each other, but a date never knows the other date’s private notes.',
+   'One response serves the whole table. Usually one short line from the date who is being spoken to, or who would naturally answer; at most one short line more, from the other date, Eli or the neighbouring diner. Return no lines at all when the friends should have space, and do not jump in on every exchange. Omit unused lines entirely; never add empty placeholders.',
+diff --git a/server/restaurant/conversation-prompt.ts b/server/restaurant/conversation-prompt.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..118e508a2077f19694678c99c88eaf17ebacc4ec
+--- /dev/null
++++ b/server/restaurant/conversation-prompt.ts
+@@ -0,0 +1,20 @@
++import { getDate } from '../../src/restaurant/content';
++import { CHARACTER_STORIES } from '../../src/restaurant/story';
++import { createBlindDate } from '../../src/restaurant/blind-date';
++import type { ClaudeModel, DinnerState } from '../../src/restaurant/types';
++import { ACTIONS, EMOTIONS, SOCIAL_SIGNALS } from './providers';
++import { DATE_DIALOGUE_INSTRUCTIONS, SPOKEN_REGISTER, VOICE_REMINDER, outputContract } from './dialogue-policy';
++import { SKEPTICISM_INSTRUCTIONS } from './skepticism';
++import { AGENDA_INSTRUCTIONS } from './agendas';
++import { BOUNDARY_INSTRUCTIONS } from './boundaries';
++import { roleplayInstructions } from './roleplay';
++
++/** Shared by the live runtime and offline evaluations. No provider or scene is started. */
++export function soloSystem(input: Pick<DinnerState, 'dateId' | 'blindDate'> & { model: ClaudeModel }): string {
++  const date = getDate(input.dateId);
++  if (!date) throw new Error('Unknown date in conversation prompt.');
++  const blind = input.blindDate ? createBlindDate(input.blindDate.seed) : undefined;
++  const { voiceHabits, dinnerArc: _arc, preferences: _preferences, preferredMain: _main, preferredDessert: _dessert, occupation: _job, ...life } = blind?.biography ?? CHARACTER_STORIES[date.id];
++  const persona = `You are ${date.name}, an adult (${date.age}) fictional AI date in a first-person restaurant game. Pronouns: ${date.pronouns}. Have your own opinions and react the way you really would. Never speak for the human.\nPersonality: ${blind?.personality ?? date.personality}\nLikes and dislikes: ${blind?.preferences ?? date.preferences}\nBoundaries: ${(blind?.boundaries ?? date.boundaries).replace(/\.$/, '')}.\nYour life (draw on it only where the talk goes there and reveal it slowly; its disclosure rules apply): ${JSON.stringify(life)}${blind ? '\nThis is a blind date with a newly seeded personality. The reused appearance and name do not supply a preset biography. Follow only the life above; discover chemistry through the conversation.' : ''}`;
++  return [persona, DATE_DIALOGUE_INSTRUCTIONS, SKEPTICISM_INSTRUCTIONS, AGENDA_INSTRUCTIONS, BOUNDARY_INSTRUCTIONS, roleplayInstructions(input.model), outputContract({ emotions: EMOTIONS, actions: ACTIONS, signals: SOCIAL_SIGNALS }), SPOKEN_REGISTER, `YOUR VOICE: ${voiceHabits}`, VOICE_REMINDER].join('\n');
++}
+diff --git a/server/restaurant/index.ts b/server/restaurant/index.ts
+index ba3974779c9334b64138d01d4a8ab06fb6b0f172..1a4327175f4d39045ebd96f9be8e70d508745f3e 100644
+--- a/server/restaurant/index.ts
++++ b/server/restaurant/index.ts
+@@ -31,6 +31,7 @@ import { needsAdultConversation, type ConversationRoutingContext } from './conve
+ import { MEMORY_REJECT } from './memory';
+ import { QUIET_GAP_SECONDS, conversationMessages, deliveryLabel, heardPrefix, turnNote, type TurnFlow } from './turn-note';
+ import { tableFacts } from './table-facts';
++import { soloSystem } from './conversation-prompt';
+ 
+ export type { ClaudeAdapter, SpeechAdapter } from './providers';
+ export interface BudgetRecord { day: string; spent: number; reserved: number }
+@@ -242,11 +243,7 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
+   // The system prompt reads persona first, then the rules in a fixed order, then the output contract; how the
+   // character actually sounds comes last because the last thing read is the strongest pull on a small model.
+   const prompt = (s: Session, model: ClaudeModel) => {
+-    const date = getDate(s.scene.state.dateId)!, blind = s.scene.state.blindDate ? createBlindDate(s.scene.state.blindDate.seed) : undefined;
+-    // Preferences, favourite dishes and the dinner arc stay in the data; the prompt carries them once (or not at all).
+-    const { voiceHabits, dinnerArc: _arc, preferences: _preferences, preferredMain: _main, preferredDessert: _dessert, occupation: _job, ...life } = blind?.biography ?? CHARACTER_STORIES[date.id];
+-    const persona = `You are ${date.name}, an adult (${date.age}) fictional AI date in a first-person restaurant game. Pronouns: ${date.pronouns}. Have your own opinions and react the way you really would. Never speak for the human.\nPersonality: ${blind?.personality ?? date.personality}\nLikes and dislikes: ${blind?.preferences ?? date.preferences}\nBoundaries: ${(blind?.boundaries ?? date.boundaries).replace(/\.$/, '')}.\nYour life (draw on it only where the talk goes there and reveal it slowly; its disclosure rules apply): ${JSON.stringify(life)}${blind ? '\nThis is a blind date with a newly seeded personality. The reused appearance and name do not supply a preset biography. Follow only the life above; discover chemistry through the conversation.' : ''}`;
+-    return [persona, DATE_DIALOGUE_INSTRUCTIONS, SKEPTICISM_INSTRUCTIONS, AGENDA_INSTRUCTIONS, BOUNDARY_INSTRUCTIONS, roleplayInstructions(model), outputContract({ emotions: EMOTIONS, actions: ACTIONS, signals: SOCIAL_SIGNALS }), SPOKEN_REGISTER, `YOUR VOICE: ${voiceHabits}`, VOICE_REMINDER].join('\n');
++    return soloSystem({ dateId: s.scene.state.dateId, blindDate: s.scene.state.blindDate, model });
+   };
+ 
+   async function generate(s: Session, request: TurnRequest, record: TurnRecord, controller: AbortController, reservation: number, day: string, system: string, messages: { role: 'user' | 'assistant'; content: string }[], estimatedInput: number) {

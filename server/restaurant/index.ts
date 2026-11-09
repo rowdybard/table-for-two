@@ -31,6 +31,7 @@ import { needsAdultConversation, type ConversationRoutingContext } from './conve
 import { MEMORY_REJECT } from './memory';
 import { QUIET_GAP_SECONDS, conversationMessages, deliveryLabel, heardPrefix, turnNote, type TurnFlow } from './turn-note';
 import { tableFacts } from './table-facts';
+import { soloSystem } from './conversation-prompt';
 
 export type { ClaudeAdapter, SpeechAdapter } from './providers';
 export interface BudgetRecord { day: string; spent: number; reserved: number }
@@ -242,11 +243,7 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
   // The system prompt reads persona first, then the rules in a fixed order, then the output contract; how the
   // character actually sounds comes last because the last thing read is the strongest pull on a small model.
   const prompt = (s: Session, model: ClaudeModel) => {
-    const date = getDate(s.scene.state.dateId)!, blind = s.scene.state.blindDate ? createBlindDate(s.scene.state.blindDate.seed) : undefined;
-    // Preferences, favourite dishes and the dinner arc stay in the data; the prompt carries them once (or not at all).
-    const { voiceHabits, dinnerArc: _arc, preferences: _preferences, preferredMain: _main, preferredDessert: _dessert, occupation: _job, ...life } = blind?.biography ?? CHARACTER_STORIES[date.id];
-    const persona = `You are ${date.name}, an adult (${date.age}) fictional AI date in a first-person restaurant game. Pronouns: ${date.pronouns}. Have your own opinions and react the way you really would. Never speak for the human.\nPersonality: ${blind?.personality ?? date.personality}\nLikes and dislikes: ${blind?.preferences ?? date.preferences}\nBoundaries: ${(blind?.boundaries ?? date.boundaries).replace(/\.$/, '')}.\nYour life (draw on it only where the talk goes there and reveal it slowly; its disclosure rules apply): ${JSON.stringify(life)}${blind ? '\nThis is a blind date with a newly seeded personality. The reused appearance and name do not supply a preset biography. Follow only the life above; discover chemistry through the conversation.' : ''}`;
-    return [persona, DATE_DIALOGUE_INSTRUCTIONS, SKEPTICISM_INSTRUCTIONS, AGENDA_INSTRUCTIONS, BOUNDARY_INSTRUCTIONS, roleplayInstructions(model), outputContract({ emotions: EMOTIONS, actions: ACTIONS, signals: SOCIAL_SIGNALS }), SPOKEN_REGISTER, `YOUR VOICE: ${voiceHabits}`, VOICE_REMINDER].join('\n');
+    return soloSystem({ dateId: s.scene.state.dateId, blindDate: s.scene.state.blindDate, model });
   };
 
   async function generate(s: Session, request: TurnRequest, record: TurnRecord, controller: AbortController, reservation: number, day: string, system: string, messages: { role: 'user' | 'assistant'; content: string }[], estimatedInput: number) {

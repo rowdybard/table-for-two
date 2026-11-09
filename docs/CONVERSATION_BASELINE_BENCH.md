@@ -1,0 +1,23 @@
+# Frozen baseline capture bench
+
+This isolated branch instruments `05ff06a5e5727fc99d78fe64469460ab286a4d0a`. It is evaluation tooling, not a release branch. Do not merge its baseline runtime into the candidate or deploy it.
+
+The bench contains the identical 60 eight-turn scripts and six 30-turn continuity fixtures used by the candidate: 66 conversations and 660 human turns per model. `docs/conversation-baseline-bench.json` records the evaluated revision, exact production extraction patch/hash, corpus source hash and copied harness hashes. The original content, notebook clamp, turn notes, transcript builders, social controllers and seeded identity generator remain the frozen baseline's versions.
+
+Only four production files participate in extraction: the original Solo prompt becomes a pure helper called by the original runtime; Double's original persona-sheet expression becomes a pure helper; its unchanged schema and validator acquire exported aliases. The unchanged original function expressions are executed as independent parity oracles in `tests/baseline-bench-parity.test.ts`. The capture runtime is copied from the candidate with exactly two compatibility edits: call the baseline's two-argument `clampMemory` at its Solo and Double acceptance sites. This deliberately does not import the candidate's optional-premise retirement behavior. All other existing `src/` and `server/` sources must match the baseline, except evaluation tooling.
+
+Reports retain `sourceRevision` as the actual bench checkout revision and add `harnessRevision`, `evaluatedSourceRevision` and `instrumentationSha256`. A normal candidate has equal source/harness/evaluated revisions and no instrumentation hash. This bench identifies the evaluated code as `05ff06a5...` and the harness as its separate committed revision. The CLI rejects a mismatched extraction or source changes outside this narrow allowlist; a dirty tree remains exploratory evidence only.
+
+Offline verification, without a game, browser, server or provider:
+
+```sh
+node --import ./tests/fixtures/evaluation-network-guard.mjs --import tsx --test --test-concurrency=1 tests/conversation-evaluation.test.ts tests/evaluation-provenance.test.ts tests/baseline-bench-parity.test.ts
+pnpm check
+node --import ./tests/fixtures/evaluation-network-guard.mjs --import tsx scripts/compare-date-models.ts
+```
+
+The provider guard rejects outbound model/synthesis traffic before network access. The final command is a dry run: no credentials, calls or report writes. The local bench reuses installed dependencies via an ignored `node_modules` junction; its package and lockfile are unchanged from the evaluated baseline and match the candidate's dependency manifests. A fresh machine can install that frozen lockfile normally.
+
+No live dialogue has been captured. Mock success proves harness compatibility and preservation of source behavior; all human judgments remain **unrated**. Any live batch still requires explicit operator approval and an explicit budget. Pair the same corpus/settings, preserve missing captures, and use two independent reviewers under the candidate's `docs/CONVERSATION_REVIEW.md` process. Different baseline/candidate behavior is the subject of the comparison, not a reason to import candidate rules into this bench.
+
+The same Blind seed is evaluated through each revision's own identity generator. Biography changes are therefore part of an end-to-end code comparison; disclose this rather than claiming identical underlying biographies. The default Horde OpenAI bridge requests one fixed configured/default model. Reports record that requested identity, transport, requested 700-token cap and effective 512-token cap; matching those settings permits paired capture, while the actual volunteer worker remains unobserved and may differ. A pinned native model is also recorded. Unpinned native-pool selection has an unknown actual upstream model and must not be presented as a controlled same-model comparison. Fixed Anthropic aliases have declared identities; the CLI rejects unknown custom aliases instead of assigning misleading costs or provenance.

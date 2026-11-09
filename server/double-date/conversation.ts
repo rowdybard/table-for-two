@@ -18,7 +18,7 @@ import type { ConversationRoutingContext } from '../restaurant/conversation-rout
 import { MEMORY_REJECT } from '../restaurant/memory';
 import { tableFacts } from '../restaurant/table-facts';
 import { QUIET_GAP_SECONDS, heardPrefix } from '../restaurant/turn-note';
-import { doubleMessages, doubleSystem, doubleTurnNote, friendNames, renderDoubleHistory } from './table-note';
+import { doubleMessages, doubleSystem, doubleTurnNote, friendNames, presetDateSheet, renderDoubleHistory } from './table-note';
 import type { Couple, DateSheet, DoubleFlow } from './table-note';
 
 const humans: DoubleHumanId[] = ['h1', 'h2'];
@@ -31,6 +31,7 @@ const schema = { type: 'object', additionalProperties: false, required: ['uttera
   utterances: { type: 'array', minItems: 0, maxItems: 2, items: { type: 'object', additionalProperties: false, required: ['speaker', 'text', 'emotion'], properties: { speaker: { type: 'string', enum: ['d1', 'd2', 'waiter', 'diner'] }, text: { type: 'string' }, emotion: emotions } } },
   dateUpdates: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'object', additionalProperties: false, required: ['actorId', 'emotion', 'memory', 'social', 'agenda'], properties: { actorId: { type: 'string', enum: actors }, emotion: emotions, memory: { type: 'string' }, social: socialSchema, agenda: AGENDA_SCHEMA } } },
 } };
+export const DOUBLE_TURN_SCHEMA = schema;
 type Delivery = { completed: boolean; playedSeconds: number };
 type History = { human?: DoubleHumanId; text?: string; target?: string; lines?: DoubleDialogueLine[]; authored?: boolean };
 type QueuedTurn = { human: DoubleHumanId; request: DoubleTurnRequest; fingerprint: string; key: string; boundaries: Record<DoubleHumanId, ReturnType<DoubleTableScene['boundaryContext']>>; /** Questions each date was still waiting on, and the quiet before this turn, as they stood when it was spoken. */ pending: Record<DoubleHumanId, string | null>; quiet: number };
@@ -226,8 +227,8 @@ export class DoubleConversation {
         const names = friendNames(this.state.members), dateOf = (id: DoubleDateActorId) => this.state.dates.find(date => date.id === id)!;
         const dateNames = { d1: getDate(dateOf('d1').dateId)!.name, d2: getDate(dateOf('d2').dateId)!.name };
         const sheets: DateSheet[] = actors.map(id => {
-          const actor = dateOf(id), { voiceHabits, dinnerArc: _arc, preferences: _preferences, preferredMain: _main, preferredDessert: _dessert, occupation: _job, ...life } = CHARACTER_STORIES[actor.dateId];
-          return { actorId: id, humanId: actor.humanId, date: getDate(actor.dateId)!, life, voiceHabits };
+          const actor = dateOf(id);
+          return presetDateSheet(id, actor.humanId, actor.dateId);
         });
         const system = doubleSystem(sheets, roleplayInstructions(effectiveModel), { emotions: EMOTIONS, signals: SOCIAL_SIGNALS });
         const couples: Couple[] = actors.map(id => {
@@ -372,3 +373,4 @@ function validate(text: string): { utterances: ReturnType<typeof validateLine>[]
   }
   return { ...value, utterances } as ReturnType<typeof validate>;
 }
+export const validateDoubleTurn = validate;

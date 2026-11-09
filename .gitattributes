@@ -1,0 +1,2 @@
+# Unified patches contain a one-space marker for empty context lines.
+docs/conversation-baseline-instrumentation.patch -whitespace

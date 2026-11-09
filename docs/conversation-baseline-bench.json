@@ -1,0 +1,25 @@
+{
+  "formatVersion": 1,
+  "status": "prepared_offline_unrated",
+  "evaluatedSourceRevision": "05ff06a5e5727fc99d78fe64469460ab286a4d0a",
+  "instrumentationSha256": "8d2a74dd535fd78ec4ffe8f6380b28aad5f6e505074cc6f85c00cb6ceee1a0b5",
+  "instrumentedProductionPaths": [
+    "server/double-date/conversation.ts",
+    "server/double-date/table-note.ts",
+    "server/restaurant/conversation-prompt.ts",
+    "server/restaurant/index.ts"
+  ],
+  "instrumentationPatch": "docs/conversation-baseline-instrumentation.patch",
+  "corpusFileSha256": "c23e5c9527147fbbf7fd7f48eb849ea6ae11edbe21f9ac3b4ea33444a21d6f4f",
+  "copiedHarnessSha256": {
+    "src/restaurant/evaluation.ts": "ef82ff8973909025988789eaba326ee5638b7ef153c6ff879182e3863d98a1a4",
+    "src/restaurant/evaluation-fixtures.ts": "c23e5c9527147fbbf7fd7f48eb849ea6ae11edbe21f9ac3b4ea33444a21d6f4f",
+    "scripts/compare-date-models.ts": "4fa946ed55c4e988f3e5f72e2793b5e2de966096af41c11f50e0e707cea01745",
+    "scripts/lib/conversation-evaluation.ts": "009e1aa779b4de1e26c09cc809fc0555a4fc917b0892770fd8fefc3a195420c1",
+    "scripts/lib/evaluation-provenance.ts": "b2ad38910d566b689fc6580c222474b8634879e808ba44d1db98aed48cd70a38",
+    "tests/fixtures/evaluation-network-guard.mjs": "53f3b40ea9581edb4b25bb75e3e3ad4cb85e7c44048b9021b071c53c1a4f7fff"
+  },
+  "runtimeCompatibility": "The identical evaluation runtime calls the baseline two-argument clampMemory at both acceptance sites. All other runtime lines are copied unchanged. Baseline content, prompts, notes, transcripts and controllers are retained.",
+  "verification": "Mock-only corpus and source-extraction parity tests. No live outputs, quality ratings, server, browser, synthesis or deployment.",
+  "candidateRuntimeSha256": "78e12bf46adbab426b146e78ff96be0f92ef69873a638d44c5841474deae98d8"
+}
