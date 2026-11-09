@@ -451,10 +451,11 @@ test('private double date: distinct choices, readiness, independent first-person
     await p.b.keyboard.down('w'); await p.b.waitForTimeout(220); await p.b.keyboard.up('w');
     expect((await room(p.b)).members.map(member => member.position)).toEqual(before);
     await p.a.locator('#resume-date').click(); await expect.poll(async () => (await room(p.b)).phase).toBe('playing');
-    await p.b.reload();
-    // After reload, CI took 8.2s between status and the successful restore GET.
-    await expect(p.b.locator('#dinner-hud')).toBeVisible({ timeout: 15000 });
+    // Software CI committed the navigation promptly but delayed requesting
+    // scripts beyond the browser's load deadline; wait for the scene itself.
+    await p.b.reload({ waitUntil: 'commit' });
     await waitForRestaurantScene(p.b);
+    await expect(p.b.locator('#dinner-hud')).toBeVisible({ timeout: 15000 });
     await expect.poll(async () => (await credentials(p.b)).token).toBe(bCreds.token);
     await expect.poll(async () => (await state(p.b)).doubleDate?.localHumanId).toBe('h2');
     expect((await room(p.a)).members.filter(member => member.id === 'h2')).toHaveLength(1);
