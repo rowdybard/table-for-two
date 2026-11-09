@@ -1,7 +1,7 @@
 import { MODEL_RATES } from '../../src/restaurant/content';
 import { createHash } from 'node:crypto';
 import { EVALUATION_MAX_TOKENS } from '../../src/restaurant/evaluation-runtime';
-import { DEFAULT_HORDE_MODEL } from '../../server/restaurant/horde';
+import { DEFAULT_HORDE_MODEL, HORDE_BRIDGE_CONTEXT_FIT } from '../../server/restaurant/horde';
 import { DATE_EVALUATION_RUBRIC, EVALUATION_REVIEW_GUIDE, EVALUATION_MODELS, EVALUATION_SCRIPTS, EvaluationConversation, type EvaluationScript } from '../../src/restaurant/evaluation';
 import type { ClaudeModel } from '../../src/restaurant/types';
 import { completeUtterances } from '../../server/restaurant';
@@ -91,7 +91,7 @@ export function evaluationModelSettings(models: readonly ClaudeModel[], env: Nod
       timeoutMs: timeoutMs ?? (horde ? 65000 : 30000),
       providerTimeoutMs: native ? Number.isFinite(configuredTimeout) ? Math.floor(Math.max(1000, Math.min(120_000, configuredTimeout))) : 60_000 : null,
       routingConfig: horde ? { selection: native && !pinned ? 'reviewed-native-pool' : pinned ? 'configured-model' : 'default-fixed-model',
-        requestedModels: upstreamModel ? [upstreamModel] : null, actualWorkerObserved: false, contextFit: 'reject' } : null };
+        requestedModels: upstreamModel ? [upstreamModel] : null, actualWorkerObserved: false, contextFit: native ? 'reject' : HORDE_BRIDGE_CONTEXT_FIT } : null };
   });
 }
 

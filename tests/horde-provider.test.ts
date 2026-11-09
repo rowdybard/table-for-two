@@ -33,7 +33,7 @@ test('Horde sends one anonymous JSON-mode request, preserves the schema and caps
     assert.equal(body.reasoning_effort, 'none');
     assert.deepEqual(body.stream_options, { include_usage: true });
     assert.deepEqual(body.response_format, { type: 'json_object' });
-    assert.deepEqual(body.horde, { conformance: 'best_effort', include_reasoning: false, context_fit: 'reject', trusted_workers: true, validated_backends: true, availability_mode: 'fail_fast' });
+    assert.deepEqual(body.horde, { conformance: 'best_effort', include_reasoning: false, context_fit: 'grow', trusted_workers: true, validated_backends: true, availability_mode: 'fail_fast' });
     assert.ok(body.messages[0].content.startsWith('Keep the date conversational.'));
     assert.ok(body.messages[0].content.includes(JSON.stringify(schema)));
     assert.ok(body.messages[0].content.includes('server validates'));
@@ -45,6 +45,26 @@ test('Horde sends one anonymous JSON-mode request, preserves the schema and caps
   assert.equal(validateTurn(JSON.parse(chunks.filter(chunk => chunk.type === 'text').map(chunk => chunk.text).join(''))).utterances[0].text, validTurn.utterances[0].text);
   assert.deepEqual(schema, before);
   assert.equal(calls, 1);
+});
+
+test('Horde grows context without truncating or reordering conversation messages', async () => {
+  const messages: ClaudeRequest['messages'] = [
+    { role: 'user', content: 'Remember the radio I repaired in Leeds. '.repeat(600) },
+    { role: 'assistant', content: 'You repaired a radio in Leeds.' },
+    { role: 'user', content: 'What did I repair?' },
+  ];
+  let calls = 0;
+  const adapter = hordeAdapter(env, (async (_url: unknown, init: RequestInit) => {
+    calls++;
+    const body = JSON.parse(init.body as string);
+    assert.equal(body.horde.context_fit, 'grow');
+    assert.equal('max_context_length' in body.horde, false);
+    assert.deepEqual(body.messages.slice(1), messages);
+    return response(textEvent('{}', 'stop') + done);
+  }) as typeof fetch);
+  const before = structuredClone(messages);
+  await collect(adapter.stream(request({ messages }), new AbortController().signal));
+  assert.deepEqual(messages, before); assert.equal(calls, 1);
 });
 
 test('server-only Horde credentials and model override remain out of the request messages', async () => {
@@ -73,7 +93,7 @@ test('split SSE bytes and heartbeats preserve response text and reported termina
 
 test('HTTP and streamed Horde failures are sanitized, specific and never retried', async () => {
   for (const [status, upstreamCode, code, resultStatus] of [
-    [400, 'UnsupportedChatParameter', 'horde_request', 502], [401, 'InvalidAPIKey', 'horde_auth', 502],
+    [400, 'UnsupportedChatParameter', 'horde_request', 502], [400, 'PromptExceedsContext', 'horde_context', 503], [401, 'InvalidAPIKey', 'horde_auth', 502],
     [403, 'KudosUpfront', 'horde_kudos', 503], [403, 'PermissionDenied', 'horde_access', 502],
     [404, 'no_worker_supports_features', 'horde_model', 503], [503, 'no_eligible_worker', 'horde_model', 503],
     [429, 'TooManyPrompts', 'horde_rate_limit', 429], [408, 'ChatRequestTimeout', 'horde_timeout', 504],
