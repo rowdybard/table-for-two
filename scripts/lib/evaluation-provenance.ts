@@ -40,11 +40,13 @@ export function evaluationProvenance(directory = process.cwd()): EvaluationProve
   if (hash !== value.instrumentationSha256.toLowerCase()) throw new Error('Baseline instrumentation differs from its reviewed manifest; no requests were sent.');
   if (value.bridgeCompatibility !== undefined) {
     const compat = value.bridgeCompatibility as Record<string, unknown> | null;
-    const delta = compat?.fieldDelta as Record<string, { from?: string; to?: string }> | undefined;
+    const delta = compat?.fieldDelta as Record<string, { from?: string; to?: string; schema?: string; name?: string; strict?: boolean }> | undefined;
     if (!compat || compat.originalAdapterPath !== 'server/restaurant/horde.ts' || compat.shimPath !== 'scripts/lib/baseline-horde-compat.ts'
       || typeof compat.originalAdapterSha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(compat.originalAdapterSha256)
       || typeof compat.shimSha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(compat.shimSha256)
-      || !delta || Object.keys(delta).length !== 1 || delta['horde.context_fit']?.from !== 'reject' || delta['horde.context_fit']?.to !== 'grow') throw new Error('Invalid baseline bridge compatibility manifest; no requests were sent.');
+      || !delta || Object.keys(delta).length !== 2 || delta['horde.context_fit']?.from !== 'reject' || delta['horde.context_fit']?.to !== 'grow'
+      || delta.response_format?.from !== 'json_object' || delta.response_format?.to !== 'json_schema'
+      || delta.response_format?.name !== 'date_turn' || delta.response_format?.schema !== 'request.outputSchema ?? TURN_SCHEMA' || delta.response_format?.strict !== true) throw new Error('Invalid baseline bridge compatibility manifest; no requests were sent.');
     const digest = (text: string) => createHash('sha256').update(text.replace(/\r\n/g, '\n')).digest('hex');
     const adapter = digest(readFileSync(join(directory, compat.originalAdapterPath), 'utf8'));
     const frozen = digest(git(['show', `${revision}:${compat.originalAdapterPath}`]));

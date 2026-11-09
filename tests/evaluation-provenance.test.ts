@@ -29,7 +29,7 @@ test('baseline provenance separates evaluated code from its clean harness and re
     const shim = 'export const shim = true;\n', original = 'export const frozenAdapter = true;\n';
     await writeFile(join(directory, 'scripts', 'lib', 'baseline-horde-compat.ts'), shim);
     const digest = (text: string) => createHash('sha256').update(text).digest('hex');
-    const bridgeCompatibility = { originalAdapterPath: 'server/restaurant/horde.ts', originalAdapterSha256: digest(original), shimPath: 'scripts/lib/baseline-horde-compat.ts', shimSha256: digest(shim), fieldDelta: { 'horde.context_fit': { from: 'reject', to: 'grow' } } };
+    const bridgeCompatibility = { originalAdapterPath: 'server/restaurant/horde.ts', originalAdapterSha256: digest(original), shimPath: 'scripts/lib/baseline-horde-compat.ts', shimSha256: digest(shim), fieldDelta: { 'horde.context_fit': { from: 'reject', to: 'grow' }, response_format: { from: 'json_object', to: 'json_schema', name: 'date_turn', schema: 'request.outputSchema ?? TURN_SCHEMA', strict: true } } };
     await writeFile(join(directory, 'docs', 'conversation-baseline-bench.json'), JSON.stringify({ ...manifest, bridgeCompatibility }));
     assert.equal(evaluationProvenance(directory).evaluatedSourceRevision, evaluatedSourceRevision);
     await writeFile(join(directory, 'scripts', 'lib', 'baseline-horde-compat.ts'), 'changed\n');

@@ -91,7 +91,8 @@ export function evaluationModelSettings(models: readonly ClaudeModel[], env: Nod
       timeoutMs: timeoutMs ?? (horde ? 65000 : 30000),
       providerTimeoutMs: native ? Number.isFinite(configuredTimeout) ? Math.floor(Math.max(1000, Math.min(120_000, configuredTimeout))) : 60_000 : null,
       routingConfig: horde ? { selection: native && !pinned ? 'reviewed-native-pool' : pinned ? 'configured-model' : 'default-fixed-model',
-        requestedModels: upstreamModel ? [upstreamModel] : null, actualWorkerObserved: false, contextFit: native ? 'reject' : 'grow' } : null };
+        requestedModels: upstreamModel ? [upstreamModel] : null, actualWorkerObserved: false, contextFit: native ? 'reject' : 'grow',
+        ...(!native ? { responseFormat: 'json_schema', schemaStrict: true } : {}) } : null };
   });
 }
 

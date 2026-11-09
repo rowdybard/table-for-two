@@ -15,8 +15,8 @@
     "src/restaurant/evaluation.ts": "ef82ff8973909025988789eaba326ee5638b7ef153c6ff879182e3863d98a1a4",
     "src/restaurant/evaluation-fixtures.ts": "c23e5c9527147fbbf7fd7f48eb849ea6ae11edbe21f9ac3b4ea33444a21d6f4f",
     "scripts/compare-date-models.ts": "3f5b1cd79bc1aa00b8dc749a2ac260d7f1ff4e82acc6a2781c042a42efd32eeb",
-    "scripts/lib/conversation-evaluation.ts": "7a16825aa8ea80deb9cbb8335ffb514697552f0bb636599cf8a350094e0c93fa",
-    "scripts/lib/evaluation-provenance.ts": "871538a3ea35844c4e7f175836008b4e324e4f2418ee0ebc8c9b9bd9c88c7744",
+    "scripts/lib/conversation-evaluation.ts": "87fb9e0d817b47dc2bc27f9c6f558da2ce6d74b03ac2e2c738c06f57a0e0c138",
+    "scripts/lib/evaluation-provenance.ts": "18fe850a5579a35f96767197a564c85014263422cfedfa01519f93c0ac80b935",
     "tests/fixtures/evaluation-network-guard.mjs": "53f3b40ea9581edb4b25bb75e3e3ad4cb85e7c44048b9021b071c53c1a4f7fff"
   },
   "runtimeCompatibility": "The identical evaluation runtime calls the baseline two-argument clampMemory at both acceptance sites. All other runtime lines are copied unchanged. Baseline content, prompts, notes, transcripts and controllers are retained.",
@@ -33,12 +33,21 @@
     "originalAdapterPath": "server/restaurant/horde.ts",
     "originalAdapterSha256": "0050f4f2154910e3caddc74921db99f9574b11e0721cef8d80276b04802a36a0",
     "shimPath": "scripts/lib/baseline-horde-compat.ts",
-    "shimSha256": "56ab857680b1a4c4872a1013507df74d9c695471d56bd0d0d0a2e998d62e4bfd",
+    "shimSha256": "2ff7ad0000fb9eac72b2bf039e28a096e4830983fb89cbb7b404ec9267e6942c",
     "fieldDelta": {
       "horde.context_fit": {
         "from": "reject",
         "to": "grow"
+      },
+      "response_format": {
+        "from": "json_object",
+        "to": "json_schema",
+        "name": "date_turn",
+        "schema": "request.outputSchema ?? TURN_SCHEMA",
+        "strict": true
       }
-    }
+    },
+    "previousShimSha256": "56ab857680b1a4c4872a1013507df74d9c695471d56bd0d0d0a2e998d62e4bfd",
+    "previousShimRevision": "27a2f8c2cea7edd0cc81030aebcbf7b4ea04eb76"
   }
 }

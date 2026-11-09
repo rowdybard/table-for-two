@@ -15,6 +15,7 @@ import { BOUNDARY_INSTRUCTIONS } from '../server/restaurant/boundaries';
 import { roleplayInstructions } from '../server/restaurant/roleplay';
 import { ACTIONS, EMOTIONS, SOCIAL_SIGNALS } from '../server/restaurant/providers';
 import { presetDateSheet } from '../server/double-date/table-note';
+import { DOUBLE_TURN_SCHEMA } from '../server/double-date/conversation';
 import { evaluationProvenance } from '../scripts/lib/evaluation-provenance';
 import { evaluationModelSettings } from '../scripts/lib/conversation-evaluation';
 import { createBaselineHordeAdapter } from '../scripts/lib/baseline-horde-compat';
@@ -84,6 +85,7 @@ test('baseline report provenance resolves the frozen evaluated code independentl
   for (const [path, expected] of Object.entries(manifest.originalCopiedHarnessSha256)) assert.equal(hash(normalize(git('show', `${manifest.originalCopiedHarnessRevision}:${path}`))), expected, `${path} original harness differs`);
   assert.equal(hash(current(manifest.bridgeCompatibility.originalAdapterPath)), manifest.bridgeCompatibility.originalAdapterSha256);
   assert.equal(hash(current(manifest.bridgeCompatibility.shimPath)), manifest.bridgeCompatibility.shimSha256);
+  assert.equal(hash(normalize(git('show', `${manifest.bridgeCompatibility.previousShimRevision}:${manifest.bridgeCompatibility.shimPath}`))), manifest.bridgeCompatibility.previousShimSha256);
   assert.equal(hash(current('src/restaurant/evaluation-fixtures.ts')), manifest.corpusFileSha256);
   const runtime = current('src/restaurant/evaluation-runtime.ts');
   assert.equal((runtime.match(/clampMemory\(turn\.memory, view\.memory\)/g) ?? []).length, 2);
@@ -91,7 +93,7 @@ test('baseline report provenance resolves the frozen evaluated code independentl
   assert.equal(hash(restored), manifest.candidateRuntimeSha256, 'The compatibility adaptation must change only the two baseline memory calls.');
 });
 
-test('bench bridge changes only context_fit and reports its actual route settings', async () => {
+test('bench bridge changes only context fit and response format and reports its actual route settings', async () => {
   const env = { DATE_CONVERSATION_PROVIDER: 'aihorde', AI_HORDE_MODEL: 'koboldcpp/example', AI_HORDE_API_KEY: 'test-only' };
   const request: ClaudeRequest = { model: 'ai-horde', system: 'Frozen system instructions.', messages: [{ role: 'user', content: 'First message.' }, { role: 'assistant', content: 'Café.' }, { role: 'user', content: 'Follow-up.' }], maxTokens: 700, outputSchema: TURN_SCHEMA };
   const captured: { url: string; method: string | undefined; headers: HeadersInit | undefined; body: any; signal: AbortSignal | null | undefined }[] = [];
@@ -105,10 +107,29 @@ test('bench bridge changes only context_fit and reports its actual route setting
   const original = await collect(hordeAdapter(env, fetcher)), compatible = await collect(createBaselineHordeAdapter(env, fetcher));
   assert.deepEqual(compatible, original); assert.equal(captured.length, 2);
   assert.equal(captured[0].body.horde.context_fit, 'reject'); assert.equal(captured[1].body.horde.context_fit, 'grow');
+  assert.deepEqual(captured[0].body.response_format, { type: 'json_object' });
+  assert.deepEqual(captured[1].body.response_format, { type: 'json_schema', json_schema: { name: 'date_turn', schema: TURN_SCHEMA, strict: true } });
   captured[0].body.horde.context_fit = 'grow';
-  assert.deepEqual(captured[1], captured[0], 'all headers, signal, schema, messages and routing options are identical');
+  captured[0].body.response_format = captured[1].body.response_format;
+  assert.deepEqual(captured[1], captured[0], 'all other headers, signal, system, history and routing options are identical');
   assert.equal(evaluationModelSettings(['ai-horde'], env)[0].routingConfig?.contextFit, 'grow');
+  assert.equal(evaluationModelSettings(['ai-horde'], env)[0].routingConfig?.responseFormat, 'json_schema');
+  assert.equal(evaluationModelSettings(['ai-horde'], env)[0].routingConfig?.schemaStrict, true);
   assert.equal(evaluationModelSettings(['ai-horde'], { ...env, AI_HORDE_TRANSPORT: 'native' })[0].routingConfig?.contextFit, 'reject');
+  assert.equal('responseFormat' in evaluationModelSettings(['ai-horde'], { ...env, AI_HORDE_TRANSPORT: 'native' })[0].routingConfig!, false);
+});
+
+test('concurrent baseline bridge requests preserve their own schemas and the Solo fallback', async () => {
+  const schemas: Record<string, unknown>[] = [];
+  const fetcher = (async (_url: unknown, init?: RequestInit) => {
+    const body = JSON.parse(init!.body as string); schemas.push(body.response_format.json_schema.schema);
+    return new Response('data: {"choices":[{"index":0,"delta":{"content":"{}"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+  }) as typeof fetch;
+  const adapter = createBaselineHordeAdapter({ DATE_CONVERSATION_PROVIDER: 'aihorde' }, fetcher);
+  const request: ClaudeRequest = { model: 'ai-horde', system: 'Frozen.', messages: [{ role: 'user', content: 'Hello.' }], maxTokens: 700 };
+  const collect = async (input: ClaudeRequest) => { for await (const _ of adapter.stream(input, new AbortController().signal)) { /* consume */ } };
+  await Promise.all([collect(request), collect({ ...request, outputSchema: DOUBLE_TURN_SCHEMA })]);
+  assert.deepEqual(schemas, [TURN_SCHEMA, DOUBLE_TURN_SCHEMA]);
 });
 
 test('native Horde bypasses the bridge compatibility shim', async () => {
