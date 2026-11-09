@@ -11,11 +11,18 @@ Daniel asked for an AAA pass on the restaurant environment (lighting, shaders, t
 | Workstream | Scope | Status |
 | --- | --- | --- |
 | Seed | `VenueContract.ts`; bill folio moved out of the bread basket to (.31, -1.04) | Done |
-| A, lighting | Spotlit table pendant, static key shadow, venue reflection map, glow halos, phone tier, adaptive pixel ratio | See the pull request that carries this file |
-| C, layout | Napkin off the silverware, plate winding, cutlery resting on the rim, glasses, cloth and stain off the menu, contact shadows that follow props, `tests/tabletop-layout.test.ts` | See the pull request that carries this file |
-| B, surfaces | Stone floor shader, velvet sheen and tufted booths, brass and silver, polished table top, glass and bottles, plaster AO, neon exterior, shared procedural texture sources | Not started |
+| A, lighting | Spotlit table pendant with its own shadow, static fitted key shadow, venue reflection map, glass fresnel, glow halos (pendants, candles, bar strips, table lamp), booth fill on both tiers, phone tier, adaptive pixel ratio that undoes steps that do not help, WebGL context-restore handling | Shipped |
+| C, layout | Napkin beside the fork and off the silverware in every seat, far settings mirrored so each date's fork is on their left, plate winding fixed, finished cutlery resting on the rim, Double date glasses off the forks, tipped glass lying on the cloth, cloth and stain off the menu, contact shadows that follow props and the quiet table, `tests/tabletop-layout.test.ts` over 206 states | Shipped |
+| B, surfaces | Stone floor shader, velvet sheen and tufted booths, brass and silver, polished table top, glass and bottles, plaster AO, neon exterior, shared procedural texture sources, pendant fixtures that travel with the quiet table, removing `barWash` | Not started (only the spill puddle was raised to .7843) |
 
-The pull request description is updated with the final status of A and C when it merges. Anything listed there as "not done" belongs here.
+### Known follow-ups from review
+
+- The room away from the table is darker than before by design (pools of light). The ceiling is close to black because no light points up; lifting the hemisphere ground colour is the cheapest fix if Daniel wants it brighter.
+- On the Low tier the P3/P4 halos and glow discs still glow although those two spotlights only exist on High.
+- The table spotlight's shadow frustum (focus .55) is narrower than its lit cone; raising focus to about .7 softens tabletop shadows slightly but removes the hard arc at the edge of the shadowed area.
+- The `!parallelCompile` early return in `RestaurantRenderer.requestWarmup` was kept. Removing it needs a bounded asset wait and an iPhone check.
+- Until workstream B lands, `ensureVenueShadowLayers` in `RestaurantLighting.ts` assigns the baked `restaurant-*` batches to the static layer and the dining furniture to the spotlight layer. B should put those layers on its batches directly.
+- The P0 pendant fixture mesh is still baked into the room, so on the quiet-table move the light, spot and halo travel but the lamp shade does not. Workstream B moves it into `diningRoot`.
 
 ## Picking up workstream B
 
