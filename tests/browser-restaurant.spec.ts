@@ -4,7 +4,7 @@ import { extname, resolve, sep } from 'node:path';
 import { test, expect, type Page, type Route } from '@playwright/test';
 import { attachRestaurantServer, type ClaudeAdapter } from '../server/restaurant';
 import type { ClaudeModel, DinnerState, SceneTurn } from '../src/restaurant/types';
-import { captureRestaurantScene, waitForRestaurantScene } from './restaurant-browser-helpers';
+import { captureRestaurantScene, reloadRestaurantScene, waitForRestaurantScene } from './restaurant-browser-helpers';
 import { createBlindDate } from '../src/restaurant/blind-date';
 
 let http: Server, app: Awaited<ReturnType<typeof attachRestaurantServer>>, base = '';
@@ -364,7 +364,7 @@ test('solo restaurant: roster, real movement, seat, order, streamed cast, privat
   expect((await state(page)).elapsed).toBeCloseTo(frozen, 1);
   await page.locator('#resume-date').click();
   await expect.poll(async () => (await state(page)).phase).toBe('playing');
-  await page.reload();
+  await reloadRestaurantScene(page);
   await expect(page.locator('#pause-dialog')).toBeVisible({ timeout: 15000 });
   await expect(page.locator('#dinner-hud')).toBeHidden();
   await expect(page.locator('#conversation-form')).toBeHidden();
@@ -530,7 +530,7 @@ test('Haiku is the default, private model commands survive reload and reset rest
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('table-for-two-settings')!))).toMatchObject({ model: 'claude-sonnet-5-5', modelSource: 'chat-command' });
   await speak('Where would you travel next?', 'claude-sonnet-5-5', 2);
 
-  await page.reload();
+  await reloadRestaurantScene(page);
   await expect(page.locator('#pause-dialog')).toBeVisible({ timeout: 15000 });
   await page.locator('#resume-date').click();
   await expect.poll(async () => (await state(page)).phase).toBe('playing');
@@ -554,7 +554,7 @@ test('Haiku is the default, private model commands survive reload and reset rest
   await expect(page.locator('#toast')).toHaveText('Conversation model: AI Horde (next turn).');
   await speak('Tell me what makes a first date feel exciting.', 'ai-horde', 5);
   expect((await state(page)).usage.claudeCost).toBe(beforeHordeCost);
-  await page.reload();
+  await reloadRestaurantScene(page);
   await expect(page.locator('#pause-dialog')).toBeVisible({ timeout: 15000 });
   await page.locator('#resume-date').click();
   await expect.poll(async () => (await state(page)).phase).toBe('playing');
@@ -581,7 +581,7 @@ test('Haiku is the default, private model commands survive reload and reset rest
   await expect(page.locator('#toast')).toHaveText('Conversation model: Haiku.');
   await speak('Let us enjoy the rest of our evening.', 'claude-haiku-5-5', 7);
 
-  await page.reload();
+  await reloadRestaurantScene(page);
   await expect(page.locator('#pause-dialog')).toBeVisible({ timeout: 15000 });
   await page.locator('#resume-date').click();
   await expect.poll(async () => (await state(page)).phase).toBe('playing');

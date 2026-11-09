@@ -9,7 +9,7 @@ import type { DoubleDateRoomState, DoubleRoomCredentials } from '../src/restaura
 import type { DinnerState } from '../src/restaurant/types';
 import { EVENING_PACE } from '../src/restaurant/evening';
 import { doubleContext } from './helpers/double-note';
-import { RESTAURANT_BROWSER_STORY_RATE, captureRestaurantScene, restaurantEvening, restaurantInterrupted, restaurantScenario, resolveRestaurantScenario, waitForRestaurantScene } from './restaurant-browser-helpers';
+import { RESTAURANT_BROWSER_STORY_RATE, captureRestaurantScene, reloadRestaurantScene, restaurantEvening, restaurantInterrupted, restaurantScenario, resolveRestaurantScenario, waitForRestaurantScene } from './restaurant-browser-helpers';
 
 let http: Server, restaurant: Awaited<ReturnType<typeof attachRestaurantServer>>;
 let doubles: Awaited<ReturnType<typeof attachDoubleDateServer>>, browser: Browser, friendBrowser: Browser, base = '';
@@ -295,11 +295,17 @@ async function prompt(page: Page) {
   if (await page.locator('#bill-dialog').isVisible()) await page.locator('#bill-close').click();
   if (await page.locator('#tabletop-inspector').isVisible()) await page.keyboard.press('Escape');
 }
+/** The numbered choices are a supported in-game keyboard control. */
+async function activateDisplayedChoice(page: Page, control: ReturnType<Page['locator']>, timeout = 5000) {
+  await expect(control).toBeVisible({ timeout }); await expect(control).toBeEnabled({ timeout });
+  const shortcut = (await control.locator('kbd').innerText()).trim();
+  expect(shortcut).toMatch(/^[1-4]$/);
+  await page.keyboard.press(shortcut);
+}
 async function chip(page: Page, selector: string, timeout = 5000) {
   await prompt(page);
   const control = page.locator(`#prompt-chips ${selector}`);
-  await expect(control).toBeVisible({ timeout }); await expect(control).toBeEnabled({ timeout });
-  await control.click({ timeout });
+  await activateDisplayedChoice(page, control, timeout);
 }
 async function resolveInterruption(page: Page): Promise<boolean> {
   const snapshot = await state(page);
@@ -380,14 +386,14 @@ async function chooseDessert(page: Page, choice: string | 'skip') {
     const option = page.locator(`#prompt-chips ${choice === 'skip' ? '[data-evening="skip-dessert"]' : `[data-evening="order-dessert"][data-choice="${choice}"]`}`);
     try {
       await expect(page.locator('#prompt-copy')).toHaveText('Eli offers dessert to share.', { timeout: 2000 });
-      await option.click({ timeout: 2000 });
+      await activateDisplayedChoice(page, option, 2000);
       break;
     } catch (error) {
       const current = await state(page);
       if (current.evening.dessert.status !== 'none') break;
       if (restaurantInterrupted(current)) continue;
-      // A slow render can exhaust the click's stability check while the same
-      // offer is still open. Retry only that observed, enabled offer.
+      // A rendering stall can delay the displayed choice while the same offer
+      // remains open. Retry only that observed, enabled offer.
       const stillOffered = current.evening.dessert.offeredAt !== undefined
         && await page.locator('#prompt-copy').textContent() === 'Eli offers dessert to share.'
         && await option.isVisible() && await option.isEnabled();
@@ -451,10 +457,7 @@ test('private double date: distinct choices, readiness, independent first-person
     await p.b.keyboard.down('w'); await p.b.waitForTimeout(220); await p.b.keyboard.up('w');
     expect((await room(p.b)).members.map(member => member.position)).toEqual(before);
     await p.a.locator('#resume-date').click(); await expect.poll(async () => (await room(p.b)).phase).toBe('playing');
-    // Software CI committed the navigation promptly but delayed requesting
-    // scripts beyond the browser's load deadline; wait for the scene itself.
-    await p.b.reload({ waitUntil: 'commit' });
-    await waitForRestaurantScene(p.b);
+    await reloadRestaurantScene(p.b);
     await expect(p.b.locator('#dinner-hud')).toBeVisible({ timeout: 15000 });
     await expect.poll(async () => (await credentials(p.b)).token).toBe(bCreds.token);
     await expect.poll(async () => (await state(p.b)).doubleDate?.localHumanId).toBe('h2');
@@ -519,7 +522,7 @@ test('shared table turns: one request, both identities, exclusion and repair, pr
     expect(commandTurnTexts).toEqual(['the saved model is next']);
     expect(requests.slice(count).every(request => request.messages.every(message => !message.content.includes('/model')))).toBe(true);
     await closeComposer(p.b);
-    await p.b.reload(); await expect(p.b.locator('#dinner-hud')).toBeVisible({ timeout: 15000 }); await waitForRestaurantScene(p.b);
+    await reloadRestaurantScene(p.b); await expect(p.b.locator('#dinner-hud')).toBeVisible({ timeout: 15000 });
     await expect(p.b.locator('#conversation-log')).toContainText('mushrooms are underrated');
     await expect(p.b.locator('#conversation-log')).toContainText('the saved model is next');
     await modelCommand(p.b, '/model');
@@ -597,7 +600,7 @@ test('friend voice uses one opted-in microphone per browser and exchanges native
     await p.b.goto('about:blank');
     await expect.poll(async () => (await room(p.a)).pauseReason).toBe('reconnect');
     await expect.poll(async () => (await media(p.a)).tracks.every(track => track.readyState === 'ended')).toBe(true);
-    await p.b.goto(base); await waitForRestaurantScene(p.b); await expect(p.b.locator('#dinner-hud')).toBeVisible({ timeout: 15000 });
+    await p.b.goto(base, { waitUntil: 'commit' }); await waitForRestaurantScene(p.b); await expect(p.b.locator('#dinner-hud')).toBeVisible({ timeout: 15000 });
     expect((await media(p.b)).calls).toBe(0);
     for (const page of [p.a,p.b]) await expect(page.locator('#mic-toggle')).toHaveAttribute('aria-pressed', 'false');
     await p.a.locator('#mic-toggle').click(); await p.b.locator('#mic-toggle').click();
@@ -812,7 +815,7 @@ test('complete double evening: both dinners, a shared dessert, one check for the
     await expect(p.a.locator('#title-start')).toBeVisible({ timeout: 15000 });
     await expect(p.a.locator('#arrival-screen')).toHaveAttribute('data-screen', 'title');
     expect(await credentials(p.a)).toBeNull();
-    await p.a.reload(); await expect(p.a.locator('#title-start')).toBeVisible({ timeout: 15000 });
+    await reloadRestaurantScene(p.a); await expect(p.a.locator('#title-start')).toBeVisible({ timeout: 15000 });
     await expect(p.a.locator('#dinner-hud')).toBeHidden();
     await p.a.keyboard.press('Enter'); await expect(p.a.locator('#mode-menu')).toBeVisible();
     expect(p.errors).toEqual([]);
@@ -835,7 +838,7 @@ test('blind date starts directly, restores its seeded match and can finish witho
     expect(matched.mode).toBe('blind-date'); expect(matched.blindDate?.seed).toMatch(/^[a-zA-Z0-9_-]+$/);
     expect(matched.participants.map(person => person.kind)).toEqual(['human','ai']);
     await captureRestaurantScene(page, '.qa/double-date/blind-arrival-1280.png');
-    await page.reload(); await expect(page.locator('#pause-dialog')).toBeVisible({ timeout: 15000 });
+    await reloadRestaurantScene(page); await expect(page.locator('#pause-dialog')).toBeVisible({ timeout: 15000 });
     await page.locator('#resume-date').click(); await expect(page.locator('#dinner-hud')).toBeVisible();
     await expect.poll(async () => (await state(page)).blindDate?.seed).toBe(matched.blindDate!.seed);
     expect((await state(page)).dateId).toBe(matched.dateId);

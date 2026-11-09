@@ -13,6 +13,12 @@ export async function waitForRestaurantScene(page: Page) {
   await expect(page.locator('#scene-loading')).toBeHidden({ timeout: Math.max(1, deadline - Date.now()) });
 }
 
+/** Navigation commit starts the reload; scene readiness gates the app independently of load-event timing. */
+export async function reloadRestaurantScene(page: Page) {
+  await page.reload({ waitUntil: 'commit' });
+  await waitForRestaurantScene(page);
+}
+
 export async function captureRestaurantScene(page: Page, path: string) {
   if (process.env.RESTAURANT_CAPTURE_SCREENSHOTS === '1') await page.bringToFront();
   await waitForRestaurantScene(page);

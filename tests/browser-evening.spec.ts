@@ -6,7 +6,7 @@ import { attachRestaurantServer } from '../server/restaurant';
 import { CHARACTER_STORIES } from '../src/restaurant/story';
 import { EVENING_PACE } from '../src/restaurant/evening';
 import type { DinnerCommand, DinnerState } from '../src/restaurant/types';
-import { RESTAURANT_BROWSER_STORY_RATE, captureRestaurantScene, restaurantInterrupted, restaurantScenario, resolveRestaurantScenario, waitForRestaurantScene } from './restaurant-browser-helpers';
+import { RESTAURANT_BROWSER_STORY_RATE, captureRestaurantScene, reloadRestaurantScene, restaurantInterrupted, restaurantScenario, resolveRestaurantScenario, waitForRestaurantScene } from './restaurant-browser-helpers';
 
 let http: Server, app: Awaited<ReturnType<typeof attachRestaurantServer>>, base = '';
 const state = (page: Page) => page.evaluate(() => (window as unknown as { __restaurantState: DinnerState }).__restaurantState);
@@ -300,7 +300,7 @@ for (const mode of ['solo', 'blind'] as const) test(`${mode} evening: two story 
   expect(completed.evening.moments.filter(moment => moment.id === 'scenario-family-visit')).toHaveLength(1);
   expect(completed.usage.claudeRequests).toBe(0);
   const care = completed.evening.care, story = restaurantScenario(completed), seed = completed.blindDate?.seed;
-  await page.reload(); await expect(page.locator('#pause-dialog')).toBeVisible({ timeout: 15000 });
+  await reloadRestaurantScene(page); await expect(page.locator('#pause-dialog')).toBeVisible({ timeout: 15000 });
   await page.locator('#resume-date').click(); await waitForRestaurantScene(page);
   expect((await state(page)).evening.care).toEqual(care);
   expect(restaurantScenario(await state(page))).toEqual(story);
