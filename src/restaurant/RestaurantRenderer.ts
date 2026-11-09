@@ -18,6 +18,7 @@ import { isInspectionTarget, type InspectionTarget } from './TabletopInspector';
 import { diningOffsetZ } from './dining-space';
 import { scenePresenceAvailable } from './scenario-care';
 import { createDrawCadence } from './FrameCap';
+import { SeatingSpeechFacing, facingPlayerYaw } from './render/SeatingSpeechFacing';
 
 type InteractionTarget = Extract<DinnerCommand, { type: 'interact' }>['target'];
 export interface RestaurantInteraction { target: InteractionTarget; label: string; actorId?: ConversationTarget }
@@ -68,6 +69,7 @@ export class RestaurantRenderer {
   private pitch = -.025;
   private time = 0;
   private lastSeated = false;
+  private readonly seatingSpeechFacing = new SeatingSpeechFacing();
   private lastRoom = '';
   private lastDiningOffset = 0;
   private disposed = false;
@@ -600,9 +602,16 @@ export class RestaurantRenderer {
     const motionX = this.date.root.position.x - previousDateX;
     const motionZ = this.date.root.position.z - previousDateZ;
     const walkingSpeed = dt > 0 && state.phase === 'playing' && !dateSeated ? Math.hypot(motionX, motionZ) / dt : 0;
-    const facing = dateSeated ? 0 : walkingSpeed > .12 ? Math.atan2(motionX, motionZ) : Math.atan2(this.camera.position.x - this.date.root.position.x, this.camera.position.z - this.date.root.position.z);
-    const delta = Math.atan2(Math.sin(facing - this.date.root.rotation.y), Math.cos(facing - this.date.root.rotation.y));
-    this.date.root.rotation.y += delta * (1 - Math.exp(-dt * 5));
+    const dateSpeaking = playback.actorId ? playback.actorId === localDoubleDate?.id : playback.speaker === 'date';
+    const playerFacing = facingPlayerYaw(this.date.root.position.x, this.date.root.position.z, this.camera.position.x, this.camera.position.z);
+    const faceDuringSeating = this.seatingSpeechFacing.update(state.id, state.seated, dateSeated, dateSpeaking,
+      state.phase === 'playing' && !takingBreak && evening.stance !== 'leaving' && !evening.farewell.ending && this.date.root.visible && state.doubleDate?.role !== 'wingman');
+    if (faceDuringSeating) this.date.root.rotation.y = playerFacing;
+    else {
+      const facing = dateSeated ? 0 : walkingSpeed > .12 ? Math.atan2(motionX, motionZ) : playerFacing;
+      const delta = Math.atan2(Math.sin(facing - this.date.root.rotation.y), Math.cos(facing - this.date.root.rotation.y));
+      this.date.root.rotation.y += delta * (1 - Math.exp(-dt * 5));
+    }
     this.dateTarget.position.y = dateSeated ? 1.15 : 1.4;
     this.gaze.copy(this.camera.position);
     if (state.doubleDate) {
@@ -613,7 +622,6 @@ export class RestaurantRenderer {
       else if (otherHuman) this.gaze.set(otherHuman.position[0], 1.3, otherHuman.position[2]);
     }
     const restingEmotion = evening.stance === 'hurt' ? 'embarrassed' : evening.stance === 'guarded' ? 'defensive' : (evening.stance === 'comfortable' || (evening.interest?.level ?? 0) >= 65) && state.emotion === 'neutral' ? 'warm' : state.emotion;
-    const dateSpeaking = playback.actorId ? playback.actorId === localDoubleDate?.id : playback.speaker === 'date';
     const listening = this.listeningFor(localDoubleDate?.id ?? 'date', state, playback, restingEmotion, evening.stance);
     if (listening) this.gaze.copy(this.camera.position);
     // A compliment from someone they are not into gets a polite face, not a blush.
