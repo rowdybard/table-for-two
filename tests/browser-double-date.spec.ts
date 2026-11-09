@@ -377,11 +377,23 @@ async function chooseDessert(page: Page, choice: string | 'skip') {
     if (snapshot.evening.dessert.status !== 'none') break;
     if (await resolveInterruption(page)) continue;
     await prompt(page);
+    const option = page.locator(`#prompt-chips ${choice === 'skip' ? '[data-evening="skip-dessert"]' : `[data-evening="order-dessert"][data-choice="${choice}"]`}`);
     try {
       await expect(page.locator('#prompt-copy')).toHaveText('Eli offers dessert to share.', { timeout: 2000 });
-      await page.locator(`#prompt-chips ${choice === 'skip' ? '[data-evening="skip-dessert"]' : `[data-evening="order-dessert"][data-choice="${choice}"]`}`).click({ timeout: 2000 });
-    } catch (error) { const current = await state(page); if (current.evening.dessert.status === 'none' && !restaurantInterrupted(current)) throw error; }
-    break;
+      await option.click({ timeout: 2000 });
+      break;
+    } catch (error) {
+      const current = await state(page);
+      if (current.evening.dessert.status !== 'none') break;
+      if (restaurantInterrupted(current)) continue;
+      // A slow render can exhaust the click's stability check while the same
+      // offer is still open. Retry only that observed, enabled offer.
+      const stillOffered = current.evening.dessert.offeredAt !== undefined
+        && await page.locator('#prompt-copy').textContent() === 'Eli offers dessert to share.'
+        && await option.isVisible() && await option.isEnabled();
+      if (stillOffered) continue;
+      throw error;
+    }
   }
   await expect.poll(async () => (await state(page)).evening.dessert.status).not.toBe('none');
 }
