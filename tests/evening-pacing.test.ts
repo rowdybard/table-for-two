@@ -152,3 +152,27 @@ test('the server rejects the removed course shortcuts and table games while acce
   assert.equal(validateCommand({ type: 'interact', target: 'dessert' }).type, 'interact');
   assert.equal(validateCommand({ type: 'interact', target: 'bill' }).type, 'interact');
 });
+
+test('a live conversation is never talked over by a scripted silence breaker or aside', () => {
+  const state = seatedDinner(), director = new EveningDirector(state);
+  try {
+    director.seated(); serveMain(state, director);
+    // The human keeps talking every 15 seconds through the whole main course.
+    for (let i = 0; i * 15 < EVENING_PACE.mainCourse + 60; i++) { director.noteHumanTurn(); run(state, director, 15); }
+    assert.equal(state.evening.beats, 0, 'no silence breaker interrupts an ongoing conversation');
+    // Eli still clears the main on his clock, but the date's pre-written aside is held back mid-exchange.
+    assert.equal(state.evening.main.status, 'finished');
+    const finished = state.evening.cues.filter(cue => cue.key === 'main-finished');
+    assert.equal(finished.flatMap(cue => cue.utterances).some(line => line.speaker === 'date'), false);
+  } finally { director.free(); }
+  const silent = seatedDinner(), quietDirector = new EveningDirector(silent);
+  try {
+    quietDirector.seated(); serveMain(silent, quietDirector); run(silent, quietDirector, EVENING_PACE.beatSilence + 40);
+    assert.ok(silent.evening.beats >= 1, 'a genuinely quiet table still gets its authored line');
+  } finally { quietDirector.free(); }
+  const cold = seatedDinner(), coldDirector = new EveningDirector(cold);
+  try {
+    coldDirector.seated(); serveMain(cold, coldDirector); cold.evening.stance = 'guarded'; run(cold, coldDirector, EVENING_PACE.beatSilence + 120);
+    assert.equal(cold.evening.beats, 0, 'a guarded date does not chirp a warm scripted line into the silence');
+  } finally { coldDirector.free(); }
+});

@@ -25,6 +25,11 @@ export interface EveningStepOptions {
   holdBill?: boolean;
 }
 
+/** Course-time remarks that are asides rather than reactions to what just happened on the table. */
+const ASIDE_CUES = new Set(['main-finished', 'quiet-window', 'dessert-shared', 'bill-requested']);
+/** Seconds after a human line during which the table counts as mid-conversation. */
+const CONVERSATION_WINDOW = 20;
+
 /**
  * Owns courses, physical recoveries and social consequences without model ticks.
  * The waiter serves and clears on scene time and the date fills silences with authored
@@ -61,6 +66,7 @@ export class EveningDirector {
   private secondSpoonAt: number | null = null;
   private dessertTalkDone = false;
   private lastSpokeAt = 0;
+  private lastHumanAt = -1000;
   private lastBeatAt = -1000;
   private readonly usedBeats = new Set<string>();
   private readonly blind?: BlindDateIdentity;
@@ -111,12 +117,17 @@ export class EveningDirector {
   private remember(fact: string) { this.state.memory = `${this.state.memory}\n${fact}`.trim().slice(-1000); }
   private cue(key: string, context?: { choice?: string; dish?: string; resolution?: string }) {
     const cueContext = { resolution: this.state.evening.stance, ...context };
-    const utterances = this.blind ? getBlindDateCue(this.blind, key, cueContext) : getStoryCue(key, this.state.dateId, cueContext);
+    let utterances = this.blind ? getBlindDateCue(this.blind, key, cueContext) : getStoryCue(key, this.state.dateId, cueContext);
+    // A pre-written aside dropped into a live exchange ignores what the human just said. While
+    // the two of them are talking, staff lines still land but the date's scripted remark is left out.
+    if (ASIDE_CUES.has(key) && this.state.elapsed - this.lastHumanAt < CONVERSATION_WINDOW) utterances = utterances.filter(line => line.speaker !== 'date');
     if (utterances.length) { this.state.evening.cues.push({ id: `cue-${++this.cueSequence}`, key, utterances }); this.lastSpokeAt = this.state.elapsed; }
     this.state.evening.cues = this.state.evening.cues.slice(-70);
     return utterances;
   }
   private moment(id: string, title: string, description: string) { if (!this.state.evening.moments.some(m => m.id === id)) this.state.evening.moments.push({ id, title, description }); }
+  /** A human just spoke to the table: it is a conversation, not a silence to fill. */
+  noteHumanTurn() { this.lastHumanAt = this.state.elapsed; this.lastSpokeAt = this.state.elapsed; }
   seated() { if (!this.seatedOnce) { this.seatedOnce = true; this.seatedAt = this.state.elapsed; this.cue('seated'); } }
   ordered() {
     const e = this.state.evening; e.main.status = 'waiting';
@@ -360,7 +371,7 @@ export class EveningDirector {
     }
     // The date breaks a long silence with an authored line; no model request is made for it.
     const phase = this.beatPhase();
-    if (phase && seatedAndCalm && e.beats < P.beatsPerEvening && t >= e.care.quietUntil && t - e.lastInterruptionAt > 25 && t - this.lastSpokeAt >= P.beatSilence + (e.variation % 3) * 17 && t - this.lastBeatAt >= P.beatSpacing) {
+    if (phase && seatedAndCalm && !['guarded', 'hurt', 'leaving'].includes(e.stance) && e.beats < P.beatsPerEvening && t >= e.care.quietUntil && t - e.lastInterruptionAt > 25 && t - this.lastSpokeAt >= P.beatSilence + (e.variation % 3) * 17 && t - this.lastBeatAt >= P.beatSpacing) {
       const key = BEAT_CUES[phase].find(candidate => !this.usedBeats.has(candidate));
       if (key) {
         this.usedBeats.add(key);

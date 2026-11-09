@@ -216,6 +216,8 @@ export class DoubleTableScene {
   /** Private agenda context is sent to the model, never included in room snapshots. */
   agendaContext(human: DoubleHumanId) { return this.directors.get(human)!.agenda.promptContext(); }
   boundaryContext(human: DoubleHumanId) { return this.directors.get(human)!.boundaries.promptContext(); }
+  /** Someone at the table spoke, so no date fills a silence or drops an aside over them. */
+  noteHumanTurn() { for (const director of this.directors.values()) director.noteHumanTurn(); }
   clearPendingBoundaries() { for (const director of this.directors.values()) { director.boundaries.clearPending(); director.chemistry.clearPending(); } }
   redirectConversation(human: DoubleHumanId) { this.directors.get(human)!.redirectConversation(false); }
   social(human: DoubleHumanId, turn: SceneTurn, humanText = '', speaker: DoubleHumanId = human) {

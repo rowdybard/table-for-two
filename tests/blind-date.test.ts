@@ -50,7 +50,7 @@ test('one blind turn uses its seeded biography, preserves cast selection, bills 
   const turn = { turnId: 'one-turn', text: 'What do you enjoy about your work?', model: 'claude-haiku-5-5' };
   const text = await (await api.request(path + '/turn', turn, token)).text(), events = text.trim().split('\n').map(line => JSON.parse(line) as TurnEvent);
   assert.deepEqual(events.filter(event => event.type === 'utterance').map(event => event.utterance.speaker), ['date', 'waiter']); assert.equal(requests.length, 1); assert.ok(requests[0].system.includes(identity.biography.occupation)); assert.ok(requests[0].system.includes(identity.personality)); assert.ok(requests[0].system.includes(identity.boundaries)); assert.equal(requests[0].system.includes(CHARACTER_STORIES[state.dateId].occupation), false);
-  const context = JSON.parse(requests[0].messages.at(-1)!.content); assert.ok(context.optionalReusableLines.every((line: any) => line.speaker !== 'date'));
+  const context = JSON.parse(requests[0].messages.at(-1)!.content); assert.equal(context.optionalReusableLines, undefined, 'no stock lines are offered in place of a real reply'); assert.equal(typeof context.tableNow, 'string');
   assert.equal(await (await api.request(path + '/turn', turn, token)).text(), text); assert.equal(requests.length, 1);
   const snapshot = (await (await api.request(path, undefined, token)).json()).state as DinnerState; assert.equal(snapshot.blindDate?.seed, identity.seed); assert.equal(snapshot.usage.claudeRequests, 1); assert.equal(snapshot.usage.inputTokens, 100); assert.equal(snapshot.usage.outputTokens, 60); assert.ok(snapshot.usage.totalCost > 0);
 });

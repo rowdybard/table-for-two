@@ -136,3 +136,25 @@ test('valid model social repair and boundary cues do not interrupt their own com
   assert.ok(state.evening.cues.some(cue => cue.key === 'repair'));
   assert.equal(state.evening.farewell.ending?.kind, 'walked-away'); assert.equal(calls, reactions.length);
 });
+
+test('Eli’s routine nudge waits for the date to finish answering instead of cancelling the reply', async t => {
+  const held = heldProvider();
+  const api = await boot(held.claude, { storyRate: 120 });
+  t.after(() => { held.release.resolve(); return api.close(); });
+  await api.takeSeat();
+  const response = await api.request('/turn', { turnId: 'mid-answer', text: 'So what made you say yes to tonight?', model: 'claude-haiku-5-5' });
+  const completion = response.text(); await held.ready.promise;
+  const generation = (await api.snapshot()).generation;
+  for (let i = 0; i < 20 && !(await api.snapshot()).evening.cues.some(cue => cue.key === 'order-nudge'); i++) await api.advance();
+  assert.ok((await api.snapshot()).evening.cues.some(cue => cue.key === 'order-nudge'), 'Eli came by while the date was answering');
+  assert.equal(held.aborted, false, 'the in-flight reply was not cancelled');
+  assert.equal((await api.snapshot()).generation, generation);
+  held.release.resolve();
+  const events = decode(await completion);
+  assert.equal(events.some(event => event.type === 'error'), false);
+  assert.ok(events.some(event => event.type === 'utterance' && event.utterance.text === staleLine.text), 'the human still hears the answer');
+  const after = await api.snapshot();
+  assert.equal(after.memory, staleTurn.memory);
+  const nudge = after.evening.cues.find(cue => cue.key === 'order-nudge')!.utterances[0];
+  assert.equal((await api.request('/speech', { generation: after.generation, utterance: nudge })).status === 409, false, 'Eli’s line still belongs to the live generation');
+});

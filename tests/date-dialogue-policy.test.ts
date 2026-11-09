@@ -1,10 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { AUTHORED_UTTERANCES } from '../src/restaurant/authored';
-import { DATES } from '../src/restaurant/content';
 import { createEvening } from '../src/restaurant/evening';
-import type { DateId, DinnerEvent, DinnerState, SceneUtterance } from '../src/restaurant/types';
-import { dialogueLoopContext, reusableDialogueLines } from '../server/restaurant/dialogue-policy';
+import type { DateId, DinnerState, SceneUtterance } from '../src/restaurant/types';
+import { alternatingMessages, deferrableCue, dialogueLoopContext, tableNow } from '../server/restaurant/dialogue-policy';
 
 function scene(dateId: DateId = 'mira'): DinnerState {
   return { id: 'dialogue-context', generation: 1, mode: 'ai-date', phase: 'playing', dateId, stage: 'arrival', elapsed: 0,
@@ -12,81 +10,40 @@ function scene(dateId: DateId = 'mira'): DinnerState {
     usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, speechCharacters: 0, cacheHits: 0, claudeRequests: 0, claudeCost: 0, speechCost: 0, totalCost: 0, responseMs: null, firstAudioMs: null },
     evening: createEvening(dateId) };
 }
-const authored = (id: string) => {
-  const line = AUTHORED_UTTERANCES.find(item => item.clipId === id);
-  assert.ok(line, `Missing authored fixture ${id}`);
-  return line;
-};
-const has = (lines: SceneUtterance[], id: string) => lines.some(line => line.speaker === authored(id).speaker && line.text === authored(id).text);
-
-test('greetings fit arrival and pre-order seating, but not ordered or late dinner stages', () => {
+test('tableNow anchors the reply to where the evening physically is', () => {
   const state = scene();
-  for (const stage of ['arrival', 'seated'] as const) {
-    state.stage = stage;
-    assert.equal(has(reusableDialogueLines(state, []), 'greeting-waiter'), true);
-    assert.equal(has(reusableDialogueLines(state, []), 'greeting-date'), true);
-  }
-  for (const stage of ['ordered', 'dining', 'dessert', 'farewell', 'finished'] as const) {
-    state.stage = stage;
-    assert.equal(has(reusableDialogueLines(state, []), 'greeting-waiter'), false, stage);
-    assert.equal(has(reusableDialogueLines(state, []), 'greeting-date'), false, stage);
-  }
-  state.stage = 'arrival'; state.order = 'Roasted tomato rigatoni';
-  assert.equal(has(reusableDialogueLines(state, []), 'greeting-waiter'), false, 'an existing order outranks a stale arrival stage');
-});
-
-test('only the active incident can offer recovery dialogue; historical incidents cannot recur as clip suggestions', () => {
-  const state = scene(); state.stage = 'dining'; state.order = 'Wild mushroom risotto';
-  const fixtures = { 'wrong-order': ['wrong-order-date', 'wrong-order-waiter'], 'spilled-drink': ['spill-date', 'spill-waiter'], 'disruptive-diner': ['diner-date', 'diner-defensive'] } as const;
-  state.events = Object.keys(fixtures) as DinnerEvent[];
-  for (const event of state.events) {
-    state.evening.incident = { event, progress: 0, startedAt: 0 };
-    const lines = reusableDialogueLines(state, []);
-    for (const [candidate, ids] of Object.entries(fixtures)) for (const id of ids) assert.equal(has(lines, id), candidate === event);
-  }
-  state.evening.incident = null;
-  state.evening.resolutions = { 'wrong-order': 'The right plate arrived.', 'spilled-drink': 'The table is dry.', 'disruptive-diner': 'The phone call ended.' };
-  for (const ids of Object.values(fixtures)) for (const id of ids) assert.equal(has(reusableDialogueLines(state, []), id), false);
-  assert.equal(has(reusableDialogueLines(state, []), 'laugh-small'), true, 'calm conversation still has a suitable reusable reaction');
-});
-
-test('a real active incident does not need a historical event entry and suppresses an out-of-place welcome', () => {
-  const state = scene();
+  assert.match(tableNow(state, 'Mira'), /just met at the entrance/);
+  state.seated = true; state.stage = 'seated';
+  assert.match(tableNow(state, 'Mira'), /menus; nothing has been ordered/);
+  state.order = 'Wild mushroom risotto'; state.evening.main.status = 'waiting'; state.evening.main.dateDish = 'Roasted tomato rigatoni';
+  assert.match(tableNow(state, 'Mira'), /ordered the wild mushroom risotto, Mira ordered the roasted tomato rigatoni; you ordered and are waiting/);
+  state.evening.main.status = 'served'; state.evening.main.servedDish = 'Lemon & herb chicken';
+  assert.match(tableNow(state, 'Mira'), /lemon & herb chicken, not what they ordered/);
+  state.evening.main.status = 'finished'; state.evening.dessert = { ...state.evening.dessert, choice: 'chocolate', status: 'served' };
+  const later = tableNow(state, 'Mira');
+  assert.match(later, /sharing the chocolate fondant/);
+  assert.doesNotMatch(later, /nothing has been ordered/);
   state.evening.incident = { event: 'spilled-drink', progress: 0, startedAt: 0 };
-  const lines = reusableDialogueLines(state, []);
-  assert.equal(has(lines, 'spill-waiter'), true);
-  assert.equal(has(lines, 'greeting-waiter'), false);
+  assert.match(tableNow(state, 'Mira'), /Happening right now/);
 });
 
-test('recent delivered words cannot be suggested again through a different emotion tag', () => {
-  const state = scene();
-  const delivered: SceneUtterance[] = [{ ...authored('laugh-small'), emotion: 'warm' }, authored('greeting-waiter')];
-  const before = structuredClone(delivered);
-  const lines = reusableDialogueLines(state, delivered);
-  assert.equal(has(lines, 'laugh-small'), false);
-  assert.equal(has(lines, 'greeting-waiter'), false);
-  assert.equal(has(lines, 'laugh-big'), true);
-  assert.deepEqual(delivered, before, 'filtering does not mutate playback receipts');
-  const keys = lines.map(line => JSON.stringify([line.speaker, line.text]));
-  assert.equal(new Set(keys).size, keys.length);
-  assert.ok(lines.length <= 8);
+test('conversation history always starts with the human and alternates without losing a side', () => {
+  const merged = alternatingMessages([
+    { role: 'assistant', content: 'opening' },
+    { role: 'user', content: 'hi' },
+    { role: 'user', content: 'are you there?' },
+    { role: 'assistant', content: 'yes' },
+    { role: 'assistant', content: 'Eli: water' },
+  ]);
+  assert.deepEqual(merged.map(m => m.role), ['user', 'assistant', 'user', 'assistant']);
+  assert.match(merged[0].content, /evening begins/);
+  assert.equal(merged[2].content, 'hi\nare you there?');
+  assert.equal(merged[3].content, 'yes\nEli: water');
 });
 
-test('preset and Blind candidates preserve identity without injecting greetings or biography from another date', () => {
-  for (const preset of DATES) {
-    const state = scene(preset.id);
-    const lines = reusableDialogueLines(state, []);
-    for (const date of DATES) assert.equal(lines.some(line => line.text === date.opening), false);
-    assert.equal(lines.some(line => /coat rack|grandmother|food truck|photo show/i.test(line.text)), false);
-    state.mode = 'blind-date'; state.blindDate = { seed: 'seeded-personality' };
-    const blind = reusableDialogueLines(state, []);
-    assert.ok(blind.length > 0, 'staff can still greet a Blind date');
-    assert.equal(blind.some(line => line.speaker === 'date'), false);
-    assert.equal(has(blind, 'greeting-waiter'), true);
-    state.stage = 'dining'; state.order = 'Lemon chicken'; state.evening.incident = { event: 'wrong-order', progress: 0, startedAt: 0 };
-    assert.equal(has(reusableDialogueLines(state, []), 'wrong-order-waiter'), true);
-    assert.equal(reusableDialogueLines(state, []).some(line => line.speaker === 'date'), false);
-  }
+test('routine pacing cues wait for an in-flight reply, while urgent table moments do not', () => {
+  for (const key of ['main-served', 'main-finished', 'dessert-shared', 'beat-eating-1', 'bill-requested', 'care-water-served']) assert.equal(deferrableCue(key), true, key);
+  for (const key of ['boundary-warning', 'date-leaving', 'ending-walked-away', 'wrong-order', 'spill', 'diner', 'care-medical', 'scenario-opening']) assert.equal(deferrableCue(key), false, key);
 });
 
 const dateLine = (text: string): SceneUtterance => ({ speaker: 'date', text, emotion: 'neutral' });
