@@ -1,6 +1,8 @@
 # Conversation depth: persistent implementation goal
 
-Status: **active**. The table-only update is merged to `main` in PR #13 (`1c23101`) and deployed. Human quality review remains outstanding.
+Status: **active**. The table-only update and continuity follow-up are merged to `main` through PR #15 (`4afdaec`) and deployed. Human quality review remains outstanding.
+
+The latest follow-up passed 608 provider-disabled unit/controller tests and 35 browser cases (one WebKit-only skip) in [CI run 42859830760](https://github.com/rowdybard/table-for-two/actions/runs/42859830760). Worker `f918c83a-fb62-42d6-a574-53e1c59f9581` preserves the table-only flow, keys and runtime namespace. Standalone stop requests retire shared premises; Solo evaluation no longer confuses older heard replies with newer interrupted/unheard replies or adds a contradictory quiet-gap note. Three real-audio Android caption captures were reviewed, but the owner's missing-caption report remains unreproduced. No live model or speech calls were spent.
 
 ## Current direction: conversation at the table
 
