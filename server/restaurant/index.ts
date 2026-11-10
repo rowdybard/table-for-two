@@ -4,6 +4,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve, sep } from 'node:path';
 import RAPIER from '@dimforge/rapier3d-compat';
+import { settleLooseAssessments } from './loose-assessments';
 import { DATES, getDate, MODEL_RATES } from '../../src/restaurant/content';
 import { AUTHORED_UTTERANCES } from '../../src/restaurant/authored';
 import { createBlindDate } from '../../src/restaurant/blind-date';
@@ -273,6 +274,7 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
       }
       if (controller.signal.aborted || generation !== s.generation) throw apiError(499, 'interrupted', 'Response interrupted.');
       let parsed: unknown; try { parsed = JSON.parse(text); } catch { throw apiError(502, 'invalid_dialogue', 'The date returned incomplete dialogue. Please try another turn.'); }
+      settleLooseAssessments(parsed, request.model);
       const turn = validateTurn(parsed), genRecord = s.generations.get(generation)!;
       s.scene.applyTurn({ ...turn, memory: mergeMemoryForDelivery(turn.memory, s.scene.state.memory, false, request.text) }, request.text);
       genRecord.pendingMemory = { value: turn.memory, humanText: request.text, lines: turn.utterances.filter(line => line.speaker === 'date') };

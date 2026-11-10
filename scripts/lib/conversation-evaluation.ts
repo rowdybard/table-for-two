@@ -7,13 +7,13 @@ import { ENDURANCE_SCRIPTS } from '../../src/restaurant/evaluation-endurance';
 import { CLOSING_SCRIPTS } from '../../src/restaurant/evaluation-closing';
 import { DOLPHIN_LLM_MODEL, DOLPHIN_MODEL, type ClaudeModel } from '../../src/restaurant/types';
 import { completeUtterances } from '../../server/restaurant';
-import { CampaignBudgetError, type CampaignLedger } from './campaign-ledger';
+import { CampaignBudgetError, isCampaignName, type CampaignLedger, type CampaignName } from './campaign-ledger';
 import { DateApiError, TURN_SCHEMA, type ClaudeAdapter, type ClaudeRequest, type TokenUsage } from '../../server/restaurant/providers';
 
-export interface EvaluationOptions { campaign: boolean; run: boolean; budgetUSD?: number; models: ClaudeModel[]; scripts: EvaluationScript[]; help: boolean }
+export interface EvaluationOptions { campaign: boolean; /** Which authorised campaign `--campaign` draws on; `--campaign dolphin` selects the Dolphin one. */ campaignName: CampaignName; run: boolean; budgetUSD?: number; models: ClaudeModel[]; scripts: EvaluationScript[]; help: boolean }
 const aliases: Record<string, ClaudeModel> = { haiku: 'claude-haiku-5-5', sonnet: 'claude-sonnet-5-5', horde: 'ai-horde', dolphin: DOLPHIN_LLM_MODEL, venice: DOLPHIN_MODEL };
 export function parseEvaluationOptions(args: readonly string[]): EvaluationOptions {
-  let run = false, help = false, campaign = false, budgetUSD: number | undefined, suite = 'all', ids: string[] | undefined;
+  let run = false, help = false, campaign = false, campaignName: CampaignName = 'haiku', budgetUSD: number | undefined, suite = 'all', ids: string[] | undefined;
   let models: ClaudeModel[] = ['claude-haiku-5-5', 'claude-sonnet-5-5'];
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
@@ -22,7 +22,7 @@ export function parseEvaluationOptions(args: readonly string[]): EvaluationOptio
     seen.add(flag);
     if (flag === '--run') { run = true; continue; }
     if (flag === '--help') { help = true; continue; }
-    if (flag === '--campaign') { campaign = true; continue; }
+    if (flag === '--campaign') { campaign = true; const name = args[i + 1]; if (name && !name.startsWith('--')) { if (!isCampaignName(name)) throw new Error('Campaign must be haiku or dolphin.'); campaignName = name; i++; } continue; }
     if (!['--budget', '--models', '--scripts', '--suite'].includes(flag)) throw new Error(`Unknown evaluation argument: ${flag}`);
     const value = args[++i];
     if (!value || value.startsWith('--')) throw new Error(`Missing value for ${flag}.`);
@@ -40,7 +40,7 @@ export function parseEvaluationOptions(args: readonly string[]): EvaluationOptio
   if (ids && (new Set(ids).size !== ids.length || ids.some(id => !pool.some(script => script.id === id)))) throw new Error('Every selected script ID must exist and appear once.');
   const scripts = pool.filter(script => (suite === 'all' || suite === 'endurance' || suite === 'closing' || script.suite === suite) && (!ids || ids.includes(script.id)));
   if (!scripts.length) throw new Error('The selection contains no scripts.');
-  return { campaign, run: run && !help, budgetUSD, models, scripts, help };
+  return { campaign, campaignName, run: run && !help, budgetUSD, models, scripts, help };
 }
 
 const zeroUsage = (): TokenUsage => ({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 });

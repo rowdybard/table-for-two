@@ -12,6 +12,7 @@ import { tableFacts } from '../../server/restaurant/table-facts';
 import { roleplayInstructions } from '../../server/restaurant/roleplay';
 import { EMOTIONS, SOCIAL_SIGNALS, TURN_SCHEMA, type ClaudeRequest } from '../../server/restaurant/providers';
 import { validateTurn } from '../../server/restaurant';
+import { settleLooseAssessments } from '../../server/restaurant/loose-assessments';
 import { DOUBLE_TURN_SCHEMA, validateDoubleTurn } from '../../server/double-date/conversation';
 import { doubleConversationFlow, doubleMessages, doubleSystem, doubleTurnNote, friendNames, presetDateSheet, renderDoubleHistory, type Couple, type DateSheet, type HistoryEntry, type Playback } from '../../server/double-date/table-note';
 import type { EvaluationScript, EvaluationTurn } from './evaluation-fixtures';
@@ -122,7 +123,9 @@ export class EvaluationConversation {
   }
 
   validate(raw: string): EvaluationResult {
-    return this.script.mode === 'double' ? { kind: 'double', turn: validateDoubleTurn(raw) } : { kind: 'solo', turn: validateTurn(JSON.parse(raw)) };
+    if (this.script.mode === 'double') return { kind: 'double', turn: validateDoubleTurn(raw, this.model) };
+    const parsed: unknown = JSON.parse(raw); settleLooseAssessments(parsed, this.model);
+    return { kind: 'solo', turn: validateTurn(parsed) };
   }
 
   commit(index: number, result: EvaluationResult) {

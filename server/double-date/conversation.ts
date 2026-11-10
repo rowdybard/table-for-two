@@ -1,3 +1,4 @@
+import { settleLooseAssessments } from '../restaurant/loose-assessments';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { getDate } from '../../src/restaurant/content';
 import { scenePresenceAvailable } from '../../src/restaurant/scenario-care';
@@ -239,7 +240,7 @@ export class DoubleConversation {
             }
           }
           if (controller.signal.aborted || generation !== this.state.generation) throw error('Conversation interrupted.', 'interrupted', 499);
-          const parsed = validateDoubleTurn(raw);
+          const parsed = validateDoubleTurn(raw, effectiveModel);
           for (const update of parsed.dateUpdates) {
             if (!this.availableForDialogue(update.actorId)) continue;
             const actor = this.state.dates.find(item => item.id === update.actorId)!;
@@ -344,8 +345,9 @@ function validateLine(line: unknown): { speaker: 'd1' | 'd2' | 'waiter' | 'diner
   if (!record(line) || !exact(line, ['speaker', 'text', 'emotion']) || !['d1', 'd2'].includes(line.speaker) || typeof line.text !== 'string' || !line.text.trim() || line.text.length > 420 || /[\u0000-\u001f]/.test(line.text) || !EMOTIONS.includes(line.emotion)) throw error('A character returned an invalid line.');
   return line as ReturnType<typeof validateLine>;
 }
-export function validateDoubleTurn(text: string): { utterances: ReturnType<typeof validateLine>[]; dateUpdates: { actorId: DoubleDateActorId; emotion: Emotion; memory: string; social: SocialResponse; agenda?: AgendaAssessment }[] } {
+export function validateDoubleTurn(text: string, model?: string): { utterances: ReturnType<typeof validateLine>[]; dateUpdates: { actorId: DoubleDateActorId; emotion: Emotion; memory: string; social: SocialResponse; agenda?: AgendaAssessment }[] } {
   let value: unknown; try { value = JSON.parse(text); } catch { throw error('The table returned incomplete dialogue. Try another turn.'); }
+  if (model) settleLooseAssessments(value, model);
   if (!record(value) || !exact(value, ['utterances', 'dateUpdates']) || !Array.isArray(value.utterances) || value.utterances.length > 2 || !Array.isArray(value.dateUpdates) || value.dateUpdates.length !== 2) throw error('The table returned invalid dialogue.');
   const utterances = value.utterances.filter((line: unknown) => !isSilentDialogueLine(line, ['d1', 'd2', 'waiter', 'diner']));
   if (utterances.filter((line: unknown) => record(line) && ['waiter', 'diner'].includes(line.speaker)).length > 1) throw error('Only one supporting character may speak per turn.');

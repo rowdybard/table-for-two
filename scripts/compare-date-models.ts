@@ -8,20 +8,20 @@ import { dolphinLlmAdapter } from '../server/restaurant/dolphin-llm';
 import { DOLPHIN_LLM_MODEL, DOLPHIN_MODEL, type ClaudeModel } from '../src/restaurant/types';
 import { evaluationPreview, parseEvaluationOptions, runConversationEvaluation } from './lib/conversation-evaluation';
 import { evaluationProvenance } from './lib/evaluation-provenance';
-import { CampaignLedger, campaignLedgerPath, readCampaignManifest } from './lib/campaign-ledger';
+import { CAMPAIGNS, CampaignLedger, campaignLedgerPath, readCampaignManifest } from './lib/campaign-ledger';
 
 async function main() {
   const options = parseEvaluationOptions(process.argv.slice(2));
-  if (options.help) console.log('Usage: pnpm compare:models [--suite all|short|continuity|endurance|closing] [--scripts id,id] [--models haiku,sonnet,horde,dolphin,venice] [--run --budget USD] [--campaign]. Dolphin uses DOLPHIN_LLM_API_KEY; Venice uses OPENROUTER_API_KEY. Default is a dry run. $0 permits only Horde. Maximum explicit run budget is $10.');
+  if (options.help) console.log('Usage: pnpm compare:models [--suite all|short|continuity|endurance|closing] [--scripts id,id] [--models haiku,sonnet,horde,dolphin,venice] [--run --budget USD] [--campaign [haiku|dolphin]]. Each campaign has its own manifest and ledger (HAIKU_CAMPAIGN_LEDGER, DOLPHIN_CAMPAIGN_LEDGER). Dolphin uses DOLPHIN_LLM_API_KEY; Venice uses OPENROUTER_API_KEY. Default is a dry run. $0 permits only Horde. Maximum explicit run budget is $10.');
   console.log(JSON.stringify(evaluationPreview(options), null, 2));
   if (!options.run) return; // Do not read credentials, create a provider, or write reports in a dry run.
   if (existsSync('.env')) process.loadEnvFile('.env');
   // Campaign runs draw on the one shared ledger; it must already exist and match the manifest before any provider is created.
   let campaign: CampaignLedger | undefined;
   if (options.campaign) {
-    const manifest = readCampaignManifest(resolve('docs/HAIKU_SIMULATION_CAMPAIGN.json'));
+    const selected = CAMPAIGNS[options.campaignName], manifest = readCampaignManifest(resolve(selected.manifest));
     if (options.models.some(model => !manifest.allowedModels.includes(model))) throw new Error(`This campaign allows only ${manifest.allowedModels.join(', ')}; no requests were sent.`);
-    campaign = new CampaignLedger({ path: campaignLedgerPath(process.env, manifest as { sharedLedgerPath?: string }), manifest });
+    campaign = new CampaignLedger({ path: campaignLedgerPath(process.env, manifest as { sharedLedgerPath?: string }, selected.ledgerEnv), manifest });
     console.log(`Campaign ledger before this run: ${JSON.stringify(campaign.totals())}`);
   }
   const anthropicModels = ['claude-haiku-5-5', 'claude-sonnet-5-5'] as const;
