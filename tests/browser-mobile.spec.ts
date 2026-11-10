@@ -165,11 +165,22 @@ test('landscape phone: two thumbs, talk return, neutral input, context action an
   expect((await readState(page)).participants[0].position).toEqual(afterRotation);
 
   const walkingPad = await center(page, '#mobile-move');
+  // Earlier held-thumb checks can carry the guest past the chair on slow frames.
+  // Return to its approach side with real touch movement before aiming at it.
+  if ((await readState(page)).participants[0].position[2] < 2.4) {
+    await thumbs.down(1, walkingPad.x, walkingPad.y);
+    try {
+      await thumbs.move(1, walkingPad.x, walkingPad.y + 44);
+      await expect.poll(async () => (await readState(page)).participants[0].position[2], { timeout: 12_000, intervals: [60] }).toBeGreaterThan(2.4);
+    } finally { await thumbs.up(1); }
+  }
   const lookingPad = await center(page, '#mobile-look');
   await thumbs.down(2, lookingPad.x, lookingPad.y - 35); await thumbs.move(2, lookingPad.x, lookingPad.y + 35); await thumbs.up(2);
-  await thumbs.down(1, walkingPad.x, walkingPad.y); await thumbs.move(1, walkingPad.x, walkingPad.y - 44);
-  await expect.poll(() => page.locator('#mobile-interact').evaluate(node => node instanceof HTMLElement && !node.hidden && /seat/i.test(node.textContent ?? '')), { timeout: 12_000, intervals: [60] }).toBe(true);
-  await thumbs.up(1);
+  await thumbs.down(1, walkingPad.x, walkingPad.y);
+  try {
+    await thumbs.move(1, walkingPad.x, walkingPad.y - 44);
+    await expect.poll(() => page.locator('#mobile-interact').evaluate(node => node instanceof HTMLElement && !node.hidden && /seat/i.test(node.textContent ?? '')), { timeout: 12_000, intervals: [60] }).toBe(true);
+  } finally { await thumbs.up(1); }
   await writeFile('.qa/mobile-seat-state.json', JSON.stringify({ state: await readState(page), hud: await page.locator('#restaurant-app').evaluate(node => ({ ...node.dataset })) }));
   await expect(page.locator('#mobile-interact')).toBeVisible();
   await expect(page.locator('#mobile-interact')).toContainText(/seat/i);
