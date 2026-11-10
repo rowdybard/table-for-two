@@ -14,7 +14,7 @@ test('tableNow anchors the reply to where the evening physically is', () => {
   const state = scene();
   assert.match(tableNow(state, 'Mira'), /just met at the entrance/);
   state.seated = true; state.stage = 'seated';
-  assert.match(tableNow(state, 'Mira'), /menus; nothing has been ordered/);
+  assert.match(tableNow(state, 'Mira'), /at your table together/);
   state.order = 'Wild mushroom risotto'; state.evening.main.status = 'waiting'; state.evening.main.dateDish = 'Roasted tomato rigatoni';
   assert.match(tableNow(state, 'Mira'), /ordered the wild mushroom risotto, Mira ordered the roasted tomato rigatoni; you ordered and are waiting/);
   state.evening.main.status = 'served'; state.evening.main.servedDish = 'Lemon & herb chicken';

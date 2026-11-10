@@ -181,7 +181,7 @@ export interface TurnNoteInput {
   memory: string;
   /** Facts the server recorded at the table (a toast, a taste, a scenario choice). */
   facts: readonly string[];
-  agenda: AgendaPrompt;
+  agenda: AgendaPrompt | null;
   boundaries: BoundaryPrompt;
   /** Topics the date has been circling and should not raise again unprompted. */
   avoid: readonly string[];
@@ -257,22 +257,18 @@ export const lastQuestion = (text: string) => (text.match(/[^.!?]*\?/g) ?? []).m
 export function turnNote(input: TurnNoteInput): string {
   const { scene, dateName: date, human = 'the human', flow = {} } = input, e = scene.evening, say = (text: string) => humanVoice(text, date, human);
   const Human = human[0].toUpperCase() + human.slice(1), out: string[] = [];
-  const now = [input.tableNow, ...serviceFacts(input.mechanics, date)];
+  const now = [input.tableNow];
   if (e.care.romanceClosed) now.push('Romance is closed tonight; stay friendly and do not flirt.');
   else if (e.chemistry?.unlocked) now.push(`Mutual chemistry is established between you and ${human}.`);
   out.push(`Right now: ${now.join(' ')}`);
   out.push(`Your notes (rewrite them into "memory"):\n${input.memory.trim() || NOTES_EMPTY}`);
-  const facts = [...new Set([...e.moments.map(moment => moment.description), ...input.facts].map(say))].slice(-8);
-  if (facts.length) out.push(`At the table so far (facts):\n${facts.map(fact => `- ${fact}`).join('\n')}`);
-  if (input.scenario?.phase === 'active') out.push(`Happening now: ${say(input.scenario.description)}`);
-  out.push(agendaLine(input.agenda, hintTurn(e.dialogueTurns, input.humanText)));
   const boundaries = boundaryLines(input.boundaries);
   if (boundaries.length) out.push(`Boundaries in play:\n${boundaries.join('\n')}`);
   if (input.avoid.length) out.push(`Do not bring up unprompted: ${input.avoid.join(', ')}.`);
   const blind = scene.blindDate ? createBlindDate(scene.blindDate.seed) : undefined;
   const material = conversationContentNote({ dateId: scene.dateId, latestHumanText: input.humanText, memory: input.memory,
     recentDateLines: input.recentDelivered?.filter(line => line.speaker === 'date').map(line => line.text),
-    personalDisclosureAllowed: e.stance === 'comfortable', stoppedTopics: input.avoid, maxEstimatedTokens: 590,
+    personalDisclosureAllowed: !['guarded', 'hurt', 'leaving'].includes(e.stance), stoppedTopics: input.avoid, maxEstimatedTokens: 590,
     ...(blind ? { seeds: blind.conversationSeeds ?? [], includeVoiceExample: false } : {}) });
   if (material) out.push(material);
   if (input.via === 'voice') out.push('They said this out loud; it is an automatic transcript from a small on-device recognizer and can contain mishearings.');

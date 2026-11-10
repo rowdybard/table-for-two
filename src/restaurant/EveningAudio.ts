@@ -156,9 +156,12 @@ export class EveningAudio {
     else if (/glass|toast/.test(key)) this.ring([3050, 4630, 7120], .9, .06, 0);
     else if (/ending|farewell/.test(key)) { this.note(60, 1.4, .04); this.note(64, 1.1, .025, .1); this.note(67, 1, .02, .22); }
   }
-  dispose() {
+  suspend() {
     clearInterval(this.timer); clearInterval(this.chatterTimer); clearTimeout(this.clinkTimer);
+    this.timer = undefined; this.chatterTimer = undefined; this.clinkTimer = undefined;
     for (const source of this.sources) { try { source.stop(); } catch {} source.disconnect(); }
     this.sources = []; void this.context?.close().catch(() => {});
+    this.context = undefined; this.master = undefined; this.room = undefined; this.murmur = undefined; this.music = undefined; this.reverb = undefined; this.wet = undefined;
   }
+  dispose() { this.suspend(); }
 }

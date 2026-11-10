@@ -4,9 +4,8 @@ import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { WebSocket, WebSocketServer, type ClientOptions } from 'ws';
 import { edgeSpeechAdapter, edgeSettings, EDGE_MODEL, EDGE_VOICES } from '../server/restaurant/edge-speech';
-import { DateApiError, speechText, type SpeechAdapter, type SpeechRequest } from '../server/restaurant/providers';
+import { DateApiError, speechText, type ClaudeAdapter, type SpeechAdapter, type SpeechRequest } from '../server/restaurant/providers';
 import { attachRestaurantServer } from '../server/restaurant';
-import { getDate } from '../src/restaurant/content';
 
 const request = (emotion: SpeechRequest['emotion'] = 'amused'): SpeechRequest => ({ text: 'A little joke & a real answer.', voiceId: EDGE_VOICES.mira, model: EDGE_MODEL, provider: 'edge', emotion, settings: edgeSettings(emotion) });
 const audioFrame = (audio: string) => { const header = Buffer.from('Path:audio\r\nContent-Type:audio/mpeg\r\n'); const length = Buffer.alloc(2); length.writeUInt16BE(header.length); return Buffer.concat([length, header, Buffer.from(audio)]); };
@@ -68,9 +67,9 @@ test('an incomplete or malformed Edge stream is a visible free-service failure',
   }
 });
 
-async function restaurant(speech?: SpeechAdapter, env: NodeJS.ProcessEnv = {}) {
+async function restaurant(speech?: SpeechAdapter, env: NodeJS.ProcessEnv = {}, claude?: ClaudeAdapter) {
   const http = createServer((req, res) => { if (!app.handle(req, res)) res.writeHead(404).end(); });
-  const app = await attachRestaurantServer(http, { env, speech, autoTick: false, ledgerPath: false });
+  const app = await attachRestaurantServer(http, { env, speech, claude, autoTick: false, ledgerPath: false });
   await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${(http.address() as { port: number }).port}`;
   return { app, base, async close() { await app.close(); http.closeAllConnections(); await new Promise<void>(resolve => http.close(() => resolve())); } };
@@ -98,10 +97,15 @@ test('free Edge keeps character voices consistent, counts generated characters/c
 });
 
 test('the authenticated solo speech endpoint uses the same free provider and exact audio cache', async t => {
-  let calls = 0; const api = await restaurant({ async *stream() { calls++; yield Buffer.from('ID3solo'); } }, { DATE_SPEECH_PROVIDER: 'edge' }); t.after(() => api.close());
+  const utterance = { speaker: 'date', text: 'I am glad we have time to talk.', emotion: 'neutral' } as const;
+  const claude: ClaudeAdapter = { async *stream() { yield { type: 'text', text: JSON.stringify({ utterances: [utterance], emotion: 'neutral', action: 'none', memory: '', social: { signal: 'none', reason: '', wantsToLeave: false } }) }; } };
+  let calls = 0; const api = await restaurant({ async *stream() { calls++; yield Buffer.from('ID3solo'); } }, { DATE_SPEECH_PROVIDER: 'edge' }, claude); t.after(() => api.close());
   const created = await fetch(api.base + '/api/date/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ dateId: 'mira' }) }).then(response => response.json());
-  const utterance = { speaker: 'date', text: getDate('mira')!.opening, emotion: 'neutral' };
-  for (let i = 0; i < 2; i++) { const response = await fetch(api.base + `/api/date/sessions/${created.state.id}/speech`, { method: 'POST', headers: { authorization: `Bearer ${created.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ generation: 0, utterance }) }); assert.equal(response.status, 200); assert.equal(await response.text(), 'ID3solo'); }
+  const headers = { authorization: `Bearer ${created.token}`, 'content-type': 'application/json' };
+  const turn = await fetch(api.base + `/api/date/sessions/${created.state.id}/turn`, { method: 'POST', headers, body: JSON.stringify({ turnId: 'voice', text: 'Hello there.', model: 'claude-haiku-5-5' }) });
+  const events = (await turn.text()).trim().split('\n').map(line => JSON.parse(line));
+  const generated = events.find(event => event.type === 'utterance'); assert.deepEqual(generated.utterance, utterance);
+  for (let i = 0; i < 2; i++) { const response = await fetch(api.base + `/api/date/sessions/${created.state.id}/speech`, { method: 'POST', headers, body: JSON.stringify({ generation: generated.generation, utterance }) }); assert.equal(response.status, 200); assert.equal(await response.text(), 'ID3solo'); }
   const state = await fetch(api.base + `/api/date/sessions/${created.state.id}`, { headers: { authorization: `Bearer ${created.token}` } }).then(response => response.json());
   assert.equal(calls, 1); assert.equal(state.state.usage.cacheHits, 1); assert.equal(state.state.usage.speechCost, 0); assert.equal(state.state.usage.speechCharacters, utterance.text.length);
 });
@@ -140,7 +144,8 @@ test('an Edge stream deadline is not retried after an open but silent socket', a
   const server = await socketServer(() => { connections++; });
   t.after(() => server.close());
   await assert.rejects(async () => {
-    for await (const _ of edgeSpeechAdapter(server.connect, 40).stream(request(), new AbortController().signal)) {}
+    // Allow the loopback handshake to complete under parallel CI load; the socket then stays silent.
+    for await (const _ of edgeSpeechAdapter(server.connect, 500).stream(request(), new AbortController().signal)) {}
   }, (error: unknown) => error instanceof DateApiError && error.code === 'edge_speech' && /timed out/i.test(error.message));
   assert.equal(connections, 1, 'a timeout must not consume a second full deadline');
 });

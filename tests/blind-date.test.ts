@@ -5,13 +5,13 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { attachRestaurantServer, type RestaurantOptions } from '../server/restaurant';
 import { DinnerScene } from '../server/restaurant/scene';
 import type { ClaudeAdapter, ClaudeRequest, SpeechAdapter } from '../server/restaurant/providers';
-import { createBlindDate, getBlindDateCue } from '../src/restaurant/blind-date';
-import { getDate, MENU } from '../src/restaurant/content';
-import { CHARACTER_STORIES, STORY_CUE_KEYS } from '../src/restaurant/story';
+import { createBlindDate } from '../src/restaurant/blind-date';
+import { getDate } from '../src/restaurant/content';
+import { CHARACTER_STORIES } from '../src/restaurant/story';
 import type { DinnerState, SceneTurn, TurnEvent } from '../src/restaurant/types';
 import { humanLine, noteOf, rightNow } from './helpers/turn-note';
 
-const result: SceneTurn = { utterances: [{ speaker: 'date', text: 'That reminds me of an evening after work.', emotion: 'warm' }, { speaker: 'waiter', text: 'I will give you a moment with the menu.', emotion: 'warm' }], emotion: 'warm', action: 'none', memory: 'The human asked about work.', social: { signal: 'curiosity', reason: 'The human listened to a personal detail.', wantsToLeave: false } };
+const result: SceneTurn = { utterances: [{ speaker: 'date', text: 'That reminds me of an evening after work.', emotion: 'warm' }], emotion: 'warm', action: 'none', memory: 'The human asked about work.', social: { signal: 'curiosity', reason: 'The human listened to a personal detail.', wantsToLeave: false } };
 async function boot(options: RestaurantOptions = {}) {
   let app: Awaited<ReturnType<typeof attachRestaurantServer>>;
   const http = createServer((req, res) => { if (!app.handle(req, res)) { res.statusCode = 404; res.end(); } });
@@ -50,30 +50,33 @@ test('one blind turn uses its seeded biography, preserves cast selection, bills 
   const api = await boot({ claude }); t.after(() => api.close()); const { state, token } = await api.create({ mode: 'blind-date', seed: 'personality-replay' }), identity = createBlindDate(state.blindDate!.seed), path = `/api/date/sessions/${state.id}`;
   const turn = { turnId: 'one-turn', text: 'What do you enjoy about your work?', model: 'claude-haiku-5-5' };
   const text = await (await api.request(path + '/turn', turn, token)).text(), events = text.trim().split('\n').map(line => JSON.parse(line) as TurnEvent);
-  assert.deepEqual(events.filter(event => event.type === 'utterance').map(event => event.utterance.speaker), ['date', 'waiter']); assert.equal(requests.length, 1); assert.ok(requests[0].system.includes(identity.biography.occupation)); assert.ok(requests[0].system.includes(identity.personality)); assert.ok(requests[0].system.includes(identity.boundaries)); assert.equal(requests[0].system.includes(CHARACTER_STORIES[state.dateId].occupation), false);
-  const note = noteOf(requests[0]); assert.equal(humanLine(note), 'What do you enjoy about your work?'); assert.equal(note.includes('optionalReusableLines'), false, 'no stock lines are offered in place of a real reply'); assert.match(rightNow(note), /just met at the entrance/);
+  assert.deepEqual(events.filter(event => event.type === 'utterance').map(event => event.utterance.speaker), ['date']); assert.equal(requests.length, 1); assert.ok(requests[0].system.includes(identity.biography.occupation)); assert.ok(requests[0].system.includes(identity.personality)); assert.ok(requests[0].system.includes(identity.boundaries)); assert.equal(requests[0].system.includes(CHARACTER_STORIES[state.dateId].occupation), false);
+  const note = noteOf(requests[0]); assert.equal(humanLine(note), 'What do you enjoy about your work?'); assert.equal(note.includes('optionalReusableLines'), false, 'no stock lines are offered in place of a real reply'); assert.match(rightNow(note), /table/);
   assert.equal(await (await api.request(path + '/turn', turn, token)).text(), text); assert.equal(requests.length, 1);
   const snapshot = (await (await api.request(path, undefined, token)).json()).state as DinnerState; assert.equal(snapshot.blindDate?.seed, identity.seed); assert.equal(snapshot.usage.claudeRequests, 1); assert.equal(snapshot.usage.inputTokens, 100); assert.equal(snapshot.usage.outputTokens, 60); assert.ok(snapshot.usage.totalCost > 0);
 });
 
-test('blind physical cues and course preferences never revert to the visual preset biography', async () => {
+test('blind evenings start seated without scripted cues and retain their seeded biography', async () => {
   await RAPIER.init();
   for (const seed of ['specific-occupation', 'another-occupation', 'third-occupation']) {
     const identity = createBlindDate(seed), scene = new DinnerScene(identity.dateId, 2, { blindDate: { seed } });
     try {
-      assert.equal(scene.state.evening.cues[0].utterances[0].text, identity.opening); scene.state.seated = true;
-      scene.command({ type: 'interact', target: 'menu', choice: MENU[0] }); assert.equal(scene.state.evening.main.dateDish, identity.biography.preferredMain);
-      const lines = STORY_CUE_KEYS.flatMap(key => getBlindDateCue(identity, key)); assert.ok(lines.length >= STORY_CUE_KEYS.length); assert.equal(lines.some(line => /Ada|Inez|Leena|Second Helping|After Closing|photo show|cookbook/i.test(line.text)), false);
-      const ordered = scene.state.evening.cues.find(cue => cue.key === 'ordered')!.utterances[0]; assert.ok(ordered.text.includes(identity.biography.preferredMain.toLowerCase()));
-      scene.command({ type: 'finish' }); assert.equal(scene.state.evening.farewell.ending?.dateLine, getBlindDateCue(identity, 'ending-early-exit')[0].text);
+      assert.equal(scene.state.seated, true); assert.deepEqual(scene.state.evening.cues, []);
+      for (let i = 0; i < 120; i++) scene.step(1 / 60, i * 17);
+      assert.deepEqual(scene.state.evening.cues, []);
+      assert.equal(scene.state.blindDate?.seed, seed);
     } finally { scene.free(); }
   }
 });
 
-test('blind welcome speech is authorized and cached by the same ElevenLabs service; preset biography lines are unavailable', async t => {
+test('blind generated speech is authorized and cached; unspoken preset lines are unavailable', async t => {
   let calls = 0; const speech: SpeechAdapter = { async *stream() { calls++; yield Buffer.from('ID3blind-opening'); } };
-  const api = await boot({ speech }); t.after(() => api.close()); const { state, token } = await api.create({ mode: 'blind-date', seed: 'voice-replay' }), path = `/api/date/sessions/${state.id}`, opening = state.evening.cues[0].utterances[0];
-  for (let i = 0; i < 2; i++) { const response = await api.request(path + '/speech', { generation: 0, utterance: opening }, token); assert.equal(response.status, 200); assert.equal(await response.text(), 'ID3blind-opening'); }
+  const claude: ClaudeAdapter = { async *stream() { yield { type: 'text', text: JSON.stringify(result) }; } };
+  const api = await boot({ speech, claude }); t.after(() => api.close()); const { state, token } = await api.create({ mode: 'blind-date', seed: 'voice-replay' }), path = `/api/date/sessions/${state.id}`;
+  const turn = await api.request(path + '/turn', { turnId: 'voice', text: 'What is your work like?', model: 'claude-haiku-5-5' }, token);
+  const events = (await turn.text()).trim().split('\n').map(line => JSON.parse(line) as TurnEvent);
+  const spoken = events.find(event => event.type === 'utterance'); assert.ok(spoken && spoken.type === 'utterance');
+  for (let i = 0; i < 2; i++) { const response = await api.request(path + '/speech', { generation: spoken.generation, utterance: spoken.utterance }, token); assert.equal(response.status, 200); assert.equal(await response.text(), 'ID3blind-opening'); }
   assert.equal(calls, 1); assert.equal((await (await api.request(path, undefined, token)).json()).state.usage.cacheHits, 1);
-  const preset = getDate(state.dateId)!; const unauthorized = await api.request(path + '/speech', { generation: 0, utterance: { speaker: 'date', text: preset.opening, emotion: 'neutral' } }, token); assert.equal(unauthorized.status, 400);
+  const preset = getDate(state.dateId)!; const unauthorized = await api.request(path + '/speech', { generation: spoken.generation, utterance: { speaker: 'date', text: preset.opening, emotion: 'neutral' } }, token); assert.equal(unauthorized.status, 400);
 });

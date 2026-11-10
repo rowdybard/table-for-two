@@ -17,10 +17,10 @@ const recovery = new Set(['inspect-ticket', 'return-order', 'keep-order', 'wipe'
 const bodyId = (human: DoubleHumanId): DoubleDateActorId => DOUBLE_TABLE.pairings[human];
 
 export function createPairView(roomId: string, human: DoubleHumanId, name: string, dateId: DateId, usage: CostUsage, sessionLimit: number): DinnerState {
-  const spawn = DOUBLE_TABLE.spawns[human];
-  return { id: roomId, generation: 0, mode: 'double-date', phase: 'paused', dateId, stage: 'arrival', elapsed: 0,
-    participants: [{ id: 'p1', kind: 'human', name, position: [spawn[0], 0, spawn[2]] }, { id: 'p2', kind: 'ai', name: getDate(dateId)!.name, position: [spawn[0] + (human === 'h1' ? -1 : 1), 0, 4.9] }],
-    events: [], emotion: 'neutral', seated: false, order: null, glassRaised: false, memory: '', usage, sessionLimit, evening: createEvening(dateId, human === 'h1' ? 0 : 1) };
+  const seat = DOUBLE_TABLE.seats[human];
+  return { id: roomId, generation: 0, mode: 'double-date', phase: 'paused', dateId, stage: 'seated', elapsed: 0,
+    participants: [{ id: 'p1', kind: 'human', name, position: [seat[0], 0, seat[2]] }, { id: 'p2', kind: 'ai', name: getDate(dateId)!.name, position: [human === 'h1' ? -1.15 : 1.15, 0, 4.9] }],
+    events: [], emotion: 'neutral', seated: true, order: null, glassRaised: false, memory: '', usage, sessionLimit, evening: createEvening(dateId, human === 'h1' ? 0 : 1) };
 }
 
 /** One authoritative room world, with the complete existing evening director per pair. */
@@ -53,6 +53,7 @@ export class DoubleTableScene {
       state.views[human].evening.tabletop = createTabletopState(this.sharedTabletop);
       const position = state.views[human].participants;
       this.humans.set(human, this.actor(position[0].position));
+      setActorSeated(this.humans.get(human)!, true, { x: position[0].position[0], y: 0, z: position[0].position[2] });
       this.dates.set(human, this.actor(position[1].position));
       this.directors.set(human, new EveningDirector(state.views[human], { humanId: human }));
       this.inputs.set(human, { x: 0, z: 0, at: 0 });
@@ -89,69 +90,17 @@ export class DoubleTableScene {
     }
   }
 
-  command(human: DoubleHumanId, command: DinnerCommand, now: number) {
+  command(human: DoubleHumanId, command: DinnerCommand, _now: number) {
     const view = this.state.views[human], member = this.state.members.find(item => item.id === human)!;
     if (command.type === 'pause') { this.setPhase(command.paused ? 'paused' : 'playing'); return; }
     if (command.type === 'finish') {
       if (view.phase === 'ended') member.viewingEnding = true;
       else this.directors.get(human)!.earlyExit();
-      this.inputs.set(human, { x: 0, z: 0, at: 0 }); this.finishIfBoth(); this.syncPositions(); return;
+      this.finishIfBoth(); this.syncPositions(); return;
     }
-    if (this.state.phase !== 'playing' || member.viewingEnding) throw new Error('Return to the table or resume the evening before interacting.');
-    const wingman = view.phase === 'ended';
-    if (this.state.scenario?.phase === 'active' && command.type === 'evening' && ['order-dessert', 'skip-dessert', 'settle-bill'].includes(command.action)) throw new Error('Respond to the moment at the table before moving dinner along.');
-    if (command.type === 'move') {
-      if (Math.abs(command.x) > 1 || Math.abs(command.z) > 1) throw new Error('Invalid movement.');
-      const magnitude = Math.max(1, Math.hypot(command.x, command.z));
-      member.yaw = command.yaw; this.inputs.set(human, { x: command.x / magnitude, z: command.z / magnitude, at: now }); return;
-    }
-    if (command.type === 'scenario') throw new Error('Respond through the shared table moment.');
-    if (command.type === 'evening') { this.eveningAction(human, command, now); return; }
-    const director = this.directors.get(human)!;
-    if (command.type === 'tabletop') {
-      if (wingman) throw new Error('Your own date is complete. Keep your friend company.');
-      if (!member.seated) throw new Error('Take your own seat first.');
-      if (this.state.scenario?.phase === 'active') throw new Error('Respond to the moment at the table first.');
-      if (ids.some(id => this.state.views[id].evening.incident)) throw new Error('Deal with the interruption first.');
-      director.tabletop.action(command.action); return;
-    }
-    const { target, choice } = command;
-    if (wingman && !['seat', 'glass', 'bill', 'ticket', 'napkin', 'date', 'exit', 'window', 'service-bell'].includes(target)) throw new Error('Your own date is complete. You can keep your friend company.');
-    const body = this.humans.get(human)!;
-    const near = (x: number, z: number, radius: number) => { const p = body.translation(); return Math.hypot(p.x - x, p.z - z) <= radius; };
-    if (target === 'seat') {
-      const seat = DOUBLE_TABLE.seats[human];
-      if (member.seated) { member.seated = view.seated = false; setActorSeated(body, false); body.setTranslation({ x: human === 'h1' ? -1.35 : 1.35, y: 0, z: .8 + this.tableOffset }, true); }
-      else {
-        if (!near(seat[0], seat[2] + this.tableOffset, 2.1)) throw new Error('Approach your own chair to sit.');
-        member.seated = view.seated = true; const position = { x: seat[0], y: 0, z: seat[2] + this.tableOffset }; setActorSeated(body, true, position); body.setTranslation(position, true);
-        if (!wingman) { view.stage = view.order ? view.stage : 'seated'; director.seated(); }
-      }
-      this.inputs.set(human, { x: 0, z: 0, at: 0 });
-    } else if (target === 'menu') {
-      if (!member.seated) throw new Error('Sit down before ordering.');
-      if (!choice) return;
-      if (view.evening.incident) throw new Error('Handle the interruption before ordering.');
-      if (!MENU.includes(choice) || view.order) throw new Error('Choose one main course from the menu.');
-      view.order = choice; view.stage = 'ordered'; director.ordered();
-    } else if (target === 'glass') {
-      if (!member.seated) throw new Error('Your glass is at the table.');
-      if (view.evening.incident?.event === 'spilled-drink') this.eveningAction(human, { type: 'evening', action: 'steady-glass' }, now);
-      else { director.tabletop.cancelSip(); view.glassRaised = !view.glassRaised; }
-    } else if (target === 'meal' || target === 'dessert') this.eveningAction(human, { type: 'evening', action: 'taste' }, now);
-    else if (target === 'bill') { if (!member.seated) throw new Error('Take your own seat first.'); }
-    else if (target === 'ticket') this.eveningAction(human, { type: 'evening', action: 'inspect-ticket' }, now);
-    else if (target === 'napkin' && view.evening.incident?.event === 'spilled-drink') this.eveningAction(human, { type: 'evening', action: 'wipe' }, now);
-    else if (target === 'exit') {
-      if (!near(RESTAURANT.entrance[0], RESTAURANT.entrance[2], RESTAURANT.entranceRadius)) throw new Error('Walk to the entrance to leave.');
-      if (wingman) member.viewingEnding = true;
-      else if (!view.evening.bill.settlement) director.earlyExit();
-    } else if (target === 'date') { const date = this.dates.get(wingman ? (human === 'h1' ? 'h2' : 'h1') : human)!.translation(); if (!near(date.x, date.z, 3)) throw new Error('Move closer to your date.'); }
-    else if (target === 'window') { if (!near(-5.5, -1, 3)) throw new Error('Walk to the window together first.'); if (wingman) { const other = this.state.views[human === 'h1' ? 'h2' : 'h1']; if (!other.evening.moments.some(moment => moment.id === `wingman-window-${human}`)) other.evening.moments.push({ id: `wingman-window-${human}`, title: 'A little company', description: `${member.name} stayed nearby while the evening continued.` }); } else director.window(); }
-    else if (target === 'service-bell') this.eveningAction(human, { type: 'evening', action: 'request-water' }, now);
-    else if (['carafe', 'bread', 'salt', 'pepper', 'cutlery', 'lamp', 'vase', 'plate'].includes(target)) { if (!member.seated) throw new Error('Take your own seat first.'); }
-    else if (!['service-bell', 'napkin'].includes(target)) throw new Error('Unknown interaction.');
-    this.syncPositions(); this.finishIfBoth();
+    if (this.state.phase !== 'playing' || member.viewingEnding) throw new Error('Resume the evening first.');
+    if (command.type === 'move') { if (![command.x, command.z, command.yaw].every(Number.isFinite) || Math.abs(command.x) > 1 || Math.abs(command.z) > 1) throw new Error('Invalid movement.'); return; }
+    throw new Error('This date takes place at the table.');
   }
 
   private eveningAction(human: DoubleHumanId, command: Extract<DinnerCommand, { type: 'evening' }>, now: number) {
@@ -227,9 +176,9 @@ export class DoubleTableScene {
   replyEnded() { for (const director of this.directors.values()) director.replyEnded(); }
   clearPendingBoundaries() { for (const director of this.directors.values()) { director.boundaries.clearPending(); director.chemistry.clearPending(); } }
   redirectConversation(human: DoubleHumanId) { this.directors.get(human)!.redirectConversation(false); }
-  social(human: DoubleHumanId, turn: SceneTurn, humanText = '', speaker: DoubleHumanId = human) {
+  social(human: DoubleHumanId, turn: SceneTurn, humanText = '', speaker: DoubleHumanId = human, memoryHumanText = humanText) {
     const view = this.state.views[human];
-    view.emotion = turn.emotion; view.memory = clampMemory(turn.memory, view.memory, humanText); this.directors.get(human)!.social(turn, humanText, { humanId: speaker, paired: speaker === human, name: this.state.members.find(member => member.id === speaker)?.name });
+    view.emotion = turn.emotion; view.memory = clampMemory(turn.memory, view.memory, memoryHumanText); this.directors.get(human)!.social(turn, humanText, { humanId: speaker, paired: speaker === human, name: this.state.members.find(member => member.id === speaker)?.name });
   }
   viewEnding(human: DoubleHumanId, show: boolean) {
     if (this.state.views[human].phase !== 'ended') throw new Error('Finish your date before viewing its ending.');
@@ -265,7 +214,6 @@ export class DoubleTableScene {
           previous.evening.main.servedDish = null; previous.evening.main.status = 'finished';
           next.evening.incident = null; next.evening.resolutions['wrong-order'] = fact;
           next.evening.lastInterruptionAt = next.elapsed; this.lastIncidentAt = next.elapsed;
-          next.memory = `${next.memory}\n${fact}`.trim().slice(-1000);
           if (!next.evening.moments.some(moment => moment.id === 'wrong-order')) next.evening.moments.push({ id: 'wrong-order', title: 'A plate cleared away', description: fact });
           next.evening.cues.push({ id: `wrong-order-cleared-${oldOwner}`, key: 'wrong-order-cleared', utterances: [{ speaker: 'waiter', text: `I’ll clear ${departedName}’s plate. There’s nothing you need to send back.`, emotion: 'neutral' }] });
         } else next.evening.incident = previous.evening.incident ? { ...previous.evening.incident } : null;

@@ -65,41 +65,15 @@ test("a friend's line in a shared table can cool a date but never warm them", ()
   assert.ok(level(state) < start);
 });
 
-test('long silence from the human slowly loses the date, food and spending earn nothing', () => {
+test('quiet stretches do not introduce scripted penalties or affection rewards', () => {
   const state = seatedDinner(), director = new EveningDirector(state);
-  state.order = MENU[0]; director.ordered();
-  exchange(state, director, turn('warm', 'kindness'));
-  const after = level(state);
-  run(state, director, INTEREST_IDLE_AFTER - 1);
-  assert.equal(level(state), after, 'a normal pause costs nothing');
-  run(state, director, INTEREST_IDLE_EVERY * 4);
-  assert.ok(level(state) < after, 'a long silence lets attention wander');
-  const drifted = level(state);
-  for (let i = 0; i < 3; i++) { try { director.action({ type: 'evening', action: 'taste' }, 10_000 + i * 1000); } catch { /* not served yet */ } }
-  try { director.tabletop.action('fold-napkin'); } catch { /* optional */ }
-  assert.equal(level(state), drifted, 'eating and pouring water are not affection');
-});
-
-test('the date eats their own plate on scene time and never the human\'s', () => {
-  const state = seatedDinner(), director = new EveningDirector(state);
-  state.order = MENU[0]; director.ordered();
-  run(state, director, EVENING_PACE.mainKitchen);
-  assert.equal(state.evening.main.status, 'served'); assert.equal(state.evening.main.dateBites, 0);
-  run(state, director, EVENING_PACE.dateFirstBite);
-  assert.equal(state.evening.main.dateBites, 1);
-  assert.equal(state.evening.main.bites, 0, "the human's plate is untouched");
-  run(state, director, EVENING_PACE.dateBiteEvery * 5);
-  assert.equal(state.evening.main.dateBites, EVENING_PACE.dateBiteLimit);
-  assert.equal(state.evening.main.status, 'served', 'the date eating does not clear the course');
-});
-
-test('the date does not take a bite while their reply is on its way', () => {
-  const state = seatedDinner(), director = new EveningDirector(state);
-  state.order = MENU[0]; director.ordered();
-  run(state, director, EVENING_PACE.mainKitchen);
-  director.noteHumanTurn('What do you think of the risotto?');
-  run(state, director, EVENING_PACE.dateFirstBite + 5);
-  assert.equal(state.evening.main.dateBites, 0);
-  director.replyEnded(); run(state, director, 1);
-  assert.equal(state.evening.main.dateBites, 1);
+  try {
+    exchange(state, director, turn('warm', 'kindness'));
+    const before = level(state);
+    run(state, director, INTEREST_IDLE_AFTER + INTEREST_IDLE_EVERY * 4);
+    assert.equal(level(state), before);
+    assert.equal(state.evening.main.status, 'none');
+    assert.deepEqual(state.evening.cues, []);
+    assert.equal(state.evening.incident, null);
+  } finally { director.free(); }
 });

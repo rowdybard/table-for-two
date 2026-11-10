@@ -156,3 +156,12 @@
   #restaurant-app[data-mobile=true] .restaurant-toast {left:var(--safe-left);right:var(--safe-right);max-width:none;}
 }
 @media(prefers-reduced-motion:reduce) { .mobile-stick {transition:none;} }
+
+/* A conversation at one table, in either phone orientation. */
+#restaurant-app[data-mobile=true] .mobile-toolbar {top:auto;bottom:var(--safe-bottom);right:50%;transform:translateX(50%);gap:8px;padding:3px 8px;border:1px solid #fff2dc2b;border-radius:28px;background:#151c29ec;}
+#restaurant-app[data-mobile=true] .mobile-toolbar button {min-width:52px;padding:0 12px;}
+#restaurant-app[data-mobile=true] .caption {bottom:calc(var(--safe-bottom) + 80px);width:min(620px,calc(100% - 32px));max-height:30%;}
+#restaurant-app[data-mobile=true] .controls-line {left:var(--safe-left);right:var(--safe-right);bottom:calc(var(--safe-bottom) + 58px);max-width:none;text-align:center;}
+#restaurant-app[data-mobile=true] .restaurant-toast {left:var(--safe-left);right:var(--safe-right);bottom:calc(var(--safe-bottom) + 66px);max-width:none;}
+#restaurant-app[data-mobile=true] .evening-status {top:var(--safe-top);left:var(--safe-left);font-size:11px;max-width:calc(100% - 80px);}
+#restaurant-app[data-mobile=true][data-mobile-typing=true] .caption {bottom:calc(var(--safe-bottom) + 104px);}

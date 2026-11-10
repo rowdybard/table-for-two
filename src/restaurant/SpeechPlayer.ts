@@ -16,7 +16,7 @@ function aborted(): DOMException { return new DOMException('Speech playback canc
 
 /** Plays real provider audio. The caller awaits each play() to order speakers. */
 export class SpeechPlayer {
-  private readonly audio = new Audio();
+  private audio = new Audio();
   private context?: AudioContext;
   private analyser?: AnalyserNode;
   private elementSource?: MediaElementAudioSourceNode;
@@ -364,11 +364,25 @@ export class SpeechPlayer {
     if (utterance) this.callbacks.onEnded?.(utterance, { interrupted: true, playedSeconds });
   }
 
+  suspend(): void {
+    this.stop();
+    // The silent activation utterance may still be queued even when no line is
+    // currently playing. Release it too, and prime again on a later gesture.
+    if (this.devicePrimed && typeof speechSynthesis !== 'undefined') {
+      try { speechSynthesis.cancel(); } catch { /* Continue closing the audio graph. */ }
+      this.devicePrimed = false;
+    }
+    this.elementSource?.disconnect(); this.analyser?.disconnect();
+    void this.context?.close().catch(() => {});
+    this.context = undefined; this.analyser = undefined; this.elementSource = undefined; this.samples = undefined;
+    // A media element can only be attached to one Web Audio context. A fresh
+    // element lets the foreground create a new context after teardown.
+    if (!this.disposed) { this.audio = new Audio(); this.audio.preload = 'auto'; this.audio.volume = this.volume; }
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.stop();
-    this.elementSource?.disconnect(); this.analyser?.disconnect();
-    void this.context?.close().catch(() => {});
+    this.suspend();
   }
 }

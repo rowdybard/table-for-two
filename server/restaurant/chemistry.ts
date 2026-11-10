@@ -62,7 +62,7 @@ export class DateChemistryDirector {
     const evening = this.state.evening;
     return scenePresenceAvailable(this.state) && !evening.care.romanceClosed
       && evening.stance !== 'leaving' && evening.stance !== 'hurt' && evening.stance !== 'guarded'
-      && hasEarnedConfidence(evening.agenda);
+      ;
   }
 
   private accept(line: SceneUtterance): void {

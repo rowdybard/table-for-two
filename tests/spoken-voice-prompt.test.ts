@@ -40,7 +40,7 @@ const present = (system: string, needle: string) => { const at = system.indexOf(
 
 for (const dateId of ['mira', 'jules', 'dev'] as const) test(`${dateId}: the system prompt reads rules first, the contract next, and the spoken register, voice and reminder last`, async () => {
   const { system } = await systemPromptFor({ dateId });
-  const rules = [DATE_DIALOGUE_INSTRUCTIONS, SKEPTICISM_INSTRUCTIONS, AGENDA_INSTRUCTIONS, BOUNDARY_INSTRUCTIONS, roleplayInstructions('claude-haiku-5-5')].map(text => present(system, text));
+  const rules = [DATE_DIALOGUE_INSTRUCTIONS, BOUNDARY_INSTRUCTIONS, roleplayInstructions('claude-haiku-5-5')].map(text => present(system, text));
   assert.deepEqual([...rules].sort((a, b) => a - b), rules, 'the rule blocks keep their documented order');
   const contract = present(system, 'OUTPUT. Return exactly one JSON object');
   const register = present(system, SPOKEN_REGISTER), voice = present(system, `YOUR VOICE: ${CHARACTER_STORIES[dateId].voiceHabits}`), reminder = present(system, VOICE_REMINDER);
@@ -62,9 +62,10 @@ test('a blind date gets the same ordering with a voice derived from its seeded t
 
 test('the system prompt names the turn-note sections and memory labels, not the old JSON keys', async () => {
   const { system } = await systemPromptFor({ dateId: 'dev' });
-  for (const label of ['Right now', 'Your notes', 'At the table so far', 'Private to you, not to recite', 'Do not bring up unprompted', 'You may now signal', 'HUMAN:', 'TOLD THEM:', 'OPEN:', 'at most 700 characters', 'cut off', 'still being said', 'did not hear this']) present(system, label);
+  for (const label of ['Right now', 'Your notes', 'At the table so far', 'Do not bring up unprompted', 'HUMAN:', 'TOLD THEM:', 'OPEN:', 'at most 700 characters', 'cut off', 'still being said', 'did not hear this']) present(system, label);
   for (const retired of ['playerSaid', 'tableNow', 'scene.evening', 'avoidUnpromptedTopics', 'nextMilestone', 'evidenceReady', 'dateAgenda', 'naturalHint', 'playerVia', 'playerTalkedOver']) assert.equal(system.includes(retired), false, `old key still in the prompt: ${retired}`);
-  assert.ok(system.includes('agenda {signal,evidence,clue}') && system.includes('Every date begins highly skeptical'));
+  assert.doesNotMatch(system, /Every date begins highly skeptical|Private to you, not to recite|You may now signal/);
+  assert.match(system, /Every utterance uses the exact speaker key/);
 });
 
 test('the prompt is deduplicated: one persona line per fact, one provider-limit sentence, no stray double period', async () => {
@@ -88,7 +89,7 @@ test('the Anthropic route keeps its fade-out rule; earned routes still avoid it'
   assert.doesNotMatch(DATE_DIALOGUE_INSTRUCTIONS, /innuendo/);
 });
 
-test('the skepticism and agenda blocks keep their asserted anchors and drop the quiz priming', () => {
+test('legacy skepticism and agenda instructions stay outside the live prompt', () => {
   assert.ok(SKEPTICISM_INSTRUCTIONS.startsWith('Every date begins highly skeptical'));
   assert.doesNotMatch(SKEPTICISM_INSTRUCTIONS, /pointed|provisional judgment|hard to impress/);
   assert.ok(AGENDA_INSTRUCTIONS.includes('agenda {signal,evidence,clue}'));
@@ -143,7 +144,7 @@ test('the output contract states the three-part 700-character memory, the cast r
   const contract = outputContract({ emotions: EMOTIONS, actions: ACTIONS, signals: SOCIAL_SIGNALS });
   for (const label of ['"HUMAN:"', '"TOLD THEM:"', '"OPEN:"', 'at most 700 characters', 'rewrite "Your notes"']) assert.ok(contract.includes(label), label);
   assert.match(contract, /about 25 words, under 260 characters/); assert.match(contract, /discards a reply over 420/);
-  assert.match(contract, /usually alone/); assert.match(contract, /Eli does not comment on ordinary conversation/);
+  assert.match(contract, /Every utterance uses the exact speaker key "date"/); assert.match(contract, /never speak for the human or another person/);
   for (const word of [...EMOTIONS, ...ACTIONS, ...SOCIAL_SIGNALS]) assert.ok(contract.includes(word), word);
   assert.match(contract, /spoken line first/, 'the field order the schema streams in is stated');
 });

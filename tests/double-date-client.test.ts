@@ -204,3 +204,54 @@ test('a playback receipt that lands in time is unaffected by its timeout', async
     assert.deepEqual(receipts, [{ lineId: 'line-1', generation: 3, completed: false, playedSeconds: 0.4 }]);
   } finally { client.dispose(); env.restore(); }
 });
+
+test('background disconnect stops polling, reconnects without replay, and waits before allowing a turn', async () => {
+  const seen: string[] = []; let gets = 0, leave = 0, posts = 0, releaseLeave!: (response: Response) => void, releaseResync!: (response: Response) => void;
+  const hiddenLine = { id: 'line-hidden', generation: 1, speaker: 'd1' as const, text: 'An unheard reply.', emotion: 'warm' as const, at: 1 };
+  const liveLine = { id: 'line-live', generation: 2, speaker: 'd1' as const, text: 'A new reply.', emotion: 'warm' as const, at: 2 };
+  let state = { ...room, revision: 2, lines: [...room.lines, hiddenLine] };
+  const env = environment(async (input, init) => {
+    const path = String(input);
+    if (path.endsWith('/rooms')) return json(membership, 201);
+    if (path.endsWith('/leave')) { leave++; return new Promise<Response>(resolve => { releaseLeave = resolve; }); }
+    if (path.endsWith('/turn')) { posts++; return json({ state }); }
+    gets++;
+    if (gets === 1) return json({ state: room, signals: [] });
+    if (gets === 2) return new Promise<Response>(resolve => { releaseResync = resolve; });
+    return json({ state, signals: [] });
+  });
+  const client = new DoubleDateClient(callbacks({ onLines(lines) { seen.push(...lines.map(line => line.id)); } }), { requestTimeoutMs: 1000 });
+  try {
+    await client.create('Alex', 'claude-haiku-5-5', 2); await until(() => gets === 1);
+    assert.deepEqual(seen, ['line-1']); client.suspend(); assert.equal(leave, 1);
+    await delay(130); assert.equal(gets, 1); assert.equal(client.credentials?.token, membership.token);
+    const resumed = client.resume(); await delay(5); assert.equal(gets, 1); releaseLeave(json({ state: room }));
+    await until(() => gets === 2); await assert.rejects(client.turn('Hello', 'table'), /Reconnecting/); await assert.rejects(client.command({ type: 'reset-model' }), /Reconnecting/); assert.equal(posts, 0);
+    releaseResync(json({ state, signals: [] })); await resumed; await until(() => client.state?.revision === 2);
+    assert.deepEqual(seen, ['line-1'], 'unseen hidden-period lines are not replayed on return');
+    state = { ...state, revision: 3, lines: [...state.lines, liveLine] }; await until(() => seen.includes('line-live'));
+    assert.deepEqual(seen, ['line-1', 'line-live']); assert.equal(posts, 0);
+  } finally { client.dispose(); env.restore(); }
+});
+
+test('a late response from a pre-suspension turn cannot replace the reconnected room', async () => {
+  let releaseTurn!: (response: Response) => void, turnSignal!: AbortSignal, posts = 0;
+  const updated = { ...room, revision: 5, lines: [...room.lines, { id: 'after-return', generation: 1, speaker: 'd1' as const, text: 'We are back.', emotion: 'warm' as const, at: 1 }] };
+  const late = { ...room, revision: 99, lines: [...room.lines, { id: 'late-old', generation: 0, speaker: 'd1' as const, text: 'This should not appear.', emotion: 'warm' as const, at: 1 }] };
+  const seen: string[] = [];
+  const env = environment(async (input, init) => {
+    const path = String(input);
+    if (path.endsWith('/rooms')) return json(membership, 201);
+    if (path.endsWith('/leave')) return json({ state: room });
+    if (path.endsWith('/turn')) { posts++; turnSignal = init!.signal!; return new Promise<Response>(resolve => { releaseTurn = resolve; }); }
+    return json({ state: updated, signals: [] });
+  });
+  const client = new DoubleDateClient(callbacks({ onLines(lines) { seen.push(...lines.map(line => line.id)); } }));
+  try {
+    await client.create('Alex', 'claude-haiku-5-5', 2); await until(() => client.state?.revision === 5);
+    const pending = client.turn('An unfinished thought.', 'table'); await until(() => posts === 1);
+    client.suspend(); assert.equal(turnSignal.aborted, true); await client.resume();
+    releaseTurn(json({ state: late })); await assert.rejects(pending);
+    assert.equal(client.state?.revision, 5); assert.ok(!seen.includes('late-old')); assert.equal(posts, 1);
+  } finally { client.dispose(); env.restore(); }
+});

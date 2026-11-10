@@ -5,7 +5,7 @@ import { DOLPHIN_LLM_MODEL, DOLPHIN_MODEL } from './types';
 import { markup } from './ui';
 import { RestaurantRenderer } from './RestaurantRenderer';
 import { LocalRecognition } from './LocalRecognition';
-import { RECEIPT_TIMEOUT_MS, TURN_WAIT_MS, cueYieldsToHuman, settled, shouldDropBackchannel, timeoutSignal, waitWhile } from './turn-endpointing';
+import { RECEIPT_TIMEOUT_MS, TURN_WAIT_MS, settled, shouldDropBackchannel, timeoutSignal } from './turn-endpointing';
 import { SpeechPlayer } from './SpeechPlayer';
 import { createEvening } from './evening';
 import { EveningInterface } from './EveningInterface';
@@ -19,8 +19,6 @@ import { VoiceChat } from '../voice/VoiceChat';
 import { MobileControls } from './MobileControls';
 import { conversationModelName, parseModelChatCommand, savedConversationModel, type ModelChatCommand } from './ModelChatCommand';
 import { ListeningPreviewController, type ListeningPreviewTarget } from './ListeningPreview';
-import { TabletopInspector, isInspectionTarget, type InspectionTarget } from './TabletopInspector';
-import { tableActionForTarget, tabletopActionAvailability } from './tabletop';
 import { scenePresenceAvailable } from './scenario-care';
 import { diningOffsetZ } from './dining-space';
 import { InterestCue } from './InterestCue';
@@ -28,8 +26,7 @@ import { createPerfStats } from './PerfStats';
 import { createFrameCap } from './FrameCap';
 import { consumeTurnResponse, replyDeadlineMs } from './conversation-stream';
 import { captionReadingMs, waitForCaptionPaint, waitForCaptionReading } from './caption-delivery';
-import { WalkingView } from './WalkingView';
-import { MovementSendGate } from './MovementSendGate';
+import { PageActivity } from './PageActivity';
 
 document.title = 'Table for Two';
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = markup;
@@ -75,19 +72,19 @@ let interruptPending = false;
 let playbackReceipts: Promise<void> = Promise.resolve();
 let captionTimer: ReturnType<typeof setTimeout> | undefined, toastTimer: ReturnType<typeof setTimeout> | undefined;
 let pollTimer: ReturnType<typeof setTimeout> | undefined, commandEpoch = 0;
-let micEnabled = false, disposed = false, settingsPaused = false, menuPaused = false;
+let micEnabled = false, disposed = false, settingsPaused = false;
 let microphoneAttempt = 0;
 let pausePending = false;
-let menuOpening: Promise<void> = Promise.resolve(), menuClosing = false;
 let settingsOpening: Promise<void> = Promise.resolve(), settingsClosing = false;
 let startingDinner = false, typedSubmissionPending = false, pageSuspended = false;
+let pageRequests = new AbortController(), pageEpoch = 0, frameHandle = 0;
+let backgroundPause: Promise<unknown> | undefined;
 let typedSubmissionEpoch = 0, modelResetEpoch = 0, modelResetPending = false;
 let modelControlQueue: Promise<void> = Promise.resolve();
 const doubleTurnSubmissions = new Set<Promise<void>>();
 let audioWarningShown = false, userEnteredMenu = false, restoreAttempted = false;
 let connectionTimer: ReturnType<typeof setTimeout> | undefined;
 let mobile: MobileControls | undefined;
-let tabletopInspector: TabletopInspector | undefined;
 let turnStartedAt = 0, firstAudioMs: number | null = null, presentedEvents = new Set<string>();
 let lastFrame = performance.now();
 let lastPartial = '', dragging = false, pointerX = 0, pointerY = 0;
@@ -96,13 +93,11 @@ let currentSpeechGeneration = 0;
 let tableAttention: { actor: 'h1' | 'h2'; until: number } | undefined;
 let hadPointerLock = false, intentionalPointerRelease = false;
 const keys = new Set<string>();
-const walkingView = new WalkingView();
-const movementSendGate = new MovementSendGate();
 const listeningPreview = new ListeningPreviewController();
 let listeningTarget: ListeningPreviewTarget = null;
 const money = (value: number) => '$' + value.toFixed(3);
-const otherModalOpen = () => ['settings-dialog', 'pause-dialog', 'menu-dialog', 'ending-screen', 'bill-dialog', 'history-dialog'].some(id => !el(id).hidden);
-const visibleModal = () => !!tabletopInspector?.isOpen || otherModalOpen();
+const otherModalOpen = () => ['settings-dialog', 'pause-dialog', 'ending-screen', 'history-dialog'].some(id => !el(id).hidden);
+const visibleModal = otherModalOpen;
 const menuInputOpen = () => visibleModal() || !el('journal').hidden;
 function currentListeningTarget(): ListeningPreviewTarget {
   if (!renderer?.isReady || !joined) return null;
@@ -120,7 +115,7 @@ function beginListeningPreview() {
 function gameMenuScope(): GameMenuScope | null {
   if (mobile?.menuScope) return { key: 'mobile-display', element: mobile.menuScope, initial: '#mobile-display-close' };
   // Settings can sit above Pause; the uppermost surface always owns input.
-  for (const id of ['settings-dialog', 'ending-screen', 'history-dialog', 'pause-dialog', 'bill-dialog', 'menu-dialog']) {
+  for (const id of ['settings-dialog', 'ending-screen', 'history-dialog', 'pause-dialog']) {
     if (!el(id).hidden) return { key: id, element: el(id), initial: id === 'pause-dialog' ? '#resume-date' : undefined };
   }
   if (doubleLobby && !doubleLobby.element.hidden) return { key: 'double-date', element: doubleLobby.element };
@@ -133,7 +128,6 @@ function gameMenuScope(): GameMenuScope | null {
       confirm(item) { if (!item.matches('[data-date]')) return false; btn('start-date').click(); return true; },
     } : { key: 'title', element: el('restaurant-app'), items: '[data-game-item]', initial: '#title-start' };
   }
-  if (tabletopInspector?.isOpen) return { key: 'tabletop', element: el('tabletop-inspector'), initial: '#tabletop-use' };
   if (!el('journal').hidden) return { key: 'journal', element: el('journal'), horizontal: true };
   return null;
 }
@@ -190,10 +184,9 @@ function applyState(next: DinnerState) {
   if (joined && next.id === state.id && (diningOffsetZ(next) !== diningOffsetZ(state) || presenceChanged)) {
     const stage = el('restaurant-scene');
     stage.animate([{ opacity: .12 }, { opacity: 1 }], { duration: matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 200, easing: 'ease-out' });
-    tabletopInspector?.close(); releasePointer();
+    releasePointer();
   }
   state = next;
-  tabletopInspector?.update(state, null);
   if ('generation' in next && typeof next.generation === 'number') activeGeneration = next.generation;
   (window as Window & { __restaurantState?: DinnerState }).__restaurantState = state;
   if (!joined) return;
@@ -201,7 +194,7 @@ function applyState(next: DinnerState) {
   el('date-status').textContent = wingman ? 'Staying for your friend' : `An evening with ${getDate(state.dateId)!.name}`;
   interestCue.update(state, preferences.interestCue !== false);
   btn('finish-date').textContent = wingman ? 'Show my ending' : state.mode === 'double-date' ? 'End my date' : 'End date';
-  const stages = { arrival: 'Arrival', seated: 'Dinner', ordered: 'Dinner', dining: 'Dinner', dessert: 'Dessert', farewell: 'Farewell', finished: 'Goodnight' };
+  const stages = { arrival: 'At the table', seated: 'At the table', ordered: 'At the table', dining: 'At the table', dessert: 'At the table', farewell: 'At the table', finished: 'Goodnight' };
   el('dinner-stage').textContent = wingman ? 'At the table' : stages[state.stage];
   const minutes = Math.floor(state.elapsed / 60);
   el('evening-label').textContent = `${String(19 + Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')} · TABLE 02`;
@@ -209,45 +202,38 @@ function applyState(next: DinnerState) {
     presentedEvents.add(event);
     log('The evening', EVENT_COPY[event].description, true);
   }
-  for (const cue of state.mode === 'double-date' ? [] : state.evening.cues) if (!presentedCues.has(cue.id)) {
-    presentedCues.add(cue.id);
-    if (state.phase === 'playing') {
-      if (cue.key.startsWith('ending-')) {
-        // Let a farewell take the floor rather than wait behind earlier table chatter.
-        generationEpoch++; turnAbort?.abort(); captionReadAbort?.abort(); speech.stop(); speechQueue = Promise.resolve(); pendingSpeeches = 0; busy = false; btn('send-turn').disabled = false;
-      }
-      ambience.cue(cue.key);
-      // Routine pacing waits for a human who is mid-sentence; health, boundary, incident and farewell cues keep the floor.
-      for (const line of cue.utterances) queueUtterance(line, activeGeneration, generationEpoch, true, cueYieldsToHuman(cue.key));
-    }
-  }
+  // Only generated, player-addressed dialogue takes the floor. Legacy evening cues
+  // are intentionally ignored when restoring an older dinner.
   saveSessionReference();
   eveningUI.update(state); ambience.setPaused(state.phase !== 'playing');
   const incident = state.evening.incident;
   if (incident && revealedIncident !== `${incident.event}:${incident.startedAt}`) {
-    tabletopInspector?.close();
-    revealedIncident = `${incident.event}:${incident.startedAt}`;
+      revealedIncident = `${incident.event}:${incident.startedAt}`;
   }
   recognition.setPaused(state.phase !== 'playing' || visibleModal() || !doubleClient.active && !scenePresenceAvailable(state));
   if (state.phase === 'playing' && !pausePending) el('pause-dialog').hidden = true;
-  if (state.phase === 'paused' && el('settings-dialog').hidden && el('menu-dialog').hidden && !eveningUI.isDialogOpen) el('pause-dialog').hidden = false;
+  if (state.phase === 'paused' && el('settings-dialog').hidden && !eveningUI.isDialogOpen) el('pause-dialog').hidden = false;
   if (state.phase === 'ended') showEnding();
   renderUsage();
 }
 async function request<T>(path: string, body?: unknown, options: { signal?: AbortSignal; method?: string } = {}): Promise<T> {
   const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 15000);
+  const pageSignal = pageRequests.signal;
   const cancel = () => controller.abort();
-  options.signal?.addEventListener('abort', cancel, { once: true });
-  if (options.signal?.aborted) controller.abort();
+  options.signal?.addEventListener('abort', cancel, { once: true }); pageSignal.addEventListener('abort', cancel, { once: true });
+  if (options.signal?.aborted || pageSignal.aborted) controller.abort();
   try {
+    controller.signal.throwIfAborted();
     const response = await fetch(path, { method: options.method || (body === undefined ? 'GET' : 'POST'), headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(token ? { Authorization: `Bearer ${token}` } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: controller.signal });
     const data = await response.json().catch(() => ({})) as { error?: string | { message?: string }; message?: string };
+    controller.signal.throwIfAborted();
     if (!response.ok) throw Object.assign(new Error(typeof data.error === 'string' ? data.error : data.error?.message || data.message || `Request failed (${response.status})`), { status: response.status });
     return data as T;
   } catch (error) {
+    if (controller.signal.aborted && pageSignal.aborted) throw new DOMException('Page suspended.', 'AbortError');
     if (controller.signal.aborted && !options.signal?.aborted) throw new Error('The restaurant took too long to respond. Check your connection and try again.');
     throw error;
-  } finally { clearTimeout(timeout); options.signal?.removeEventListener('abort', cancel); }
+  } finally { clearTimeout(timeout); options.signal?.removeEventListener('abort', cancel); pageSignal.removeEventListener('abort', cancel); }
 }
 const sessionPath = () => '/api/date/sessions/' + encodeURIComponent(state.id);
 async function command(body: DinnerCommand, quiet = false) {
@@ -271,10 +257,11 @@ async function unlockAudio(withAmbience = false) {
   }
 }
 async function poll() {
-  if (!joined || disposed || doubleClient.active) return;
+  if (!joined || disposed || pageSuspended || document.hidden || doubleClient.active) return;
   const epoch = commandEpoch;
   try { const result = await request<{ state: DinnerState }>(sessionPath()); if (epoch === commandEpoch) applyState(result.state); }
   catch (error) {
+    if (pageSuspended || document.hidden || disposed) return;
     const status = (error as Error & { status?: number }).status;
     if (epoch === commandEpoch && (status === 401 || status === 404)) {
       try { sessionStorage.removeItem('table-for-two-session'); } catch { /* Optional storage. */ }
@@ -282,16 +269,19 @@ async function poll() {
     }
     el('turn-status').textContent = 'Connection interrupted · retrying';
   }
-  if (joined && !disposed && state.phase !== 'ended') pollTimer = setTimeout(() => void poll(), 300);
+  if (joined && !disposed && !pageSuspended && !document.hidden && state.phase !== 'ended') pollTimer = setTimeout(() => void poll(), 300);
 }
 function recordDelivery(generation: number, utterance: SceneUtterance, completed: boolean, playedSeconds: number) {
+  if (pageSuspended || document.hidden || disposed) return;
+  const receiptEpoch = pageEpoch, pageSignal = pageRequests.signal;
   if (doubleClient.active && utterance.lineId) {
-    playbackReceipts = playbackReceipts.then(() => doubleClient.receipt(utterance.lineId!, generation, completed, playedSeconds)).then(() => {}).catch(() => {}); return;
+    playbackReceipts = playbackReceipts.then(() => receiptEpoch === pageEpoch && !pageSignal.aborted ? doubleClient.receipt(utterance.lineId!, generation, completed, playedSeconds) : undefined).then(() => {}).catch(() => {}); return;
   }
   const path = sessionPath() + '/playback', sessionToken = token;
   playbackReceipts = playbackReceipts.then(async () => {
     // A stalled receipt must not hold every later receipt, or the next spoken turn, behind it.
-    await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` }, body: JSON.stringify({ generation, speaker: utterance.speaker, text: utterance.text, completed, playedSeconds }), signal: timeoutSignal(RECEIPT_TIMEOUT_MS) });
+    if (receiptEpoch !== pageEpoch || pageSignal.aborted) return;
+    await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` }, body: JSON.stringify({ generation, speaker: utterance.speaker, text: utterance.text, completed, playedSeconds }), signal: AbortSignal.any([pageSignal, timeoutSignal(RECEIPT_TIMEOUT_MS)]) });
   }).catch(() => {});
 }
 let displayedVoiceStatus = '';
@@ -344,14 +334,7 @@ const recognition = new LocalRecognition({
   onError(message) { microphoneAttempt++; micEnabled = false; friendVoice?.disable(); updateMic(); toast(message, 10000); },
 }, { capture: () => sharedMicrophone.acquire(), release: stream => sharedMicrophone.release(stream) });
 speech.setVolume(preferences.volume);
-eveningUI = new EveningInterface({ async command(body) { await command(body); }, async openMenu() { await openMenu(); }, async viewEnding() { try { await doubleClient.command({ type: 'view-ending' }); } catch (error) { toast((error as Error).message); } }, async scenario(choice) { try { if (doubleClient.active) await doubleClient.command({ type: 'scenario', choice }); else await command({ type: 'scenario', choice }); } catch (error) { toast((error as Error).message); } }, releasePointer() { releasePointer(); }, modalChanged() { recognition.setPaused(state.phase !== 'playing' || visibleModal() || !doubleClient.active && !scenePresenceAvailable(state)); }, notice: toast });
-tabletopInspector = new TabletopInspector(el('restaurant-app'), {
-  inspect(target) { renderer?.setInspectionTarget(target); },
-  async use(target) { await useTableTarget(target); },
-  async command(body) { await command(body); },
-  releasePointer,
-  changed() { clearWalkingKeys(); recognition.setPaused(state.phase !== 'playing' || visibleModal() || !doubleClient.active && !scenePresenceAvailable(state)); },
-});
+eveningUI = new EveningInterface({ releasePointer, modalChanged() { recognition.setPaused(state.phase !== 'playing' || visibleModal()); }, notice: toast });
 
 function saveSessionReference() {
   if (!joined || !state.id || !token || doubleClient.active) return;
@@ -386,10 +369,6 @@ async function interrupt() {
   interruption = (doubleClient.active ? doubleClient.interrupt() : request<{ state: DinnerState }>(sessionPath() + '/interrupt', {}).then(result => { applyState(result.state); })).catch(() => { /* Next request reports connection failures. */ }).finally(() => { interruptPending = false; });
   await interruption;
 }
-/** Hold a scripted line while the recognizer is still collecting the human's sentence (at most six seconds). */
-async function humanHasFloor(epoch: number) {
-  await waitWhile(() => epoch === generationEpoch && micEnabled && recognition.holdsHumanSpeech());
-}
 let captionDeliverySequence = 0;
 async function presentCaption(utterance: SceneUtterance, generation: number, epoch: number) {
   if (epoch !== generationEpoch || !joined || state.phase !== 'playing' || !preferences.captions || document.hidden) return;
@@ -407,15 +386,12 @@ async function presentCaption(utterance: SceneUtterance, generation: number, epo
     clearCaptionLater(1000); recordDelivery(generation, utterance, completed, 0);
   }
 }
-function queueUtterance(utterance: SceneUtterance, generation: number, epoch: number, logLine = true, yieldToHuman = false) {
+function queueUtterance(utterance: SceneUtterance, generation: number, epoch: number, logLine = true) {
+  if (!['date', 'other-date'].includes(utterance.speaker)) return;
   if (logLine) log(speakerName(utterance.speaker, utterance.actorId), utterance.text);
   pendingSpeeches++;
   speechQueue = speechQueue.then(async () => {
-    if (epoch !== generationEpoch || !joined || state.phase !== 'playing') return;
-    if (yieldToHuman) {
-      await humanHasFloor(epoch);
-      if (epoch !== generationEpoch || !joined || state.phase !== 'playing') return;
-    }
+    if (epoch !== generationEpoch || !joined || state.phase !== 'playing' || document.hidden || pageSuspended) return;
     if (doubleClient.active && utterance.lineId) {
       const current = doubleRoom?.lines.find(line => line.id === utterance.lineId);
       if (!current || current.interrupted) return;
@@ -437,7 +413,7 @@ function queueUtterance(utterance: SceneUtterance, generation: number, epoch: nu
 async function sendTurn(raw: string, explicitTarget?: ConversationTarget, via: TurnVia = 'typed') {
   const text = raw.trim();
   const resetEpoch = modelResetEpoch;
-  if (!text || !joined || state.phase !== 'playing' || visibleModal() || modelResetPending) return false;
+  if (!text || !joined || pageSuspended || document.hidden || state.phase !== 'playing' || visibleModal() || modelResetPending) return false;
   if (!doubleClient.active && !scenePresenceAvailable(state)) { toast('Give your date a moment. They’ll be back at the table shortly.'); return false; }
   if (text.length > 2000) { toast('Keep each turn under 2,000 characters.'); return false; }
   // Each wait is bounded so a slow unlock, interrupt or receipt cannot leave the mic feeling dead.
@@ -446,11 +422,11 @@ async function sendTurn(raw: string, explicitTarget?: ConversationTarget, via: T
   const bounded = async (pending: Promise<unknown>) => { if (!(await settled(pending, TURN_WAIT_MS))) stalled = true; };
   await bounded(unlockAudio());
   await bounded(interruption);
-  if (!joined || state.phase !== 'playing' || visibleModal() || modelResetPending || resetEpoch !== modelResetEpoch) return false;
+  if (!joined || pageSuspended || document.hidden || state.phase !== 'playing' || visibleModal() || modelResetPending || resetEpoch !== modelResetEpoch) return false;
   if (busy || pendingSpeeches || playback.speaker) await bounded(interrupt());
   const submissionEpoch = generationEpoch;
   await bounded(playbackReceipts);
-  if (!joined || state.phase !== 'playing' || visibleModal() || submissionEpoch !== generationEpoch || (interruptPending && !stalled) || modelResetPending || resetEpoch !== modelResetEpoch) return false;
+  if (!joined || pageSuspended || document.hidden || state.phase !== 'playing' || visibleModal() || submissionEpoch !== generationEpoch || (interruptPending && !stalled) || modelResetPending || resetEpoch !== modelResetEpoch) return false;
   if (doubleClient.active) {
     let target = explicitTarget ?? renderer.getConversationTarget(state);
     const aimedDate = doubleRoom?.dates.find(date => date.id === target);
@@ -519,7 +495,8 @@ async function sendTurn(raw: string, explicitTarget?: ConversationTarget, via: T
   }
 }
 async function startDinner(blind = false) {
-  if (startingDinner || joined) return;
+  if (startingDinner || joined || pageSuspended || document.hidden) return;
+  const startEpoch = pageEpoch;
   userEnteredMenu = true;
   startingDinner = true;
   const navigation = [...el('arrival-screen').querySelectorAll<HTMLButtonElement>('button')];
@@ -528,6 +505,7 @@ async function startDinner(blind = false) {
   el('arrival-screen').setAttribute('aria-busy', 'true'); el('start-error').hidden = true;
   try {
     await unlockAudio(true);
+    if (disposed || pageSuspended || document.hidden || startEpoch !== pageEpoch) return;
     const result = await request<{ state: DinnerState; token: string }>('/api/date/sessions', { ...(blind ? { mode: 'blind-date' } : { dateId: selectedDate }), model: preferences.model, sessionLimit: preferences.sessionLimit });
     token = result.token; state = result.state; joinUI();
     presentedCues = new Set(); saveSessionReference();
@@ -560,56 +538,26 @@ async function resumeStoredDinner() {
     void poll();
   } catch (error) {
     token = '';
+    if (pageSuspended || document.hidden || disposed) return;
     console.warn('Saved dinner could not be restored', error);
     toast('Your saved date could not be restored. Try reloading before starting another evening.', 10000);
   }
 }
 function showEnding() {
   if (endingPresented) return;
-  tabletopInspector?.close();
   endingPresented = true;
-  generationEpoch++; turnAbort?.abort(); clearTimeout(pollTimer);
-  keys.clear(); releasePointer(); closeTypedInput(); speech.stop(); recognition.stop(); friendVoice?.disable(); micEnabled = false; updateMic();
-  el('ending-screen').hidden = false; el('pause-dialog').hidden = true; el('menu-dialog').hidden = true;
+  cancelLocalPlayback(); clearTimeout(pollTimer);
+  keys.clear(); releasePointer(); closeTypedInput(); recognition.stop(); friendVoice?.disable(); micEnabled = false; updateMic();
+  el('ending-screen').hidden = false; el('pause-dialog').hidden = true;
   el('ending-copy').textContent = state.reason || `You shared an evening with ${getDate(state.dateId)!.name}. Some moments were smooth. Others made a better story.`;
   el('ending-cost').textContent = `${state.usage.claudeRequests} conversation turns · ${money(state.usage.totalCost)} estimated API usage`;
   el('ending-cost').hidden = !providers?.development;
   eveningUI.closeDialogs(); eveningUI.renderEnding(state); ambience.cue('ending');
   try { sessionStorage.removeItem('table-for-two-session'); } catch { /* Optional. */ }
 }
-function walkingInput() {
-  const touchBlocked = !!mobile?.enabled && (mobile.portrait || !!mobile.menuScope);
-  const controlsBlocked = menuInputOpen() || !el('conversation-form').hidden || pageSuspended || document.hidden;
-  const typing = controlsBlocked || touchBlocked || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
-  const analog = mobile?.movement ?? { horizontal: 0, forward: 0 };
-  const horizontal = !typing ? Math.max(-1, Math.min(1, Number(keys.has('d') || keys.has('arrowright')) - Number(keys.has('a') || keys.has('arrowleft')) + analog.horizontal)) : 0;
-  const forward = !typing ? Math.max(-1, Math.min(1, Number(keys.has('w') || keys.has('arrowup')) - Number(keys.has('s') || keys.has('arrowdown')) + analog.forward)) : 0;
-  const canWalk = renderer.isReady && joined && state.phase === 'playing' && !state.seated && !pageSuspended && !document.hidden;
-  const moving = canWalk && !!(horizontal || forward);
-  const vector = renderer.getMovement(moving ? horizontal : 0, moving ? forward : 0);
-  const magnitude = Math.max(1, Math.hypot(vector.x, vector.z));
-  return { touchBlocked, controlsBlocked, horizontal, forward, canWalk, moving, moveX: vector.x / magnitude, moveZ: vector.z / magnitude };
-}
-function sendWalkingInput(now = performance.now()) {
-  const intent = walkingInput();
-  if (joined && state.phase === 'playing') {
-    const room = state.id, membership = doubleClient.credentials, sessionToken = token;
-    const yaw = renderer.getYaw();
-    movementSendGate.submit(room, now, intent.moving, intent.horizontal, intent.forward, complete => {
-      // The old request may finish after leaving or rejoining a different seat.
-      if (!joined || state.id !== room || doubleClient.credentials !== membership || token !== sessionToken || state.phase !== 'playing') { complete(); return; }
-      void command({ type: 'move', x: intent.moveX, z: intent.moveZ, yaw }, true).finally(complete);
-    });
-  }
-  return intent;
-}
-function clearWalkingKeys() {
-  if (!keys.size) return;
-  keys.clear(); sendWalkingInput();
-}
+function clearWalkingKeys() { keys.clear(); }
 function releasePointer() {
   keys.clear(); dragging = false; mobile?.clear();
-  sendWalkingInput();
   if (document.pointerLockElement) { intentionalPointerRelease = true; document.exitPointerLock(); }
 }
 async function resumeDinner(after?: () => void) {
@@ -636,7 +584,6 @@ function closeTypedInput(restoreFocus = false) {
   if (restoreFocus) (btn('type-toggle').checkVisibility({ checkVisibilityCSS: true }) ? btn('type-toggle') : btn('mic-toggle')).focus();
 }
 function showTypedInput() {
-  tabletopInspector?.close();
   if (!joined || state.phase !== 'playing' || visibleModal()) return;
   releasePointer(); el('journal').hidden = true;
   btn('journal-toggle').setAttribute('aria-expanded', 'false');
@@ -649,7 +596,6 @@ function showTypedInput() {
 }
 async function pauseDinner() {
   if (!joined || state.phase === 'ended' || pausePending) return;
-  tabletopInspector?.close();
   pausePending = true;
   el('journal').hidden = true; btn('journal-toggle').setAttribute('aria-expanded', 'false');
   releasePointer(); closeTypedInput(); el('pause-dialog').hidden = false; recognition.setPaused(true);
@@ -663,78 +609,8 @@ async function pauseDinner() {
     if (!el('pause-dialog').hidden) menuNavigation.focusInitial();
   }
 }
-async function interact() {
-  if (!renderer.isReady) return;
-  if (!joined || state.phase !== 'playing' || menuInputOpen()) return;
-  const hit = renderer.getInteraction(state);
-  if (!hit) return;
-  await useTableTarget(hit.target);
-}
-async function useTableTarget(target: Extract<DinnerCommand, {type:'interact'}>['target']) {
-  if (!joined || state.phase !== 'playing') return;
-  const spill = (state.doubleDate?.role === 'wingman' ? state.doubleDate.otherView?.evening : state.evening)?.incident?.event === 'spilled-drink';
-  const action = (target === 'napkin' || target === 'glass') && spill ? null : tableActionForTarget(target);
-  if (action) {
-    const available = tabletopActionAvailability(state, action);
-    if (!available.enabled) { toast(available.reason!); return; }
-    if (await command({ type: 'tabletop', action }) && target === 'glass') ambience.cue('glass');
-    return;
-  }
-  if (eveningUI.handleTarget(target)) { tabletopInspector?.close(); return; }
-  if (target === 'menu') {
-    await openMenu();
-  } else if (target === 'date') {
-    showTypedInput();
-  } else if (target === 'exit') {
-    await pauseDinner();
-  } else await command({ type: 'interact', target });
-}
-function inspectTableAt(x?: number, y?: number) {
-  if (!renderer.isReady || !joined || state.phase !== 'playing' || !state.seated || menuInputOpen() || !el('conversation-form').hidden) return false;
-  const hit = x === undefined || y === undefined ? renderer.getInteraction(state) : renderer.getInteractionAt(state, x, y);
-  if (!hit || !isInspectionTarget(hit.target)) return false;
-  tabletopInspector!.update(state, { target: hit.target, label: hit.label });
-  tabletopInspector!.open(hit.target); return true;
-}
-async function openMenu() {
-  if (!joined || state.phase !== 'playing' || menuClosing || !el('menu-dialog').hidden) return;
-  tabletopInspector?.close();
-  closeTypedInput();
-  document.querySelectorAll<HTMLButtonElement>('[data-order]').forEach(button => { button.disabled = !!state.order; });
-  releasePointer(); menuPaused = false; el('menu-dialog').hidden = false; recognition.setPaused(true);
-  const sessionId = state.id;
-  menuOpening = (async () => {
-    if (!doubleClient.active) {
-      await interrupt();
-      if (joined && state.id === sessionId && state.phase !== 'ended') menuPaused = await command({ type: 'pause', paused: true });
-    }
-  })();
-  await menuOpening;
-}
-async function closeMenu(choice?: string) {
-  if (el('menu-dialog').hidden || menuClosing) return;
-  menuClosing = true;
-  const sessionId = state.id;
-  const controls = el('menu-dialog').querySelectorAll<HTMLButtonElement>('button');
-  controls.forEach(control => { control.disabled = true; });
-  try {
-    // Opening is visible immediately, but its pause must land before resume/order.
-    await menuOpening;
-    if (!joined || state.id !== sessionId) return;
-    if (menuPaused && state.phase !== 'ended' && !await command({ type: 'pause', paused: false })) return;
-    menuPaused = false; el('menu-dialog').hidden = true;
-    if (choice && state.phase === 'playing') {
-      const accepted = await command({ type: 'interact', target: 'menu', choice });
-      if (accepted && state.order === choice) log('Dinner', `You ordered ${choice}.`, true);
-    }
-  } finally {
-    menuClosing = false;
-    controls.forEach(control => { control.disabled = !!control.dataset.order && !!state.order; });
-    recognition.setPaused(state.phase !== 'playing' || visibleModal() || !doubleClient.active && !scenePresenceAvailable(state));
-  }
-}
+// The scene is a seated conversation. Table props never own input or trigger scripts.
 function rebuildRenderer() {
-  tabletopInspector?.close();
   renderer?.dispose();
   renderer = new RestaurantRenderer(el('restaurant-scene'), selectedDate);
   if (renderer.softwareRendering && !softwareNoticeShown && !navigator.webdriver) {
@@ -743,19 +619,9 @@ function rebuildRenderer() {
   }
   renderer.setPresentation(joined ? 'gameplay' : 'selection');
   document.querySelector<HTMLElement>('.selection-stage-label strong')!.textContent = getDate(selectedDate)!.name;
-  const canvas = renderer.canvas;
-  canvas.addEventListener('click', event => {
-    if (mobile?.enabled || (event instanceof PointerEvent && event.pointerType === 'touch')) return;
-    if (!renderer.isReady || !joined || menuInputOpen() || state.phase !== 'playing') return;
-    if (pointerTravel > 6) return;
-    if (document.pointerLockElement ? inspectTableAt() : inspectTableAt(event.clientX, event.clientY)) return;
-    closeTypedInput();
-    void unlockAudio();
-    try { const result = canvas.requestPointerLock(); if (result) void result.catch(() => {}); } catch { /* Drag-look remains available. */ }
-  });
-  canvas.addEventListener('pointerdown', event => { if (event.pointerType !== 'mouse' || !joined || menuInputOpen()) return; dragging = true; pointerTravel = 0; pointerX = event.clientX; pointerY = event.clientY; });
+
 }
-rebuildRenderer();
+if (!document.hidden && document.hasFocus()) rebuildRenderer();
 
 const friendAudio = document.createElement('audio');
 friendAudio.id = 'friend-audio'; friendAudio.hidden = true; document.body.append(friendAudio);
@@ -854,12 +720,11 @@ function presentDoubleLine(line: DoubleDialogueLine) {
     actorId: line.speaker, dateId: date?.dateId, lineId: line.id, text: line.text, emotion: line.emotion, clipId: line.clipId }, line.generation, generationEpoch, false);
 }
 function returnToModes(message: string) {
-  tabletopInspector?.close();
   cancelLocalPlayback(); clearTimeout(pollTimer); microphoneAttempt++;
   recognition.stop(); friendVoice.disconnect(); micEnabled = false; updateMic();
   eveningUI.closeDialogs(); closeTypedInput(); releasePointer();
   joined = false; token = ''; doubleRoom = undefined; tableAttention = undefined; endingPresented = false;
-  for (const id of ['pause-dialog', 'ending-screen', 'menu-dialog', 'settings-dialog', 'journal', 'dinner-hud']) el(id).hidden = true;
+  for (const id of ['pause-dialog', 'ending-screen', 'settings-dialog', 'journal', 'dinner-hud']) el(id).hidden = true;
   el('restaurant-app').classList.remove('playing'); doubleLobby.hide();
   state = preview(selectedDate); renderer.setDate(selectedDate); renderer.setPresentation('selection');
   el('conversation-target').hidden = true; el('arrival-screen').hidden = false; el('arrival-screen').dataset.screen = 'mode';
@@ -878,19 +743,23 @@ doubleLobby = new DoubleDateLobby(el('restaurant-app'), {
   async join(code, name) { await doubleClient.join(code, name); },
   async choose(dateId) { await doubleClient.command({ type: 'choose-date', dateId }); },
   async ready(ready) { await doubleClient.command({ type: 'ready', ready }); },
-  async start() { await unlockAudio(true); await doubleClient.command({ type: 'start' }); },
+  async start() {
+    const startEpoch = pageEpoch;
+    await unlockAudio(true);
+    if (disposed || pageSuspended || document.hidden || startEpoch !== pageEpoch) return;
+    await doubleClient.command({ type: 'start' });
+  },
   async copyInvite() { try { await navigator.clipboard.writeText(doubleClient.inviteUrl()); toast('Invite copied.'); } catch { toast('Invite code: ' + doubleRoom?.code, 12000); } },
   back: leaveDoubleLobby,
 });
 mobile = new MobileControls(el('restaurant-app'), {
-  look(dx, dy) { if (renderer.isReady && joined && state.phase === 'playing') renderer.look(dx, dy); },
-  tap(x, y) { inspectTableAt(x, y); },
-  interact() { void interact(); }, talk: showTypedInput,
+  talk: showTypedInput,
   closeTalk() { closeTypedInput(); }, mic() { btn('mic-toggle').click(); },
   pause() { void pauseDinner(); }, release: releasePointer, notice: toast,
 });
 async function restoreSession() {
   if (await doubleClient.restore()) return;
+  if (pageSuspended || document.hidden || disposed) return;
   const invite = new URL(location.href).searchParams.get('invite');
   if (invite) { el('arrival-screen').hidden = true; doubleLobby.setInviteCode(invite); doubleLobby.show('join'); menuNavigation.refresh('gameplay'); return; }
   await resumeStoredDinner();
@@ -992,11 +861,6 @@ btn('mic-toggle').addEventListener('click', async () => {
   try { await Promise.all([recognition.start(), doubleClient.active ? friendVoice.enable() : Promise.resolve()]); if (attempt === microphoneAttempt && !micEnabled) { recognition.stop(); friendVoice.disable(); } }
   catch (error) { if (attempt !== microphoneAttempt) return; recognition.stop(); friendVoice.disable(); micEnabled = false; updateMic(); toast((error as Error).message, 10000); }
 });
-btn('interaction').addEventListener('click', () => void interact());
-btn('capture-pointer').addEventListener('click', () => {
-  if (menuInputOpen() || mobile?.enabled) return;
-  try { const result = renderer.canvas.requestPointerLock?.(); if (result) void result.catch(() => {}); } catch { /* Drag-look remains available. */ }
-});
 btn('pause-open').addEventListener('click', () => void pauseDinner());
 btn('resume-date').addEventListener('click', () => void resumeDinner());
 btn('finish-date').addEventListener('click', async () => { if (doubleClient.active && state.doubleDate?.role === 'wingman') { try { await doubleClient.command({ type: 'view-ending' }); } catch (error) { toast((error as Error).message); } return; } await interrupt(); await command({ type: 'finish' }); });
@@ -1004,10 +868,6 @@ btn('back-to-table').addEventListener('click', async () => { if (!doubleClient.a
 btn('new-date').addEventListener('click', async () => { if (doubleClient.active) await doubleClient.leave(true); location.href = '/'; });
 btn('journal-toggle').addEventListener('click', () => { const open = el('journal').hidden; el('journal').hidden = !open; btn('journal-toggle').setAttribute('aria-expanded', String(open)); if (open) { releasePointer(); closeTypedInput(); } });
 btn('journal-close').addEventListener('click', () => { el('journal').hidden = true; btn('journal-toggle').setAttribute('aria-expanded', 'false'); });
-btn('menu-close').addEventListener('click', () => void closeMenu());
-document.querySelectorAll<HTMLButtonElement>('[data-order]').forEach(button => button.addEventListener('click', async () => {
-  await closeMenu(button.dataset.order);
-}));
 input('speech-enabled').checked = preferences.speech; input('captions-enabled').checked = preferences.captions;
 const ambientSetting = document.createElement('label'); ambientSetting.className = 'setting-row';
 const ambientCopy = document.createElement('span'); ambientCopy.textContent = 'Restaurant ambience';
@@ -1072,31 +932,15 @@ input('captions-enabled').addEventListener('change', () => {
   savePreferences();
 });
 input('voice-volume').addEventListener('input', () => { preferences.volume = Number(input('voice-volume').value); speech.setVolume(preferences.volume); savePreferences(); });
-document.addEventListener('mousemove', event => {
-  if (mobile?.enabled || !joined || menuInputOpen() || state.phase !== 'playing') return;
-  if (document.pointerLockElement === renderer.canvas) renderer.look(event.movementX, event.movementY);
-  else if (dragging) { pointerTravel += Math.hypot(event.clientX - pointerX, event.clientY - pointerY); renderer.look(event.clientX - pointerX, event.clientY - pointerY); pointerX = event.clientX; pointerY = event.clientY; }
-});
-document.addEventListener('pointerup', () => { dragging = false; });
-document.addEventListener('pointerlockchange', () => {
-  const locked = document.pointerLockElement === renderer.canvas, lost = hadPointerLock && !locked;
-  hadPointerLock = locked;
-  el('capture-pointer').hidden = locked || !joined || visibleModal();
-  if (!locked) clearWalkingKeys();
-  if (lost && !intentionalPointerRelease && joined && state.phase === 'playing' && !visibleModal()) void pauseDinner();
-  intentionalPointerRelease = false;
-});
 document.addEventListener('keydown', event => {
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((event.target as HTMLElement)?.tagName);
   if (event.key === 'Escape') {
     event.preventDefault(); clearWalkingKeys();
     if (event.repeat) return;
     if (!el('ending-screen').hidden) return;
-    if (tabletopInspector?.isOpen) { tabletopInspector.close(); return; }
     if (!el('conversation-form').hidden && !visibleModal()) closeTypedInput(true);
     else if (!el('settings-dialog').hidden) btn('settings-close').click();
     else if (eveningUI.isDialogOpen) eveningUI.closeDialogs();
-    else if (!el('menu-dialog').hidden) btn('menu-close').click();
     else if (!el('journal').hidden) btn('journal-close').click();
     else if (!el('pause-dialog').hidden) btn('resume-date').click();
     else if (!joined) { if (startingDinner) return; if (!doubleLobby.element.hidden) { void leaveDoubleLobby(); return; } if (el('arrival-screen').dataset.screen === 'select') btn('select-back').click(); else if (el('arrival-screen').dataset.screen === 'mode') btn('mode-back').click(); }
@@ -1105,68 +949,71 @@ document.addEventListener('keydown', event => {
     return;
   }
   if (menuNavigation.handle(event)) { clearWalkingKeys(); return; }
-  if (startingDinner || typing || !joined || visibleModal() || state.phase !== 'playing' || (mobile?.enabled && mobile.portrait) || mobile?.menuScope) return;
+  if (startingDinner || typing || !joined || visibleModal() || state.phase !== 'playing' || mobile?.menuScope) return;
   const key = event.key.toLowerCase();
   if (key === 'j' && !event.repeat) { event.preventDefault(); btn('journal-toggle').click(); return; }
   if (!el('journal').hidden) return;
   if (key === 'm' && !event.repeat) { event.preventDefault(); btn('mic-toggle').click(); return; }
-  if (/^[1-4]$/.test(key) && !event.repeat && el('conversation-form').hidden) {
-    if (eveningUI.chip(Number(key))) { event.preventDefault(); clearWalkingKeys(); }
-    return;
-  }
-  if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
-    if (!keys.has(key)) { keys.add(key); sendWalkingInput(); }
-    event.preventDefault();
-  }
-  if (key === 'e' && !event.repeat) { event.preventDefault(); void interact(); }
-  if (key === 'r' && !event.repeat) { event.preventDefault(); inspectTableAt(); }
   if (key === 't' && !event.repeat) { event.preventDefault(); showTypedInput(); }
 });
-document.addEventListener('keyup', event => {
-  if (keys.delete(event.key.toLowerCase())) sendWalkingInput();
-});
-window.addEventListener('blur', () => releasePointer());
 function suspendPage() {
+  if (disposed) return;
+  if (pageSuspended) { pageEpoch++; if (doubleClient.active) doubleClient.suspend(); return; }
+  pageSuspended = true; pageEpoch++; commandEpoch++;
+  renderer?.setActive(false);
+  if (!joined && !userEnteredMenu) restoreAttempted = false;
+  pageRequests.abort(); clearTimeout(pollTimer); clearTimeout(connectionTimer);
+  if (frameHandle) cancelAnimationFrame(frameHandle); frameHandle = 0;
   releasePointer(); cancelLocalPlayback(); microphoneAttempt++;
-  recognition.stop(); friendVoice.disable(); micEnabled = false; updateMic();
+  recognition.stop(); friendVoice.disconnect(); sharedMicrophone.suspend(); speech.suspend(); ambience.suspend();
+  micEnabled = false; updateMic();
+  if (doubleClient.active) { doubleClient.suspend(); return; }
   if (!joined || state.phase === 'ended') return;
-  const credentials = doubleClient.credentials;
-  const path = credentials ? '/api/double-date/rooms/' + encodeURIComponent(credentials.roomId) + '/command' : sessionPath() + '/command';
-  const body = credentials ? { type: 'scene', command: { type: 'pause', paused: true } } : { type: 'pause', paused: true };
-  void fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${credentials?.token ?? token}` }, body: JSON.stringify(body), keepalive: true }).catch(() => {});
+  const path = sessionPath() + '/command', sessionToken = token;
+  const pause = () => fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` }, body: JSON.stringify({ type: 'pause', paused: true }), keepalive: true, signal: AbortSignal.timeout(5000) }).catch(() => {});
+  backgroundPause = backgroundPause ? backgroundPause.then(pause) : pause();
 }
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) return;
-  releasePointer();
-  if (mobile?.enabled) suspendPage();
-  else if (joined && state.phase === 'playing' && !doubleClient.active) void pauseDinner();
-});
-window.addEventListener('resize', () => renderer.resize());
+async function resumePage() {
+  if (!pageSuspended || disposed) return;
+  const epoch = ++pageEpoch;
+  const double = doubleClient.active;
+  if (double) await doubleClient.resume(); else await backgroundPause;
+  if (disposed || document.hidden || epoch !== pageEpoch) return;
+  pageSuspended = false; pageRequests = new AbortController(); backgroundPause = undefined;
+  if (!renderer) rebuildRenderer(); else { renderer.setActive(true); renderer.resize(); }
+  lastFrame = performance.now(); scheduleFrame();
+  if (!double && joined && state.phase !== 'ended') { clearTimeout(pollTimer); void poll(); }
+  else if (!double && (!providers || !joined && !userEnteredMenu && !restoreAttempted)) void connectRestaurant();
+}
+const pageActivity = new PageActivity(suspendPage, () => { void resumePage(); });
+window.addEventListener('blur', () => pageActivity.focus(false));
+window.addEventListener('focus', () => pageActivity.focus(true));
+document.addEventListener('visibilitychange', () => pageActivity.visibility(document.hidden));
+window.addEventListener('resize', () => renderer?.resize());
 window.addEventListener('pagehide', event => {
-  if (event.persisted) { pageSuspended = true; suspendPage(); return; }
-  disposed = true; keys.clear(); turnAbort?.abort(); speech.dispose(); recognition.dispose(); ambience.dispose(); clearTimeout(pollTimer);
-  friendVoice.dispose(); sharedMicrophone.dispose();
-  if (doubleClient.active) { void doubleClient.leave(false); doubleClient.dispose(); }
-  else if (joined && state.phase === 'playing') void fetch(sessionPath() + '/command', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ type: 'pause', paused: true }), keepalive: true });
-  clearTimeout(connectionTimer); mobile?.dispose(); tabletopInspector?.dispose(); renderer.dispose();
+  pageActivity.page(false);
+  if (event.persisted) return;
+  disposed = true; pageRequests.abort(); clearTimeout(pollTimer); clearTimeout(connectionTimer);
+  speech.dispose(); recognition.dispose(); ambience.dispose(); friendVoice.dispose(); sharedMicrophone.dispose(); doubleClient.dispose();
+  mobile?.dispose(); renderer?.dispose();
 });
 window.addEventListener('pageshow', event => {
   if (!event.persisted) return;
   if (disposed) { location.reload(); return; }
-  pageSuspended = false; lastFrame = performance.now(); renderer.resize(); releasePointer();
-  if (doubleClient.active) void doubleClient.restore();
-  else if (joined && state.phase !== 'ended') { clearTimeout(pollTimer); void poll(); }
+  pageActivity.visibility(document.hidden); pageActivity.focus(document.hasFocus()); pageActivity.page(true);
 });
 const perfStats = new URLSearchParams(location.search).has('stats') ? createPerfStats(document.body, () => renderer.diagnostics()) : null;
 const frameCap = createFrameCap();
+function scheduleFrame() { if (!frameHandle && !disposed && !pageSuspended && !document.hidden) frameHandle = requestAnimationFrame(frame); }
 function frame(now: number) {
-  if (disposed) return;
-  requestAnimationFrame(frame);
+  frameHandle = 0;
+  if (disposed || pageSuspended || document.hidden || !renderer) return;
+  scheduleFrame();
   if (!frameCap.shouldRender(now)) return;
   const frameStart = performance.now();
   const dt = Math.min(.06, (now - lastFrame) / 1000); lastFrame = now;
   menuNavigation.refresh(el('conversation-form').hidden ? 'gameplay' : 'typing');
-  renderer.setTableFocus(!el('menu-dialog').hidden ? 'menu' : eveningUI.farewellReady ? 'farewell' : null);
+  renderer.setTableFocus(null);
   if (state.doubleDate) state.doubleDate.speakingActor = tableAttention && tableAttention.until > now ? tableAttention.actor : null;
   if (!joined || !micEnabled || busy || state.phase !== 'playing' || visibleModal() || document.hidden || pageSuspended) clearListeningPreview();
   else {
@@ -1175,41 +1022,26 @@ function frame(now: number) {
     else renderer.setListeningPreview(cue);
   }
   renderer.setDateThinking(busy && !playback.speaker);
-  // Keyboard events use the same ordered sender without waiting for this frame.
-  const { touchBlocked, controlsBlocked, canWalk, moveX, moveZ } = sendWalkingInput(now);
-  const humanIndex = state.participants.findIndex(participant => participant.kind === 'human');
-  const human = state.participants[humanIndex];
-  const viewPosition = human && walkingView.sample(state.id, human.position, canWalk, moveX, moveZ, dt);
-  const renderState = viewPosition ? { ...state, participants: state.participants.map((participant, index) => index === humanIndex ? { ...participant, position: viewPosition } : participant) } : state;
-  renderer.update(dt, renderState, playback);
-  if (tabletopInspector?.target && !renderer.hasTableTarget(tabletopInspector.target)) tabletopInspector.close();
+  renderer.update(dt, state, playback);
   el('scene-loading').hidden = renderer.isReady;
-  el('prompt-line').classList.toggle('prompt-quiet', !joined || state.phase !== 'playing' || visibleModal() || !el('conversation-form').hidden);
-  const touchHit = !controlsBlocked && !touchBlocked && renderer.isReady && joined && state.phase === 'playing' ? renderer.getInteraction(state) : null;
-  tabletopInspector?.update(state, touchHit && isInspectionTarget(touchHit.target) ? { target: touchHit.target, label: touchHit.label } : null);
-  if (tabletopInspector?.isOpen && (otherModalOpen() || !el('journal').hidden || !el('conversation-form').hidden || pageSuspended || document.hidden || touchBlocked)) tabletopInspector.close();
-  mobile?.update({ joined, playing: state.phase === 'playing' && renderer.isReady && !pageSuspended, blocked: controlsBlocked, modal: visibleModal(), typing: !el('conversation-form').hidden, seated: state.seated, micEnabled, interactionLabel: touchHit?.label ?? null });
-  if (renderer.isReady && joined && state.phase === 'playing' && !visibleModal() && !pageSuspended && !document.hidden) {
-    const blocked = controlsBlocked || touchBlocked;
-    const hit = blocked ? null : renderer.getInteraction(state);
-    el('interaction').hidden = !hit;
-    if (hit) el('interaction-label').textContent = hit.label;
-    el('capture-pointer').hidden = !!mobile?.enabled || blocked || !!document.pointerLockElement || document.activeElement === input('conversation-input');
-  } else { el('interaction').hidden = true; el('capture-pointer').hidden = true; }
+  const controlsBlocked = menuInputOpen() || !el('conversation-form').hidden || pageSuspended || document.hidden;
+  mobile?.update({ joined, playing: state.phase === 'playing' && renderer.isReady && !pageSuspended, blocked: controlsBlocked, modal: visibleModal(), typing: !el('conversation-form').hidden, seated: true, micEnabled, interactionLabel: null });
   perfStats?.sample(now, performance.now() - frameStart);
 }
 // The DOM menus are ready before shader preparation or the first rendered frame.
 menuNavigation.refresh('gameplay');
-requestAnimationFrame(frame);
+scheduleFrame();
+if (document.hidden) pageActivity.visibility(true);
+if (!document.hasFocus()) pageActivity.focus(false);
 async function connectRestaurant(attempt = 0) {
   try {
     const status = await request<ProviderStatus>('/api/date/status');
-    if (disposed) return;
+    if (disposed || pageSuspended || document.hidden) return;
     providers = status; renderProviders();
     if (!joined && !startingDinner) el('start-error').hidden = true;
     if (!restoreAttempted && !joined && !startingDinner && !userEnteredMenu) { restoreAttempted = true; await restoreSession(); }
   } catch {
-    if (disposed) return;
+    if (disposed || pageSuspended || document.hidden) return;
     if (!joined) { el('start-error').textContent = attempt < 4 ? 'Opening the restaurant…' : 'The restaurant could not connect. Reload to try again.'; el('start-error').hidden = false; }
     if (attempt < 4) connectionTimer = setTimeout(() => void connectRestaurant(attempt + 1), 1500 * (attempt + 1));
   }

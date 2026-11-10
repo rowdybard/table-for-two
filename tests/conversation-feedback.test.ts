@@ -8,7 +8,6 @@ import { DateApiError, type ClaudeAdapter, type ClaudeRequest } from '../server/
 import type { DinnerState, SceneTurn, TurnEvent } from '../src/restaurant/types';
 import { DOLPHIN_MODEL, HORDE_MODEL } from '../src/restaurant/types';
 import type { DoubleDateRoomState, DoubleRoomResponse } from '../src/restaurant/double-date-types';
-import { MENU } from '../src/restaurant/content';
 import { humanLine, noteOf, signalFor } from './helpers/turn-note';
 import { doubleContext, doubleNote } from './helpers/double-note';
 
@@ -59,63 +58,34 @@ function assertUnpunished(state: DinnerState) {
   assert.equal(state.evening.cues.some(cue => cue.key === 'boundary-warning'), false);
 }
 
-for (const mode of ['ai-date', 'blind-date'] as const) test(`${mode}: a provider refusal becomes an authored table beat, with one normally billed request and no personal penalty`, async t => {
+for (const mode of ['ai-date', 'blind-date'] as const) test(`${mode}: a provider refusal remains a visible error with one billed request and no personal penalty`, async t => {
   let calls = 0;
-  const adapter: ClaudeAdapter = { async *stream() { calls++; yield { type: 'usage', usage: { inputTokens: 123, outputTokens: 0, cacheReadTokens: 10 } }; throw new DateApiError(422, 'conversation_refusal', 'Private provider response must not be exposed.'); } };
+  const adapter: ClaudeAdapter = { async *stream() { calls++; yield { type: 'usage', usage: { inputTokens: 123, outputTokens: 0, cacheReadTokens: 10 } }; throw new DateApiError(422, 'conversation_refusal', 'The provider declined this turn.'); } };
   const api = await boot({ claude: adapter }); t.after(() => api.close());
   const session = await api.create(mode);
   const response = await api.request(api.soloPath(session) + '/turn', session.token, { turnId: 'provider-limit', text: 'That was a suggestive joke.', model: 'claude-haiku-5-5' });
   assert.equal(response.status, 200);
   const stream = events(await response.text());
-  assert.equal(stream.some(event => event.type === 'error'), false);
+  assert.ok(stream.some(event => event.type === 'error' && event.code === 'conversation_refusal'));
   assert.equal(stream.at(-1)?.type, 'done');
   const state = await api.soloState(session); assertUnpunished(state);
-  const cue = state.evening.cues.find(cue => cue.key === 'table-check');
-  assert.ok(cue && cue.utterances.length === 1 && cue.utterances[0].speaker === 'waiter');
+  assert.equal(state.evening.cues.some(cue => cue.key === 'table-check'), false);
   assert.equal(state.evening.incident, null, 'a meal incident cannot be invented before dinner is served');
   assert.equal(state.usage.claudeRequests, 1); assert.equal(calls, 1);
   assert.equal(state.usage.inputTokens, 123); assert.ok(state.usage.claudeCost > 0);
-  assert.equal(JSON.stringify(stream).includes('Private provider response'), false);
 });
 
-test('a provider redirect preserves an existing wrong-order incident without duplicating or penalizing it', async t => {
-  let calls = 0;
-  const adapter: ClaudeAdapter = { async *stream() { calls++; yield { type: 'usage', usage: { inputTokens: 80, outputTokens: 0 } }; throw new DateApiError(422, 'conversation_refusal', 'Provider declined this turn.'); } };
-  const api = await boot({ claude: adapter, autoTick: true, storyRate: 30, scenarioId: 'family-visit' }); t.after(() => api.close());
-  const session = await api.create(), path = api.soloPath(session);
-  await until(async () => {
-    const state = await api.soloState(session);
-    if (state.participants[0].position[2] > 1.7) await api.request(path + '/command', session.token, { type: 'move', x: 0, z: -1, yaw: 0 });
-    return state;
-  }, state => state.participants[0].position[2] <= 1.7);
-  for (const command of [{ type: 'move', x: 0, z: 0, yaw: 0 }, { type: 'interact', target: 'seat' }, { type: 'interact', target: 'menu', choice: MENU[0] }]) {
-    const response = await api.request(path + '/command', session.token, command); assert.equal(response.status, 200, await response.clone().text());
-  }
-  const served = await until(() => api.soloState(session), state => state.evening.main.status === 'served');
-  assert.equal(served.evening.incident?.event, 'wrong-order');
-  const incident = structuredClone(served.evening.incident);
-  const response = await api.request(path + '/turn', session.token, { turnId: 'served-provider-limit', text: 'A bold dinner joke.', model: 'claude-haiku-5-5' });
-  assert.equal(events(await response.text()).some(event => event.type === 'error'), false);
-  const state = await api.soloState(session); assertUnpunished(state);
-  assert.equal(state.evening.incident?.event, 'wrong-order');
-  assert.deepEqual(state.evening.incident, incident);
-  assert.equal(state.events.filter(event => event === 'wrong-order').length, 1);
-  assert.ok(state.events.includes('wrong-order'));
-  assert.notEqual(state.evening.main.servedDish, state.order);
-  assert.equal(calls, 1); assert.equal(state.usage.claudeRequests, 1);
-});
-
-test('Double provider refusal creates one shared table check, without ending either pairing or repeating the model call', async t => {
+test('Double provider refusal is visible without ending either pairing or repeating the model call', async t => {
   let calls = 0;
   const adapter: ClaudeAdapter = { async *stream() { calls++; yield { type: 'usage', usage: { inputTokens: 150, outputTokens: 0 } }; throw new DateApiError(422, 'conversation_refusal', 'Provider declined this turn.'); } };
   const api = await boot({ claude: adapter }); t.after(() => api.close()); const { h1 } = await api.pair();
   const response = await api.request(api.roomPath(h1) + '/turn', h1.token, { turnId: 'double-limit', text: 'A flirty joke for the table.', target: 'table' });
   assert.equal(response.status, 202);
   const state = await until(() => api.roomState(h1), state => !state.processing && state.usage.claudeRequests === 1);
-  assert.equal(state.error, undefined); assert.equal(state.phase, 'playing');
+  assert.equal(state.error?.code, 'conversation_refusal'); assert.equal(state.phase, 'playing');
   for (const view of Object.values(state.views)) assertUnpunished(view);
-  assert.equal(Object.values(state.views).flatMap(view => view.evening.cues).filter(cue => cue.key === 'table-check').length, 1);
-  assert.ok(state.lines.some(line => line.speaker === 'waiter' && line.text.includes('table')));
+  assert.equal(Object.values(state.views).flatMap(view => view.evening.cues).filter(cue => cue.key === 'table-check').length, 0);
+  assert.equal(state.lines.some(line => line.speaker === 'waiter'), false);
   assert.equal(state.usage.inputTokens, 150); assert.ok(state.usage.claudeCost > 0); assert.equal(calls, 1);
 });
 
@@ -397,6 +367,10 @@ test('Solo model reset preserves the evening, aborts stale Horde output and uses
   const session = await api.create(), path = api.soloPath(session);
   const first = await api.request(path + '/turn', session.token, { turnId: 'reset-established-progress', text: 'I collect vinyl records.', model: 'claude-haiku-5-5' });
   assert.equal(events(await first.text()).some(event => event.type === 'error'), false);
+  const firstState = await api.soloState(session);
+  assert.equal(firstState.memory, '');
+  const receipt = await api.request(path + '/playback', session.token, { generation: firstState.generation, speaker: 'date', text: 'A normal dinner reply 1.', completed: true, playedSeconds: 3 });
+  assert.equal(receipt.status, 200);
   const before = await api.soloState(session); assert.equal(before.memory, 'You collect vinyl records.'); assert.ok(before.evening.dialogueTurns > 0);
   const stale = await api.request(path + '/turn', session.token, { turnId: 'reset-pending-horde', text: 'Tell me more.', model: HORDE_MODEL });
   await ready.promise;
@@ -464,7 +438,7 @@ test('Double reset is host only, clears Horde errors and drops pending and queue
   assert.equal(after.lines.some(line => line.text === 'A stale queued Horde answer must not be heard.'), false);
   assert.deepEqual(requested.map(request => request.model), ['claude-haiku-5-5', HORDE_MODEL, HORDE_MODEL, 'claude-haiku-5-5']);
   assert.equal(doubleContext(requested.at(-1)!).humanTurn.text, 'Let us continue dinner.');
-  for (const view of Object.values(after.views)) assert.equal(view.memory, 'A shared preference at dinner.');
+  for (const view of Object.values(after.views)) assert.equal(view.memory, '', 'unheard replies do not commit proposed memories');
 });
 
 test('Horde as the free default starts Solo, Blind and Double without paid keys or a chemistry unlock', async t => {
@@ -683,8 +657,8 @@ for (const mode of ['ai-date', 'blind-date'] as const) test(`${mode}: a redirect
   } };
   const api = await boot({ claude: adapter }); t.after(() => api.close()); const session = await api.create(mode), path = api.soloPath(session);
   const first = await api.request(path + '/turn', session.token, { turnId: 'limited-topic', text: blocked, model: 'claude-haiku-5-5' });
-  assert.equal(events(await first.text()).some(event => event.type === 'error'), false);
-  assert.ok((await api.soloState(session)).evening.cues.some(cue => cue.key === 'table-check'));
+  assert.ok(events(await first.text()).some(event => event.type === 'error' && event.code === 'conversation_refusal'));
+  assert.equal((await api.soloState(session)).evening.cues.some(cue => cue.key === 'table-check'), false);
   const second = await api.request(path + '/turn', session.token, { turnId: 'fresh-dinner-topic', text: ordinary, model: 'claude-haiku-5-5' });
   const stream = events(await second.text());
   assert.equal(stream.some(event => event.type === 'error'), false);
@@ -697,7 +671,7 @@ for (const mode of ['ai-date', 'blind-date'] as const) test(`${mode}: a redirect
   assert.equal(humanLine(noteOf(requests[1])), ordinary);
   const state = await api.soloState(session); assertUnpunished(state);
   assert.equal(state.usage.claudeRequests, 2);
-  assert.equal(state.evening.cues.filter(cue => cue.key === 'table-check').length, 1);
+  assert.equal(state.evening.cues.filter(cue => cue.key === 'table-check').length, 0);
 });
 
 test('Double private history resets a provider-limited topic while preserving the original public speaker line', async t => {
@@ -712,7 +686,7 @@ test('Double private history resets a provider-limited topic while preserving th
   const first = await api.request(api.roomPath(h1) + '/turn', h1.token, { turnId: 'limited-topic', text: blocked, target: 'table' });
   assert.equal(first.status, 202);
   const redirected = await until(() => api.roomState(h1), state => !state.processing && state.usage.claudeRequests === 1);
-  assert.equal(redirected.error, undefined); assert.ok(redirected.lines.some(line => line.speaker === 'h1' && line.text === blocked));
+  assert.equal(redirected.error?.code, 'conversation_refusal'); assert.ok(redirected.lines.some(line => line.speaker === 'h1' && line.text === blocked));
   const second = await api.request(api.roomPath(h2) + '/turn', h2.token, { turnId: 'fresh-dinner-topic', text: ordinary, target: 'table' });
   assert.equal(second.status, 202);
   const state = await until(() => api.roomState(h2), state => !state.processing && state.usage.claudeRequests === 2);
@@ -725,7 +699,7 @@ test('Double private history resets a provider-limited topic while preserving th
   assert.ok(state.lines.some(line => line.speaker === 'h2' && line.text === ordinary));
   assert.ok(state.lines.some(line => line.speaker === 'd2' && line.text === 'The lemon posset looks good to me.'));
   for (const view of Object.values(state.views)) assertUnpunished(view);
-  assert.equal(Object.values(state.views).flatMap(view => view.evening.cues).filter(cue => cue.key === 'table-check').length, 1);
+  assert.equal(Object.values(state.views).flatMap(view => view.evening.cues).filter(cue => cue.key === 'table-check').length, 0);
 });
 
 function chunkedDialogue(result: unknown, called: () => void): ClaudeAdapter {
@@ -747,12 +721,15 @@ for (const mode of ['ai-date', 'blind-date'] as const) for (const speaker of ['d
   assert.equal(spoken.length, 1); assert.equal(spoken[0].utterance.speaker, 'date'); assert.equal(spoken[0].utterance.text, dateTurn.utterances[0].text);
   assert.equal(spoken[0].index, 0);
   const state = await api.soloState(session); assertUnpunished(state);
-  assert.equal(state.memory, result.memory); assert.equal(state.usage.claudeRequests, 1); assert.equal(calls, 1);
+  assert.equal(state.memory, '');
+  const receipt = await api.request(path + '/playback', session.token, { generation: state.generation, speaker: 'date', text: spoken[0].utterance.text, completed: true, playedSeconds: 3 });
+  assert.equal(receipt.status, 200); assert.equal((await api.soloState(session)).memory, result.memory);
+  assert.equal(state.usage.claudeRequests, 1); assert.equal(calls, 1);
   const duplicate = await api.request(path + '/turn', session.token, request);
   assert.equal(await duplicate.text(), raw); assert.equal(calls, 1, 'normalizing silence never requires a retry');
 });
 
-for (const speaker of ['waiter', 'diner', 'd2'] as const) test(`Double: a silent optional ${speaker} creates no line and still commits the validated character updates`, async t => {
+for (const speaker of ['waiter', 'diner', 'd2'] as const) test(`Double: a silent optional ${speaker} creates no line and memory follows actual delivery`, async t => {
   let calls = 0;
   const result = { utterances: [{ speaker: 'd1', text: 'I am enjoying this conversation.', emotion: 'amused' }, { speaker, text: ' \t ', emotion: 'neutral' }],
     dateUpdates: ['d1', 'd2'].map(actorId => ({ actorId, emotion: 'neutral', memory: `Committed ${actorId} memory after a silent placeholder.`, social: neutral })) };
@@ -764,7 +741,11 @@ for (const speaker of ['waiter', 'diner', 'd2'] as const) test(`Double: a silent
   assert.equal(state.error, undefined);
   const spoken = state.lines.filter(line => !oldLines.has(line.id) && !['h1', 'h2'].includes(line.speaker));
   assert.equal(spoken.length, 1); assert.equal(spoken[0].speaker, 'd1'); assert.equal(spoken[0].text, result.utterances[0].text);
-  assert.equal(state.views.h1.memory, result.dateUpdates[0].memory); assert.equal(state.views.h2.memory, result.dateUpdates[1].memory);
+  assert.equal(state.views.h1.memory, ''); assert.equal(state.views.h2.memory, '');
+  const receipt = await api.request(api.roomPath(h1) + '/playback', h1.token, { lineId: spoken[0].id, generation: spoken[0].generation, completed: true, playedSeconds: 3 });
+  assert.equal(receipt.status, 200);
+  const delivered = await api.roomState(h1);
+  assert.equal(delivered.views.h1.memory, result.dateUpdates[0].memory); assert.equal(delivered.views.h2.memory, '');
   for (const view of Object.values(state.views)) assertUnpunished(view);
   assert.equal(calls, 1);
   const duplicate = await api.request(api.roomPath(h1) + '/turn', h1.token, request); assert.equal(duplicate.status, 200); assert.equal(calls, 1);
@@ -805,7 +786,13 @@ for (const exactBudget of [false, true]) test(`Solo accepts two date clauses ${e
   assert.deepEqual(spoken.map(event => event.utterance.text), utterances.map(line => line.text));
   assert.deepEqual(spoken.map(event => event.index), [0, 1]);
   const state = await api.soloState(session); assertUnpunished(state);
-  assert.equal(state.memory, result.memory); assert.equal(state.usage.claudeRequests, 1); assert.equal(calls, 1);
+  assert.equal(state.memory, '');
+  for (const [index, line] of utterances.entries()) {
+    const receipt = await api.request(api.soloPath(session) + '/playback', session.token, { generation: state.generation, speaker: 'date', text: line.text, completed: true, playedSeconds: 3 });
+    assert.equal(receipt.status, 200);
+    assert.equal((await api.soloState(session)).memory, index === utterances.length - 1 ? result.memory : '');
+  }
+  assert.equal(state.usage.claudeRequests, 1); assert.equal(calls, 1);
 });
 
 const invalidDoubleLines = [
@@ -826,7 +813,7 @@ for (const invalid of invalidDoubleLines) test(`Double normalization still rejec
   assert.equal(calls, 1);
 });
 
-test('Double may remain entirely silent with valid empty lines while committing factual updates', async t => {
+test('Double may remain entirely silent without committing unheard memories', async t => {
   let calls = 0;
   const result = { utterances: [{ speaker: 'd1', text: '', emotion: 'neutral' }, { speaker: 'waiter', text: ' ', emotion: 'neutral' }],
     dateUpdates: ['d1', 'd2'].map(actorId => ({ actorId, emotion: 'neutral', memory: 'The friends had conversational space.', social: neutral })) };
@@ -836,6 +823,6 @@ test('Double may remain entirely silent with valid empty lines while committing 
   const state = await until(() => api.roomState(h1), state => !state.processing && state.usage.claudeRequests === 1);
   assert.equal(state.error, undefined);
   assert.equal(state.lines.filter(line => !oldLines.has(line.id) && !['h1', 'h2'].includes(line.speaker)).length, 0);
-  for (const view of Object.values(state.views)) { assertUnpunished(view); assert.equal(view.memory, result.dateUpdates[0].memory); }
+  for (const view of Object.values(state.views)) { assertUnpunished(view); assert.equal(view.memory, ''); }
   assert.equal(calls, 1);
 });

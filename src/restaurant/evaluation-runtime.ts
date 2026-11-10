@@ -1,15 +1,13 @@
-import { getDate, MENU } from './content';
+import { getDate } from './content';
 import { createEvening } from './evening';
 import { createBlindDate } from './blind-date';
-import { CHARACTER_STORIES } from './story';
 import type { ClaudeModel, DinnerState, SceneTurn, SceneUtterance } from './types';
 import type { DoubleDateActorId, DoubleHumanId } from './double-date-types';
 import { EveningDirector } from '../../server/restaurant/evening';
 import { soloSystem } from '../../server/restaurant/conversation-prompt';
 import { dialogueLoopContext, tableNow } from '../../server/restaurant/dialogue-policy';
 import { conversationMessages, deliveryLabel, heardPrefix, turnNote, type TurnFlow } from '../../server/restaurant/turn-note';
-import { scenarioMechanicsContext } from '../../server/restaurant/scenario-effects';
-import { clampMemory } from '../../server/restaurant/memory';
+import { mergeMemoryForDelivery, retireSharedPremise } from '../../server/restaurant/memory';
 import { tableFacts } from '../../server/restaurant/table-facts';
 import { roleplayInstructions } from '../../server/restaurant/roleplay';
 import { EMOTIONS, SOCIAL_SIGNALS, TURN_SCHEMA, type ClaudeRequest } from '../../server/restaurant/providers';
@@ -32,9 +30,9 @@ const zeroUsage = () => ({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, 
 /** Controlled text-only server snapshots, not a booted game, transport, renderer or physics simulation. */
 function snapshot(script: EvaluationScript, dateId: DinnerState['dateId'], human: DoubleHumanId): DinnerState {
   return { id: `${script.id}-${human}`, revision: 0, generation: 0, mode: script.mode === 'double' ? 'double-date' : script.mode === 'blind' ? 'blind-date' : 'ai-date',
-    ...(script.blindSeed ? { blindDate: { seed: script.blindSeed } } : {}), dateId, phase: 'playing', stage: 'dining', elapsed: 120,
+    ...(script.blindSeed ? { blindDate: { seed: script.blindSeed } } : {}), dateId, phase: 'playing', stage: 'seated', elapsed: 120,
     participants: [{ id: 'p1', kind: 'human', name: script.humanNames?.[human] ?? names[human], position: [0, 0, 0] }, { id: 'p2', kind: 'ai', name: getDate(dateId)!.name, position: [0, 0, -2] }],
-    events: [], emotion: 'neutral', seated: true, order: MENU[0], glassRaised: false, memory: '', usage: zeroUsage(), sessionLimit: 2, evening: createEvening(dateId) };
+    events: [], emotion: 'neutral', seated: true, order: null, glassRaised: false, memory: '', usage: zeroUsage(), sessionLimit: 2, evening: createEvening(dateId) };
 }
 
 /** Production prompt, notes, transcript, validators and social/delivery controllers.
@@ -62,8 +60,6 @@ export class EvaluationConversation {
     this.directors = { h1: new EveningDirector(this.views.h1, { humanId: script.mode === 'double' ? 'h1' : 'player' }), h2: new EveningDirector(this.views.h2, { humanId: 'h2' }) };
     for (const view of Object.values(this.views)) {
       view.evening.cues = []; // Controlled dining snapshot; do not replay an arrival cue here.
-      view.evening.chapter = 'mains'; view.evening.main.status = 'served';
-      view.evening.main.servedDish = MENU[0]; view.evening.main.dateDish = CHARACTER_STORIES[view.dateId].preferredMain;
     }
     this.sheets = actors.map(actorId => presetDateSheet(actorId, owner(actorId), this.views[owner(actorId)].dateId));
     this.dateNames = { d1: this.sheets[0].date.name, d2: this.sheets[1].date.name };
@@ -73,12 +69,14 @@ export class EvaluationConversation {
     const turn = this.script.turns[index];
     if (!turn) throw new Error('Unknown evaluation turn.');
     if (this.prepared !== index) {
+      const speaker = this.script.mode === 'double' ? turn.human ?? 'h1' : 'h1';
+      this.views[speaker].memory = retireSharedPremise(this.views[speaker].memory, turn.text);
       for (const view of Object.values(this.views)) view.elapsed = 120 + index * 25 + (turn.quietSeconds ?? 0);
       if (turn.offstage) {
         const view = this.views[owner(turn.offstage)];
         view.phase = 'ended'; view.evening.care.romanceClosed = true;
         view.evening.farewell.ending = { kind: 'new-friend', title: 'A good kind of company', description: 'This pairing ended as friendship.', dateLine: 'Good night.' };
-        this.directors[owner(turn.offstage)].agenda.finish(); this.directors[owner(turn.offstage)].chemistry.revoke();
+        this.directors[owner(turn.offstage)].chemistry.revoke();
       }
       this.prepared = index;
     }
@@ -89,8 +87,8 @@ export class EvaluationConversation {
       ...(this.previous?.delivery === 'unheard' ? { keptTalking: true } : {}), ...(turn.quietSeconds ? { quietSeconds: turn.quietSeconds } : {}),
       ...(this.recent.at(-1) ? { lastDateLine: this.recent.at(-1)!.text } : {}) };
     const note = turnNote({ scene: view, dateName, humanText: turn.text, via: turn.via ?? 'typed', tableNow: tableNow(view, dateName), memory: view.memory, facts: tableFacts(view),
-      agenda: director.agenda.promptContext(), boundaries: director.boundaries.promptContext(), avoid: dialogueLoopContext(this.recent, turn.text).avoidUnpromptedTopics,
-      mechanics: scenarioMechanicsContext(view), scenario: view.evening.scenario, recentDelivered: this.recent, flow });
+      agenda: null, boundaries: director.boundaries.promptContext(), avoid: dialogueLoopContext(this.recent, turn.text).avoidUnpromptedTopics,
+      recentDelivered: this.recent, flow });
     return { model: this.model, system: soloSystem({ dateId: view.dateId, blindDate: view.blindDate, model: this.model }),
       messages: conversationMessages(this.history, this.trimmed, dateName, note), maxTokens: this.maxTokens, outputSchema: TURN_SCHEMA };
   }
@@ -102,15 +100,15 @@ export class EvaluationConversation {
       const humanId = owner(actorId), view = this.views[humanId], director = this.directors[humanId], available = view.phase !== 'ended';
       const recentOwn = this.lines.filter(line => line.speaker === actorId && this.heard.get(line.id)?.[speaker]?.completed).slice(-8).map(line => ({ speaker: 'date' as const, text: line.text, emotion: line.emotion }));
       return { actorId, humanId, dateName: this.dateNames[actorId], humanName: names[humanId], available, view, memory: view.memory, facts: tableFacts(view),
-        agenda: available ? director.agenda.promptContext() : null, boundaries: director.boundaries.promptContext(), avoid: dialogueLoopContext(recentOwn, turn.text).avoidUnpromptedTopics,
-        mechanics: scenarioMechanicsContext(view), friendOnlyTurns: this.excluded[actorId], recentOwn, pendingQuestion: director.pendingQuestion };
+        agenda: null, boundaries: director.boundaries.promptContext(), avoid: dialogueLoopContext(recentOwn, turn.text).avoidUnpromptedTopics,
+        friendOnlyTurns: this.excluded[actorId], recentOwn, pendingQuestion: director.pendingQuestion };
     });
     const last = this.lines.at(-1), interrupted = last && !this.heard.get(last.id)?.[speaker]?.completed;
     const note = doubleTurnNote({ couples, speaker, target, humanText: turn.text, via: turn.via ?? 'typed', elapsedMinutes: Math.floor(this.views.h1.elapsed / 60),
       flow: { ...(interrupted && last ? { talkedOver: { by: this.dateNames[last.speaker as DoubleDateActorId] ?? last.speaker, heard: heardPrefix(last.text, 1) } } : {}),
         ...(turn.quietSeconds ? { quietSeconds: turn.quietSeconds } : {}), ...(last ? { lastDateLine: { by: this.dateNames[last.speaker as DoubleDateActorId] ?? last.speaker, text: last.text } } : {}) } });
     const schema = structuredClone(DOUBLE_TURN_SCHEMA);
-    schema.properties.utterances.items.properties.speaker.enum = [...actors.filter(actor => this.views[owner(actor)].phase !== 'ended'), 'waiter', 'diner'];
+    schema.properties.utterances.items.properties.speaker.enum = actors.filter(actor => this.views[owner(actor)].phase !== 'ended');
     return { model: this.model, system: doubleSystem(this.sheets, roleplayInstructions(this.model), { emotions: EMOTIONS, signals: SOCIAL_SIGNALS }),
       messages: doubleMessages(renderDoubleHistory(this.doubleHistory.slice(-40), names, this.dateNames, humans, (id, human) => this.heard.get(id)?.[human]), this.trimmed || this.doubleHistory.length > 40, note),
       maxTokens: this.maxTokens, outputSchema: schema };
@@ -125,7 +123,7 @@ export class EvaluationConversation {
     if (result.kind === 'solo') {
       const view = this.views.h1, director = this.directors.h1, turn = result.turn;
       director.noteHumanTurn(input.text);
-      view.emotion = turn.emotion; view.memory = clampMemory(turn.memory, view.memory, input.text); director.social(turn, input.text);
+      view.emotion = turn.emotion; view.memory = mergeMemoryForDelivery(turn.memory, view.memory, turn.utterances.some(line => line.speaker === 'date') && delivery === 'heard', input.text); director.social(turn, input.text);
       const spokenResponse = turn.utterances.map(line => ({ ...line, delivery: deliveryLabel(line.text, delivery === 'heard' ? { completed: true, playedSeconds: 4 } : delivery === 'interrupted' ? { completed: false, playedSeconds: 1 } : undefined, delivery !== 'heard'), playedSeconds: delivery === 'heard' ? 4 : delivery === 'interrupted' ? 1 : 0 }));
       this.history.push({ role: 'user', content: input.text }, { role: 'assistant', content: JSON.stringify({ spokenResponse }) });
       if (delivery === 'heard') for (const line of turn.utterances) { director.acknowledge(line); if (line.speaker === 'date') this.recent.push(line); }
@@ -142,7 +140,7 @@ export class EvaluationConversation {
       if (view.phase === 'ended') continue;
       const ownLines = lines.filter(line => line.speaker === update.actorId).map(line => ({ speaker: 'date' as const, text: line.text, emotion: line.emotion }));
       const turn: SceneTurn = { utterances: ownLines, emotion: update.emotion, action: 'none', memory: update.memory, social: update.social, agenda: update.agenda };
-      view.emotion = turn.emotion; view.memory = clampMemory(turn.memory, view.memory, input.text);
+      view.emotion = turn.emotion; view.memory = mergeMemoryForDelivery(turn.memory, view.memory, ownLines.length > 0 && (delivery === 'heard' || human !== nextListener), human === speaker ? input.text : '');
       director.noteHumanTurn(input.text, speaker); director.social(turn, input.text, { humanId: speaker, paired: speaker === human, name: this.humanNames[speaker] });
     }
     for (const line of lines) {

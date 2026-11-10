@@ -1,12 +1,7 @@
 import './mobile.css';
-import { MobileInput } from './MobileInput';
 import { TouchButtonGesture } from './TouchButtonGesture';
-import { TouchLookTap } from './TouchLookTap';
 
 export type MobileControlsActions = {
-  look(dx: number, dy: number): void;
-  tap?(x: number, y: number): void;
-  interact(): void;
   talk(): void;
   closeTalk(): void;
   mic(): void;
@@ -26,20 +21,13 @@ export type MobileControlsState = {
 };
 const emptyState: MobileControlsState = { joined: false, playing: false, blocked: false, modal: false, typing: false, seated: false, micEnabled: false, interactionLabel: null };
 
-/** Touch input is deliberately separate from keyboard state and server movement. */
+/** Native-sized conversation controls in either phone orientation. */
 export class MobileControls {
-  private readonly input = new MobileInput();
   private readonly abort = new AbortController();
   private readonly buttonGestures = new Set<TouchButtonGesture>();
-  private readonly lookTap = new TouchLookTap();
   private readonly coarse = matchMedia('(pointer: coarse)');
   private readonly controls: HTMLElement;
-  private readonly movePad: HTMLElement;
-  private readonly lookPad: HTMLElement;
-  private readonly stick: HTMLElement;
-  private readonly context: HTMLButtonElement;
   private readonly micButton: HTMLButtonElement;
-  private readonly rotate: HTMLElement;
   private readonly displayButton: HTMLButtonElement;
   private readonly settingsDisplayButton: HTMLButtonElement;
   private readonly displayHelp: HTMLElement;
@@ -47,7 +35,6 @@ export class MobileControls {
   private state = emptyState;
   private active = false;
   private isPortrait = false;
-  private canGesture = false;
   private helpOpen = false;
   private disposed = false;
   private signature = '';
@@ -57,19 +44,8 @@ export class MobileControls {
     this.controls = document.createElement('div');
     this.controls.id = 'mobile-controls';
     this.controls.hidden = true;
-    this.controls.innerHTML = `<div id="mobile-look" class="mobile-look" role="group" aria-label="Drag with your right thumb to look"><span>Drag to look</span></div>
-      <div id="mobile-move" class="mobile-move" role="group" aria-label="Drag with your left thumb to move"><span class="mobile-stick-ring"><span class="mobile-stick"></span></span><span class="mobile-pad-label">Move</span></div>
-      <nav class="mobile-toolbar" aria-label="Dinner controls"><button id="mobile-talk" type="button">Talk</button><button id="mobile-mic" type="button" aria-label="Turn microphone on" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4m-4 0h8" fill="none" stroke="currentColor" stroke-width="2"/><path class="mobile-mic-slash" d="m4 20 16-16" stroke="currentColor" stroke-width="2"/></svg><span class="sr-only">Microphone</span></button><button id="mobile-pause" type="button" aria-label="Pause dinner">Pause</button></nav>
-      <button id="mobile-interact" class="mobile-interact" type="button" hidden></button>`;
-    this.movePad = this.controls.querySelector('#mobile-move')!;
-    this.lookPad = this.controls.querySelector('#mobile-look')!;
-    this.stick = this.controls.querySelector('.mobile-stick')!;
-    this.context = this.controls.querySelector('#mobile-interact')!;
+    this.controls.innerHTML = `<nav class="mobile-toolbar" aria-label="Dinner controls"><button id="mobile-talk" type="button">Talk</button><button id="mobile-mic" type="button" aria-label="Turn microphone on" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4m-4 0h8" fill="none" stroke="currentColor" stroke-width="2"/><path class="mobile-mic-slash" d="m4 20 16-16" stroke="currentColor" stroke-width="2"/></svg><span class="sr-only">Microphone</span></button><button id="mobile-pause" type="button" aria-label="Pause dinner">Pause</button></nav>`;
     this.micButton = this.controls.querySelector('#mobile-mic')!;
-    this.rotate = document.createElement('aside');
-    this.rotate.id = 'mobile-rotate'; this.rotate.hidden = true;
-    this.rotate.innerHTML = '<span aria-hidden="true">↻</span><strong>A little more room.</strong><p>Turn your phone sideways to play.</p><button type="button">Pause</button>';
-    this.bindAction(this.rotate.querySelector('button')!, () => this.actions.pause());
     this.displayButton = document.createElement('button');
     this.displayButton.id = 'mobile-display'; this.displayButton.type = 'button'; this.displayButton.hidden = true;
     this.settingsDisplayButton = document.createElement('button');
@@ -88,26 +64,16 @@ export class MobileControls {
     this.closeTalkButton.textContent = 'Back'; this.closeTalkButton.setAttribute('aria-label', 'Close typing and return to dinner');
     this.closeTalkButton.addEventListener('click', () => { this.clear(); this.actions.closeTalk(); }, { signal: this.abort.signal });
     app.querySelector('#conversation-form')?.append(this.closeTalkButton);
-    app.append(this.controls, this.rotate, this.displayButton, this.displayHelp);
+    app.append(this.controls, this.displayButton, this.displayHelp);
 
     const click = (id: string, callback: () => void) => this.bindAction(this.controls.querySelector<HTMLButtonElement>('#' + id)!, callback);
     click('mobile-talk', () => this.actions.talk());
     click('mobile-mic', () => this.actions.mic());
     click('mobile-pause', () => this.actions.pause());
-    click('mobile-interact', () => this.actions.interact());
     for (const button of [this.displayButton, this.settingsDisplayButton]) button.addEventListener('click', () => { this.displayReturnFocus = button; void this.expandDisplay(); }, { signal: this.abort.signal });
     this.displayHelp.querySelector('button')!.addEventListener('click', () => this.closeDisplayHelp(), { signal: this.abort.signal });
     this.displayHelp.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); this.closeDisplayHelp(); } }, { signal: this.abort.signal });
-    // Observe every touch, including a second finger outside the look surface.
-    window.addEventListener('pointerdown', event => {
-      if (event.pointerType !== 'touch') return;
-      this.lookTap.pointerDown(event.pointerId);
-    }, { capture: true, signal: this.abort.signal });
-    for (const type of ['pointerup', 'pointercancel'] as const) window.addEventListener(type, event => {
-      if (event.pointerType === 'touch') this.lookTap.pointerUp(event.pointerId);
-    }, { capture: true, signal: this.abort.signal });
-    this.bindPad(this.movePad, 'move'); this.bindPad(this.lookPad, 'look');
-    const suspend = () => { this.clear(); this.lookTap.reset(); };
+    const suspend = () => this.clear();
     window.addEventListener('blur', suspend, { signal: this.abort.signal });
     window.addEventListener('pagehide', suspend, { signal: this.abort.signal });
     document.addEventListener('visibilitychange', suspend, { signal: this.abort.signal });
@@ -123,29 +89,20 @@ export class MobileControls {
 
   get enabled() { return this.active; }
   get portrait() { return this.isPortrait; }
-  get movement() { return this.canGesture && !this.state.seated ? this.input.movement : { horizontal: 0, forward: 0 }; }
+  get movement() { return { horizontal: 0, forward: 0 }; }
   get menuScope() { return this.helpOpen ? this.displayHelp : null; }
 
   update(state: MobileControlsState) {
     if (this.disposed) return;
     if (this.state.typing && !state.typing) this.isPortrait = innerHeight > innerWidth;
-    if (this.state.seated !== state.seated) this.lookTap.cancel();
     this.state = state;
     const signature = [this.active, this.isPortrait, this.helpOpen, document.hidden, !!document.fullscreenElement, this.isStandalone(), this.supportsFullscreen(), ...Object.values(state)].join('|');
     if (signature === this.signature) return;
     this.signature = signature;
     const enabled = this.active && state.joined && state.playing && !state.modal && !state.typing && !this.helpOpen;
-    const gesture = enabled && !state.blocked && !this.isPortrait && !document.hidden;
-    if (this.canGesture && !gesture) this.clear();
-    this.canGesture = gesture;
-    this.controls.hidden = !enabled || this.isPortrait;
-    this.movePad.hidden = !gesture || state.seated;
-    this.lookPad.hidden = !gesture;
-    this.context.hidden = !gesture || !state.interactionLabel;
-    if (state.interactionLabel && this.context.textContent !== state.interactionLabel) this.context.textContent = state.interactionLabel;
+    this.controls.hidden = !enabled || document.hidden;
     this.micButton.setAttribute('aria-pressed', String(state.micEnabled));
     this.micButton.setAttribute('aria-label', state.micEnabled ? 'Turn microphone off' : 'Turn microphone on');
-    this.rotate.hidden = !this.active || !this.isPortrait || !state.joined || !state.playing || state.modal || state.typing || this.helpOpen;
     this.displayButton.hidden = !this.active || state.joined || state.modal || this.helpOpen || this.isStandalone();
     this.displayButton.textContent = this.supportsFullscreen() ? (document.fullscreenElement ? 'Exit full screen' : 'Full screen') : 'Home screen';
     this.settingsDisplayButton.hidden = !this.active || this.isStandalone();
@@ -156,14 +113,7 @@ export class MobileControls {
   }
 
   clear() {
-    this.lookTap.cancel();
     for (const gesture of this.buttonGestures) gesture.cancel(undefined, performance.now());
-    const moveId = this.input.movementPointer, lookId = this.input.lookPointer;
-    this.input.clear();
-    if (moveId !== null && this.movePad.hasPointerCapture(moveId)) this.movePad.releasePointerCapture(moveId);
-    if (lookId !== null && this.lookPad.hasPointerCapture(lookId)) this.lookPad.releasePointerCapture(lookId);
-    this.stick.style.removeProperty('translate');
-    delete this.movePad.dataset.active; delete this.lookPad.dataset.active;
   }
 
   private bindAction(button: HTMLButtonElement, callback: () => void) {
@@ -198,50 +148,6 @@ export class MobileControls {
       if (gesture.ignoreClick(event.detail, pointer.pointerType, pointer.pointerId, performance.now(), capabilities?.firesTouchEvents)) { event.preventDefault(); return; }
       activate();
     }, opts);
-  }
-
-  private bindPad(pad: HTMLElement, kind: 'move' | 'look') {
-    const opts = { signal: this.abort.signal };
-    pad.addEventListener('pointerdown', event => {
-      if (!this.canGesture || event.pointerType === 'mouse' || (kind === 'move' && this.state.seated)) return;
-      event.preventDefault(); event.stopPropagation();
-      const accepted = kind === 'move' ? this.input.beginMove(event.pointerId, event.clientX, event.clientY) : this.input.beginLook(event.pointerId, event.clientX, event.clientY);
-      if (!accepted) return;
-      if (kind === 'look' && event.pointerType === 'touch' && this.state.seated) this.lookTap.begin(event.pointerId, event.clientX, event.clientY, performance.now());
-      pad.setPointerCapture(event.pointerId); pad.dataset.active = 'true';
-    }, opts);
-    pad.addEventListener('pointermove', event => {
-      if (!this.canGesture) { this.clear(); return; }
-      if (kind === 'move') {
-        if (!this.input.move(event.pointerId, event.clientX, event.clientY)) return;
-        const vector = this.input.movement;
-        this.stick.style.translate = `${vector.horizontal * 35}px ${-vector.forward * 35}px`;
-      } else {
-        this.lookTap.move(event.pointerId, event.clientX, event.clientY);
-        const delta = this.input.look(event.pointerId, event.clientX, event.clientY);
-        if (!delta) return;
-        this.actions.look(delta.x * 1.65, delta.y * 1.65);
-      }
-      event.preventDefault(); event.stopPropagation();
-    }, opts);
-    const end = (event: PointerEvent) => {
-      const owns = kind === 'move' ? this.input.movementPointer === event.pointerId : this.input.lookPointer === event.pointerId;
-      if (!owns) return;
-      const tapped = kind === 'look' && event.type === 'pointerup' && event.pointerType === 'touch' && this.canGesture && this.state.seated
-        ? this.lookTap.end(event.pointerId, event.clientX, event.clientY, performance.now()) : false;
-      if (kind === 'look' && event.type !== 'pointerup') this.lookTap.cancel();
-      this.input.end(event.pointerId);
-      if (pad.hasPointerCapture(event.pointerId)) pad.releasePointerCapture(event.pointerId);
-      if (kind === 'move') this.stick.style.removeProperty('translate');
-      delete pad.dataset.active;
-      event.preventDefault(); event.stopPropagation();
-      if (tapped) this.actions.tap?.(event.clientX, event.clientY);
-    };
-    pad.addEventListener('pointerup', end, opts); pad.addEventListener('pointercancel', end, opts); pad.addEventListener('lostpointercapture', end, opts);
-    // Suppress the compatibility mouse sequence after a touch; the pad is not a button.
-    pad.addEventListener('touchend', event => event.preventDefault(), { passive: false, signal: this.abort.signal });
-    pad.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); }, opts);
-    pad.addEventListener('contextmenu', event => event.preventDefault(), opts);
   }
 
   private syncViewport() {
@@ -290,7 +196,7 @@ export class MobileControls {
   dispose() {
     this.disposed = true; this.clear(); this.abort.abort();
     this.buttonGestures.clear();
-    this.controls.remove(); this.rotate.remove(); this.displayButton.remove(); this.settingsDisplayButton.remove(); this.displayHelp.remove(); this.closeTalkButton.remove();
+    this.controls.remove(); this.displayButton.remove(); this.settingsDisplayButton.remove(); this.displayHelp.remove(); this.closeTalkButton.remove();
     delete this.app.dataset.mobile; delete this.app.dataset.mobilePortrait; delete this.app.dataset.mobilePlaying; delete this.app.dataset.mobileTyping; delete this.app.dataset.mobileSeated;
     for (const property of ['--game-vh', '--game-vw', '--game-vtop', '--game-vleft']) this.app.style.removeProperty(property);
   }

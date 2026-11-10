@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { DeferredActivity } from '../DeferredActivity';
 import type { DinnerState } from '../types';
 import type { RenderQuality, RenderTier } from './RenderQuality';
 import type { RestaurantSet } from './RestaurantScene';
@@ -242,6 +243,7 @@ export interface RestaurantLightingOptions {
 
 export interface RestaurantLighting {
   readonly rig: LightRig;
+  setActive(active: boolean): void;
   /** Per frame, before any early return: time, tier cadence inputs and adaptive pixel ratio. `gameplay` is false on the title and date-selection screens, where the pixel ratio is never judged. */
   update(state: DinnerState, dt: number, time: number, reducedMotion: boolean, gameplay?: boolean): void;
   dispose(): void;
@@ -298,7 +300,8 @@ export function createRestaurantLighting({ renderer, scene, quality, roomLights,
   void waitForEnvironmentAssets().then(assetReady, assetReady);
   void waitForRestaurantProps().then(assetReady, assetReady);
 
-  const onContextRestored = () => {
+  const activity = new DeferredActivity();
+  const rebuildEnvironment = () => {
     if (disposed) return;
     try {
       environment?.rebuild();
@@ -308,6 +311,7 @@ export function createRestaurantLighting({ renderer, scene, quality, roomLights,
     }
     restored = true;
   };
+  const onContextRestored = () => activity.run(rebuildEnvironment);
   const canvas = renderer.domElement;
   canvas.addEventListener('webglcontextrestored', onContextRestored);
 
@@ -368,6 +372,7 @@ export function createRestaurantLighting({ renderer, scene, quality, roomLights,
 
   return {
     rig,
+    setActive(active) { activity.setActive(active); },
     update(state, dt, time, reducedMotion, gameplay = true) {
       if (disposed) return;
       double = !!state.doubleDate;
@@ -381,6 +386,7 @@ export function createRestaurantLighting({ renderer, scene, quality, roomLights,
     dispose() {
       if (disposed) return;
       disposed = true;
+      activity.dispose();
       canvas.removeEventListener('webglcontextrestored', onContextRestored);
       if (scene.onBeforeRender === beforeRender) scene.onBeforeRender = previousBeforeRender;
       glow?.dispose();

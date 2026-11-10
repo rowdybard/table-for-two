@@ -15,7 +15,7 @@ import { attachRestaurantServer, completeUtterances, validateTurn, type Restaura
 import { DinnerScene } from '../server/restaurant/scene';
 import { anthropicAdapter, DateApiError, elevenLabsAdapter, type ClaudeAdapter, type SpeechAdapter } from '../server/restaurant/providers';
 
-const turn: SceneTurn = { utterances: [{ speaker: 'date', text: 'I like that answer. What made you pick this place?', emotion: 'amused' }, { speaker: 'waiter', text: 'I will give you two another minute.', emotion: 'warm' }], emotion: 'amused', action: 'none', memory: 'The human chose this restaurant.' };
+const turn: SceneTurn = { utterances: [{ speaker: 'date', text: 'I like that answer. What made you pick this place?', emotion: 'amused' }, { speaker: 'date', text: 'I am glad we met.', emotion: 'warm' }], emotion: 'amused', action: 'none', memory: 'HUMAN: chose this restaurant.' };
 const encode = (data: unknown) => JSON.stringify(data);
 const decode = (text: string): TurnEvent[] => text.trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
 function adapter(onCall?: () => void): ClaudeAdapter { return { async *stream() { onCall?.(); yield { type: 'usage', usage: { inputTokens: 100, outputTokens: 1, cacheReadTokens: 30, cacheWriteTokens: 20 } }; const text = encode(turn); for (let i = 0; i < text.length; i += 17) { await delay(1); yield { type: 'text', text: text.slice(i, i + 17) }; } yield { type: 'usage', usage: { outputTokens: 80 } }; } }; }
@@ -45,11 +45,11 @@ test('restaurant HTTP starts a solo scene immediately and validates auth, origin
   await api.request(path + '/command', token, { type: 'pause', paused: true }); const finish = await api.request(path + '/command', token, { type: 'finish' }); assert.equal((await finish.json()).state.phase, 'ended');
 });
 
-test('one deduplicated Claude request streams a date and one cast line, preserves memory and actual usage', async t => {
+test('one deduplicated Claude request streams date lines, preserves memory and actual usage', async t => {
   let calls = 0; const api = await boot({ claude: adapter(() => calls++) }); t.after(() => api.close()); const { state, token } = await api.create(), path = `/api/date/sessions/${state.id}`, request = { turnId: 'same-turn', text: 'I liked the menu.', model: 'claude-haiku-5-5' };
   const a = await api.request(path + '/turn', token, request), b = await api.request(path + '/turn', token, request);
   const [first, second] = await Promise.all([a.text(), b.text()]); assert.equal(calls, 1); assert.deepEqual(decode(first), decode(second));
-  const events = decode(first); assert.deepEqual(events.filter(e => e.type === 'utterance').map(e => e.utterance.speaker), ['date', 'waiter']); assert.equal(events[0].type, 'start'); assert.equal(events.at(-1)?.type, 'done');
+  const events = decode(first); assert.deepEqual(events.filter(e => e.type === 'utterance').map(e => e.utterance.speaker), ['date', 'date']); assert.equal(events[0].type, 'start'); assert.equal(events.at(-1)?.type, 'done');
   const snapshot = (await (await api.request(path, token)).json()).state; assert.equal(snapshot.memory, turn.memory); assert.equal(snapshot.emotion, 'amused'); assert.equal(snapshot.usage.inputTokens, 100); assert.equal(snapshot.usage.outputTokens, 80); assert.equal(snapshot.usage.cacheReadTokens, 30); assert.equal(snapshot.usage.cacheWriteTokens, 20); assert.equal(snapshot.usage.claudeRequests, 1); assert.ok(snapshot.usage.totalCost > 0);
   const conflict = await api.request(path + '/turn', token, { ...request, text: 'Changed content' }); assert.equal(conflict.status, 409);
   const replay = decode(await (await api.request(path + '/turn', token, request)).text()); assert.deepEqual(replay, events); assert.equal(calls, 1);
@@ -60,7 +60,7 @@ test('JSON extraction handles chunked escaped strings and invalid speaker, actio
   assert.deepEqual(completeUtterances('{"utterances":[' + encode(line).slice(0, -1)), []);
   assert.deepEqual(completeUtterances('{"utterances":[' + encode(line) + ','), [line]);
   assert.throws(() => validateTurn({ ...turn, action: 'teleport' }));
-  assert.throws(() => validateTurn({ ...turn, utterances: [turn.utterances[1]] }));
+  assert.throws(() => validateTurn({ ...turn, utterances: [{ ...turn.utterances[0], speaker: 'waiter' }] }));
   assert.throws(() => validateTurn({ ...turn, utterances: [...turn.utterances, turn.utterances[1]] }));
   assert.throws(() => validateTurn({ ...turn, emotion: 'secret-admin' }));
   const social = { signal: 'pressure', reason: 'A delivered food boundary was repeated.', wantsToLeave: false, boundary: { kind: 'repeat', topic: 'food-drink', refusal: 'Please choose only your own food.', evidence: 'I am ordering for you anyway.' } };
@@ -130,16 +130,22 @@ test('interrupt cancels Claude and stale speech, while retaining received usage'
   const snapshot = (await (await api.request(path, token)).json()).state; assert.equal(snapshot.usage.inputTokens, 45); assert.ok(snapshot.usage.outputTokens > 0); assert.ok(snapshot.usage.totalCost > 0);
 });
 
-test('speech requires an authorized line, streams once, caches exact voice/emotion/text and charges canceled synthesis', async t => {
+test('speech requires a generated line, caches exact speech and charges canceled synthesis', async t => {
   let calls = 0, shouldAbort = false;
   const speech: SpeechAdapter = { async *stream(_request, signal) { calls++; yield Buffer.from('ID3audio'); if (shouldAbort) await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true })); else yield Buffer.from('complete'); } };
-  const api = await boot({ speech }); t.after(() => api.close()); const { state, token } = await api.create(), path = `/api/date/sessions/${state.id}`, opening = { speaker: 'date', text: DATES[0].opening, emotion: 'neutral' };
-  const unknown = await api.request(path + '/speech', token, { generation: 0, utterance: { ...opening, text: 'Arbitrary expensive synthesis' } }); assert.equal(unknown.status, 400);
-  const first = await api.request(path + '/speech', token, { generation: 0, utterance: opening }); assert.equal(first.headers.get('x-speech-cache'), 'miss'); assert.equal(await first.text(), 'ID3audiocomplete');
-  const cached = await api.request(path + '/speech', token, { generation: 0, utterance: opening }); assert.equal(cached.headers.get('x-speech-cache'), 'hit'); assert.equal(await cached.text(), 'ID3audiocomplete'); assert.equal(calls, 1);
-  let snapshot = (await (await api.request(path, token)).json()).state; assert.equal(snapshot.usage.cacheHits, 1); assert.equal(snapshot.usage.speechCharacters, opening.text.length); assert.ok(snapshot.usage.speechCost > 0);
+  const api = await boot({ speech, claude: adapter() }); t.after(() => api.close());
+  const { state, token } = await api.create(), path = `/api/date/sessions/${state.id}`, utterance = turn.utterances[0];
+  assert.equal((await api.request(path + '/speech', token, { generation: 0, utterance })).status, 400);
+  const events = decode(await (await api.request(path + '/turn', token, { turnId: 'voice', text: 'Hello.', model: 'claude-haiku-5-5' })).text());
+  const start = events.find(event => event.type === 'start'); assert.ok(start && start.type === 'start');
+  assert.equal((await api.request(path + '/speech', token, { generation: start.generation, utterance: { ...utterance, text: 'Arbitrary expensive synthesis' } })).status, 400);
+  const first = await api.request(path + '/speech', token, { generation: start.generation, utterance }); assert.equal(first.headers.get('x-speech-cache'), 'miss'); assert.equal(await first.text(), 'ID3audiocomplete');
+  const cached = await api.request(path + '/speech', token, { generation: start.generation, utterance }); assert.equal(cached.headers.get('x-speech-cache'), 'hit'); assert.equal(await cached.text(), 'ID3audiocomplete'); assert.equal(calls, 1);
+  let snapshot = (await (await api.request(path, token)).json()).state; assert.equal(snapshot.usage.cacheHits, 1); assert.equal(snapshot.usage.speechCharacters, utterance.text.length + '[amused] '.length); assert.ok(snapshot.usage.speechCost > 0);
   shouldAbort = true; const second = await api.create({ dateId: 'dev' }), secondPath = `/api/date/sessions/${second.state.id}`;
-  const speaking = await api.request(secondPath + '/speech', second.token, { generation: 0, utterance: { speaker: 'date', text: DATES[2].opening, emotion: 'neutral' } }); const canceled = speaking.text().catch(() => 'canceled');
+  const secondEvents = decode(await (await api.request(secondPath + '/turn', second.token, { turnId: 'voice-two', text: 'Hello.', model: 'claude-haiku-5-5' })).text());
+  const secondStart = secondEvents.find(event => event.type === 'start'); assert.ok(secondStart && secondStart.type === 'start');
+  const speaking = await api.request(secondPath + '/speech', second.token, { generation: secondStart.generation, utterance }); const canceled = speaking.text().catch(() => 'canceled');
   await api.request(secondPath + '/interrupt', second.token, {}); await canceled;
   snapshot = (await (await api.request(secondPath, second.token)).json()).state; assert.ok(snapshot.usage.speechCharacters > 0); assert.ok(snapshot.usage.speechCost > 0);
 });
@@ -152,20 +158,18 @@ test('session and daily reservations block paid calls before starting, and produ
   const expensive = await expensiveApi.create(); const tooMuch = await expensiveApi.request(`/api/date/sessions/${expensive.state.id}/turn`, expensive.token, { turnId: 'expensive', text: 'Hello', model: 'claude-sonnet-5-5' }); assert.equal(tooMuch.status, 402); assert.equal(calls, 0);
 });
 
-test('scene physics bounds movement, stages only legitimate seated orders, pauses clock and triggers authored events', async () => {
-  await RAPIER.init();
-  const scene = new DinnerScene('mira', 2); try {
+test('table-only scene keeps the player seated, pauses time and ends without scripted events', async () => {
+  await RAPIER.init(); const scene = new DinnerScene('mira', 2);
+  try {
+    const start = scene.snapshot(); assert.equal(start.seated, true);
     assert.throws(() => scene.command({ type: 'interact', target: 'seat' }));
-    let now = 1000; for (let i = 0; i < 110; i++) { scene.command({ type: 'move', x: 0, z: -1, yaw: 0 }, now); scene.step(1 / 60, now); now += 1000 / 60; }
-    scene.command({ type: 'interact', target: 'seat' }); assert.equal(scene.state.stage, 'seated');
-    for (let i = 0; i < 600; i++) { scene.step(1 / 60, now); now += 1000 / 60; const date = scene.state.participants[1].position; assert.ok(!(Math.abs(date[0]) < .94 && date[2] > -2.09 && date[2] < -.21), 'date must route outside the table footprint'); }
-    const seatedDate = scene.state.participants[1].position; assert.ok(Math.hypot(seatedDate[0], seatedDate[2] + 2.25) < .25, `date reaches chair (${seatedDate[0]},${seatedDate[2]})`);
-    scene.command({ type: 'interact', target: 'menu', choice: MENU[0] }); assert.equal(scene.state.stage, 'ordered');
-    scene.command({ type: 'interact', target: 'glass' }); assert.equal(scene.state.glassRaised, true); scene.command({ type: 'interact', target: 'glass' }); assert.equal(scene.state.glassRaised, false);
+    assert.throws(() => scene.command({ type: 'interact', target: 'menu', choice: MENU[0] }));
+    for (let i = 0; i < 600; i++) { scene.command({ type: 'move', x: 0, z: -1, yaw: 0 }, i * 17); scene.step(1 / 60, i * 17); }
+    assert.ok(Math.hypot(scene.state.participants[0].position[0] - start.participants[0].position[0], scene.state.participants[0].position[2] - start.participants[0].position[2]) < .001);
+    assert.deepEqual(scene.state.events, []); assert.deepEqual(scene.state.evening.cues, []);
     scene.command({ type: 'pause', paused: true }); const elapsed = scene.state.elapsed; scene.step(60); assert.equal(scene.state.elapsed, elapsed);
-    scene.command({ type: 'pause', paused: false }); scene.step(45); scene.step(4 * 60); assert.deepEqual(scene.state.events, ['wrong-order']); scene.step(6 * 60); scene.step(7 * 60); assert.deepEqual(scene.state.events, ['wrong-order'], 'later incidents must wait for a real resolution');
-    scene.applyTurn({ ...turn, action: 'finish' }); assert.equal(scene.state.phase, 'playing');
-    assert.throws(() => scene.command({ type: 'evening', action: 'settle-bill', choice: 'split' })); scene.command({ type: 'finish' }); assert.equal(scene.state.phase, 'ended'); assert.equal(scene.state.evening.farewell.ending?.kind, 'early-exit');
+    scene.command({ type: 'pause', paused: false }); scene.applyTurn({ ...turn, action: 'finish' }); assert.equal(scene.state.phase, 'playing');
+    scene.command({ type: 'finish' }); assert.equal(scene.state.phase, 'ended'); assert.deepEqual(scene.state.evening.cues, []);
   } finally { scene.free(); }
 });
 
@@ -178,7 +182,7 @@ test('playback receipts preserve heard and interrupted lines in the next single 
   await api.request(path + '/interrupt', token, {});
   await (await api.request(path + '/turn', token, { turnId: 'second', text: 'Sorry, what were you saying?', model: 'claude-haiku-5-5' })).text();
   // The next request shows a plain transcript: a fully heard line carries no note, an unheard one says so.
-  const context = contexts[1].map((message: { content: string }) => message.content).join('\n'); assert.ok(context.includes(`Mira: ${turn.utterances[0].text}\n`), 'a heard line has no delivery note'); assert.match(context, /Eli \(waiter\): I will give you two another minute\. \(the human did not hear this\)/); assert.match(context, /My favorite food is pasta/);
+  const context = contexts[1].map((message: { content: string }) => message.content).join('\n'); assert.ok(context.includes(`Mira: ${turn.utterances[0].text}\n`), 'a heard line has no delivery note'); assert.match(context, /Mira: I am glad we met\. \(the human did not hear this/); assert.match(context, /My favorite food is pasta/);
 });
 
 test('Anthropic adapter sends fast model-specific thinking and structured output, parses split SSE usage without exposing provider secrets', async () => {
@@ -213,18 +217,21 @@ test('Eleven v4 Turbo registers a single voice on the dialogue socket, flushes a
   cancel = true; remoteClosed = false; const controller = new AbortController(); await assert.rejects(async () => { for await (const _chunk of provider.stream(request, controller.signal)) controller.abort(); }, error => error instanceof DateApiError && error.code === 'interrupted'); await delay(15); assert.equal(remoteClosed, true);
 });
 
-test('pre-generated exact clips play without a live speech key and future scene reactions cannot be synthesized early', async t => {
+test('an exact cached clip requires a generated line and no scripted future line is authorized', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'table-for-two-clips-')); t.after(() => rm(directory, { recursive: true, force: true }));
   await writeFile(join(directory, 'opening.mp3'), 'ID3authored'); await writeFile(join(directory, 'manifest.json'), encode({ clips: [{ id: 'opening-mira', text: DATES[0].opening, emotion: 'neutral', voiceId: DATES[0].voiceId, model: 'eleven_v4_turbo', file: 'opening.mp3' }] }));
-  const api = await boot({ clipsDirectory: directory }); t.after(() => api.close()); const { state, token } = await api.create(), path = `/api/date/sessions/${state.id}`;
+  const line = { speaker: 'date' as const, text: DATES[0].opening, emotion: 'neutral' as const };
+  const claude: ClaudeAdapter = { async *stream() { yield { type: 'text', text: encode({ ...turn, utterances: [line] }) }; } };
+  const api = await boot({ clipsDirectory: directory, claude }); t.after(() => api.close()); const { state, token } = await api.create(), path = `/api/date/sessions/${state.id}`;
   const status = await fetch(api.url + '/api/date/status').then(r => r.json()); assert.equal(status.cachedSpeech, true); assert.equal(status.speech, false);
-  const response = await api.request(path + '/speech', token, { generation: 0, utterance: { speaker: 'date', text: DATES[0].opening, emotion: 'neutral' } }); assert.equal(response.status, 200); assert.equal(response.headers.get('x-speech-cache'), 'clip'); assert.equal(await response.text(), 'ID3authored');
-  const future = AUTHORED_UTTERANCES.find(line => line.clipId === 'spill-waiter')!;
-  const premature = await api.request(path + '/speech', token, { generation: 0, utterance: { speaker: future.speaker, text: future.text, emotion: future.emotion } }); assert.equal(premature.status, 400);
+  assert.equal((await api.request(path + '/speech', token, { generation: 0, utterance: line })).status, 400);
+  const events = decode(await (await api.request(path + '/turn', token, { turnId: 'line', text: 'Hello.', model: 'claude-haiku-5-5' })).text());
+  const start = events.find(event => event.type === 'start'); assert.ok(start && start.type === 'start');
+  const response = await api.request(path + '/speech', token, { generation: start.generation, utterance: line }); assert.equal(response.status, 200); assert.equal(response.headers.get('x-speech-cache'), 'clip'); assert.equal(await response.text(), 'ID3authored');
+  const future = AUTHORED_UTTERANCES.find(item => item.clipId === 'spill-waiter')!;
+  assert.equal((await api.request(path + '/speech', token, { generation: start.generation, utterance: { speaker: future.speaker, text: future.text, emotion: future.emotion } })).status, 400);
   const futureEnding = getStoryCue('ending-another-evening', 'mira')[0]; assert.ok(futureEnding);
-  assert.equal((await api.request(path + '/speech', token, { generation: 0, utterance: futureEnding })).status, 400, 'a pre-generated ending is not authorized before its scene cue');
-  const welcome = state.evening.cues[0].utterances.find(u => u.speaker === 'date')!;
-  assert.equal((await api.request(path + '/playback', token, { generation: 0, speaker: welcome.speaker, text: welcome.text, completed: true, playedSeconds: 0 })).status, 200, 'caption-only authored cues can acknowledge playback');
+  assert.equal((await api.request(path + '/speech', token, { generation: start.generation, utterance: futureEnding })).status, 400);
   const snapshot = (await (await api.request(path, token)).json()).state; assert.equal(snapshot.usage.speechCost, 0); assert.equal(snapshot.usage.cacheHits, 1);
 });
 

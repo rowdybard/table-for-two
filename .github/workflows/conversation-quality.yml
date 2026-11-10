@@ -89,9 +89,6 @@ jobs:
           - id: mobile
             file: tests/browser-mobile.spec.ts
             grep: ''
-          - id: evening
-            file: tests/browser-evening.spec.ts
-            grep: ''
           - id: speech
             file: tests/browser-speech.spec.ts
             grep: ''
@@ -106,10 +103,10 @@ jobs:
             grep: '(^| )friend voice uses one opted-in microphone per browser and exchanges native RTP in both directions$'
           - id: double-wingman
             file: tests/browser-double-date.spec.ts
-            grep: '(^| )a finished date can stay as a wingman, help the active pair and return from their own ending$'
+            grep: '(^| )a finished date can stay for their friend without service tasks or transferred progress$'
           - id: double-evening
             file: tests/browser-double-date.spec.ts
-            grep: '(^| )complete double evening: both dinners, a shared dessert, one check for the table and independent farewells$'
+            grep: '(^| )shared table stays seated and unscripted until each person ends their date$'
           - id: blind
             file: tests/browser-double-date.spec.ts
             grep: '(^| )blind date starts directly, restores its seeded match and can finish without another human$'

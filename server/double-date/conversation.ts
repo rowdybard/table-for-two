@@ -14,7 +14,7 @@ import { deferrableCue, dialogueLoopContext } from '../restaurant/dialogue-polic
 import { roleplayInstructions } from '../restaurant/roleplay';
 import type { DoubleTableScene } from './scene';
 import type { ConversationRoutingContext } from '../restaurant/conversation-routing';
-import { MEMORY_REJECT } from '../restaurant/memory';
+import { MEMORY_REJECT, mergeMemoryForDelivery, retireSharedPremise } from '../restaurant/memory';
 import { tableFacts } from '../restaurant/table-facts';
 import { QUIET_GAP_SECONDS, heardPrefix } from '../restaurant/turn-note';
 import { doubleMessages, doubleSystem, doubleTurnNote, friendNames, presetDateSheet, renderDoubleHistory } from './table-note';
@@ -27,13 +27,13 @@ const HISTORY_ENTRIES = 60, RECENT_ENTRIES = 40;
 const emotions = { type: 'string', enum: EMOTIONS };
 const socialSchema = { type: 'object', additionalProperties: false, required: ['signal', 'reason', 'wantsToLeave', 'boundary'], properties: { signal: { type: 'string', enum: SOCIAL_SIGNALS }, reason: { type: 'string' }, wantsToLeave: { type: 'boolean' }, boundary: BOUNDARY_SCHEMA } };
 export const DOUBLE_TURN_SCHEMA = { type: 'object', additionalProperties: false, required: ['utterances', 'dateUpdates'], properties: {
-  utterances: { type: 'array', minItems: 0, maxItems: 2, items: { type: 'object', additionalProperties: false, required: ['speaker', 'text', 'emotion'], properties: { speaker: { type: 'string', enum: ['d1', 'd2', 'waiter', 'diner'] }, text: { type: 'string' }, emotion: emotions } } },
+  utterances: { type: 'array', minItems: 0, maxItems: 2, items: { type: 'object', additionalProperties: false, required: ['speaker', 'text', 'emotion'], properties: { speaker: { type: 'string', enum: ['d1', 'd2'] }, text: { type: 'string' }, emotion: emotions } } },
   dateUpdates: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'object', additionalProperties: false, required: ['actorId', 'emotion', 'memory', 'social', 'agenda'], properties: { actorId: { type: 'string', enum: actors }, emotion: emotions, memory: { type: 'string' }, social: socialSchema, agenda: AGENDA_SCHEMA } } },
 } };
 const schema = DOUBLE_TURN_SCHEMA;
 type Delivery = { completed: boolean; playedSeconds: number };
 type History = { human?: DoubleHumanId; text?: string; target?: string; lines?: DoubleDialogueLine[]; authored?: boolean };
-type QueuedTurn = { human: DoubleHumanId; request: DoubleTurnRequest; fingerprint: string; key: string; boundaries: Record<DoubleHumanId, ReturnType<DoubleTableScene['boundaryContext']>>; /** Questions each date was still waiting on, and the quiet before this turn, as they stood when it was spoken. */ pending: Record<DoubleHumanId, string | null>; quiet: number };
+type QueuedTurn = { human: DoubleHumanId; request: DoubleTurnRequest; fingerprint: string; key: string; memoryRevision: number; boundaries: Record<DoubleHumanId, ReturnType<DoubleTableScene['boundaryContext']>>; /** Questions each date was still waiting on, and the quiet before this turn, as they stood when it was spoken. */ pending: Record<DoubleHumanId, string | null>; quiet: number };
 type AudioJob = { chunks: Buffer[]; total: number; subscribers: Set<ServerResponse>; done: boolean; error?: DateApiError; controller: AbortController; generation: number };
 const record = (value: unknown): value is Record<string, any> => !!value && typeof value === 'object' && !Array.isArray(value);
 const exact = (value: Record<string, unknown>, allowed: string[]) => Object.keys(value).every(key => allowed.includes(key));
@@ -49,6 +49,8 @@ export class DoubleConversation {
   private readonly improvised = new Set<string>();
   private readonly history: History[] = [];
   private readonly excluded: Record<DoubleDateActorId, number> = { d1: 0, d2: 0 };
+  private memoryRevision = 0;
+  private readonly pendingMemory: Partial<Record<DoubleHumanId, { value: string; humanText: string; lines: string[]; generation: number; revision: number }>> = {};
   private controller?: AbortController;
   private authoredFloor?: { lines: string[]; until: number };
   private draining = false;
@@ -125,43 +127,40 @@ export class DoubleConversation {
 
   resume() { this.lastHeardAt = undefined; void this.drain(); } // time spent paused is not a quiet table
 
+  private commitHeardMemory(human: DoubleHumanId) {
+    const pending = this.pendingMemory[human];
+    if (!pending || pending.generation !== this.state.generation || pending.revision !== this.memoryRevision || !pending.lines.length || !pending.lines.every(id => this.heard.get(id)?.[human]?.completed)) return;
+    const view = this.state.views[human];
+    view.memory = mergeMemoryForDelivery(pending.value, view.memory, true, pending.humanText);
+    delete this.pendingMemory[human];
+    this.state.revision++;
+  }
+
   submit(human: DoubleHumanId, request: DoubleTurnRequest) {
     if (this.closed || this.state.phase !== 'playing') throw error('Resume the evening before speaking.', 'inactive_room', 409);
     const key = `${human}:${request.turnId}`, fingerprint = JSON.stringify([request.text, request.target]);
     if (this.seen.has(key)) { if (this.seen.get(key) !== fingerprint) throw error('That turn ID already has another transcript.', 'turn_conflict', 409); return false; }
     if (this.seen.size >= 250 || this.queue.length >= 4) throw error('Let the current conversation finish before adding another turn.', 'turn_limit', 429);
+    this.memoryRevision++;
+    delete this.pendingMemory.h1; delete this.pendingMemory.h2;
+    const ownView = this.state.views[human]; ownView.memory = retireSharedPremise(ownView.memory, request.text);
     this.authoredFloor = undefined;
     const boundaries = { h1: this.scene.boundaryContext('h1'), h2: this.scene.boundaryContext('h2') };
     this.scene.clearPendingBoundaries();
     // Speaking answers the question a date was waiting on and ends any quiet, so read both before recording the turn.
     const pending = { h1: this.scene.pendingQuestion('h1'), h2: this.scene.pendingQuestion('h2') };
     const quiet = this.lastHeardAt === undefined ? 0 : Math.round((this.services.now() - this.lastHeardAt) / 1000);
-    this.seen.set(key, fingerprint); this.queue.push({ human, request, fingerprint, key, boundaries, pending, quiet });
+    this.seen.set(key, fingerprint); this.queue.push({ human, request, fingerprint, key, memoryRevision: this.memoryRevision, boundaries, pending, quiet });
     this.lastHeardAt = this.services.now();
     this.scene.noteHumanTurn(request.text, human);
     this.line(human, request.text, 'neutral');
-    // Only observable, public friend-directed turns count. Silence, menus,
-    // microphone denial and reconnect time never create neglect penalties.
-    if (humans.includes(request.target as DoubleHumanId) && request.target !== human) {
-      for (const actor of actors) {
-        if (!this.availableForDialogue(actor)) continue;
-        this.excluded[actor]++;
-        if (this.excluded[actor] >= 3) {
-          const date = this.state.dates.find(item => item.id === actor)!;
-          const view = this.state.views[date.humanId];
-          view.emotion = date.emotion = 'annoyed';
-          if (view.evening.stance !== 'leaving' && view.evening.stance !== 'hurt') view.evening.stance = date.stance = 'guarded';
-          view.evening.stanceReason = 'Both friends kept directing the public conversation only to each other.';
-        }
-      }
-    } else if (request.target === 'table') { this.excluded.d1 = 0; this.excluded.d2 = 0; }
-    else if (actors.includes(request.target as DoubleDateActorId)) this.excluded[request.target as DoubleDateActorId] = 0;
     this.state.error = undefined;
     void this.drain(); return true;
   }
 
   interrupt() {
     this.scene.clearPendingBoundaries();
+    delete this.pendingMemory.h1; delete this.pendingMemory.h2;
     this.authoredFloor = undefined;
     this.state.generation++; this.state.revision++;
     this.controller?.abort();
@@ -222,7 +221,7 @@ export class DoubleConversation {
         catch (caught) { const failure = caught instanceof DateApiError ? caught : error('That conversation route is unavailable.'); this.state.error = { code: failure.code, message: failure.message }; this.state.processing = false; this.controller = undefined; this.state.revision++; if (!this.queue.length) this.scene.replyEnded(); continue; }
         this.state.views[turn.human].conversationModel = effectiveModel;
         const outputSchema = structuredClone(schema);
-        outputSchema.properties.utterances.items.properties.speaker.enum = [...actors.filter(actor => this.availableForDialogue(actor)), 'waiter', 'diner'];
+        outputSchema.properties.utterances.items.properties.speaker.enum = [...actors.filter(actor => this.availableForDialogue(actor))];
         const names = friendNames(this.state.members), dateOf = (id: DoubleDateActorId) => this.state.dates.find(date => date.id === id)!;
         const dateNames = { d1: getDate(dateOf('d1').dateId)!.name, d2: getDate(dateOf('d2').dateId)!.name };
         const sheets: DateSheet[] = actors.map(id => { const actor = dateOf(id); return presetDateSheet(id, actor.humanId, actor.dateId); });
@@ -271,7 +270,16 @@ export class DoubleConversation {
             const priorBoundary = proposedBoundary && turn.boundaries[actor.humanId].boundaries.find(boundary => boundary.humanId === turn.human && boundary.topic === proposedBoundary.topic && boundary.delivered && (!proposedBoundary.refusal || proposedBoundary.refusal === boundary.refusal));
             const social = proposedBoundary && ['repeat', 'repair'].includes(proposedBoundary.kind) && !priorBoundary
               ? { ...update.social, boundary: { ...proposedBoundary, kind: 'none' as const, evidence: '', refusal: '' } } : update.social;
-            this.scene.social(actor.humanId, { utterances: ownLines, emotion: update.emotion, memory: update.memory, action: 'none', social, ...(agenda ? { agenda } : {}) }, turn.request.text, turn.human);
+            const view = this.state.views[actor.humanId];
+            const current = turn.memoryRevision === this.memoryRevision;
+            const memoryHumanText = current && pairedSpeaker ? turn.request.text : '';
+            const memory = current ? mergeMemoryForDelivery(update.memory, view.memory, false, memoryHumanText) : view.memory;
+            this.scene.social(actor.humanId, { utterances: ownLines, emotion: update.emotion, memory, action: 'none', social, ...(agenda ? { agenda } : {}) }, turn.request.text, turn.human, memoryHumanText);
+            const spoken = lines.filter(line => line.speaker === actor.id);
+            if (current && spoken.length === ownLines.length && spoken.length) {
+              this.pendingMemory[actor.humanId] = { value: update.memory, humanText: memoryHumanText, lines: spoken.map(line => line.id), generation, revision: turn.memoryRevision };
+              this.commitHeardMemory(actor.humanId);
+            }
             // A short streamed line can finish playback before its enclosing JSON.
             // Replaying an existing receipt makes disclosure ordering deterministic.
             for (const line of lines) if (line.speaker === actor.id) for (const listener of humans) if (this.heard.get(line.id)?.[listener]?.completed) this.scene.acknowledge(actor.humanId, { speaker: 'date', text: line.text, emotion: line.emotion }, listener);
@@ -285,7 +293,7 @@ export class DoubleConversation {
             if (failure.code === 'conversation_refusal') {
               const refused = [...this.history].reverse().find(entry => entry.human === turn.human && entry.text === turn.request.text);
               if (refused) refused.text = '[A provider-limited topic was redirected back to dinner. No personal boundary strike occurred.]';
-              this.scene.redirectConversation(turn.human); this.collectCues(true);
+              this.state.error = { code: failure.code, message: failure.message };
             }
             else { this.state.error = { code: failure.code, message: failure.message }; if (lines.length) this.interrupt(); }
           }
@@ -345,7 +353,7 @@ export class DoubleConversation {
     listeners[human] = { completed: !!previous?.completed || completed, playedSeconds: Math.max(previous?.playedSeconds ?? 0, playedSeconds) }; this.heard.set(line.id, listeners);
     const actor = this.state.dates.find(item => item.id === line.speaker);
     if (completed && !line.interrupted) this.lastHeardAt = this.services.now();
-    if (completed && actor && !line.interrupted && generation === this.state.generation && this.state.phase === 'playing') this.scene.acknowledge(actor.humanId, { speaker: 'date', text: line.text, emotion: line.emotion }, human);
+    if (completed && actor && !line.interrupted && generation === this.state.generation && this.state.phase === 'playing') { this.scene.acknowledge(actor.humanId, { speaker: 'date', text: line.text, emotion: line.emotion }, human); if (human === actor.humanId) this.commitHeardMemory(human); }
     if (this.queue.length && !this.waitingForAuthoredFloor()) void this.drain();
   }
 
@@ -353,7 +361,7 @@ export class DoubleConversation {
 }
 
 function validateLine(line: unknown): { speaker: 'd1' | 'd2' | 'waiter' | 'diner'; text: string; emotion: Emotion } {
-  if (!record(line) || !exact(line, ['speaker', 'text', 'emotion']) || !['d1', 'd2', 'waiter', 'diner'].includes(line.speaker) || typeof line.text !== 'string' || !line.text.trim() || line.text.length > 420 || /[\u0000-\u001f]/.test(line.text) || !EMOTIONS.includes(line.emotion)) throw error('A character returned an invalid line.');
+  if (!record(line) || !exact(line, ['speaker', 'text', 'emotion']) || !['d1', 'd2'].includes(line.speaker) || typeof line.text !== 'string' || !line.text.trim() || line.text.length > 420 || /[\u0000-\u001f]/.test(line.text) || !EMOTIONS.includes(line.emotion)) throw error('A character returned an invalid line.');
   return line as ReturnType<typeof validateLine>;
 }
 export function validateDoubleTurn(text: string): { utterances: ReturnType<typeof validateLine>[]; dateUpdates: { actorId: DoubleDateActorId; emotion: Emotion; memory: string; social: SocialResponse; agenda?: AgendaAssessment }[] } {

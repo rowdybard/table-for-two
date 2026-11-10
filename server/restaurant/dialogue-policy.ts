@@ -4,7 +4,7 @@ import type { DinnerState, SceneUtterance } from '../../src/restaurant/types';
 
 /** Shared turn direction; this does not schedule requests or change character boundaries. */
 export const DATE_DIALOGUE_INSTRUCTIONS = [
-  'The history is the real conversation so far, oldest first: what the human said and what was said at the table by you, Eli the waiter and the neighbouring diner, your scripted remarks included. A line followed by a note (“cut off”, “heard only…”, “still being said”, “did not hear this”) was not fully heard, so it is not established history.',
+  'The history is the real conversation so far, oldest first: what the human said and what you said at the table. A line followed by a note (“cut off”, “heard only…”, “still being said”, “did not hear this”) was not fully heard, so it is not established history.',
   '“Right now” in the latest message is where the evening physically is; never describe food, plates or staff it does not mention. “At the table so far” is what actually happened.',
   'Continue as one person who remembers all of it. Answer what they just said first, in a way that only makes sense after their words; a line that could follow any message is wrong. Never re-introduce yourself, retell what your notes say you already shared, contradict an earlier detail, or ask what they already answered. Your own news comes up only where it connects.',
   'Take their words plainly and in proportion: a small number is small, a big number is big, a cheap meal is cheap. A shared joke can grow from something both of you actually said or heard. Never coin a phrase, nickname or in-joke without that grounding; never invent a shared nickname, past event or private understanding.',
@@ -24,7 +24,7 @@ export function outputContract(vocabulary: { emotions: readonly string[]; action
   return [
     'OUTPUT. Return exactly one JSON object matching the schema and nothing else, spoken line first: write it as the person, for the human at the table, then fill the bookkeeping from what was actually said; never bend the line to fit a field.',
     'When nothing happened, use social {signal none, reason “No change in boundaries.”, wantsToLeave false, boundary {kind none, topic other, refusal “”, evidence “”}} and agenda {signal none, evidence “”, clue “”}.',
-    'The date speaks first, usually alone. Set utterances[0].speaker to "date" even for questions about Eli; only utterances[1] may use "waiter" or "diner", never names or "human". Add ONE short waiter or diner line only when “Right now” involves them (an incident, serving a course, the check) or the human just spoke to them: Eli does not comment on ordinary conversation, and the diner speaks only during their incident. No empty items, other speakers or extra properties.',
+    'The date speaks to the human. Every utterance uses the exact speaker key "date"; never speak for the human or another person. No empty items or extra properties.',
     'Date text is about 25 words, under 260 characters in total (up to about 60 words for a story or explanation they asked for); the server discards a reply over 420.',
     `Emotions: ${vocabulary.emotions.join(', ')}. Actions: ${vocabulary.actions.join(', ')}; actions are proposals, and the server owns courses and outcomes.`,
     `social.signal is one of ${vocabulary.signals.join(', ')} with a factual reason of at most 180 characters; pressure means explicit disregard for a boundary, not ordinary disagreement. Set wantsToLeave only after repeated pressure; the server handles departure.`,
@@ -153,7 +153,7 @@ export function tableNow(scene: DinnerState, dateName: string, human = 'the huma
   if (opts.age !== false) parts.push(minutes < 1 ? 'The date is under a minute old.' : `The date is about ${minutes} minute${minutes === 1 ? '' : 's'} old.`);
   if (e.dialogueTurns > 0) parts.push(`${We} have traded ${e.dialogueTurns} repl${e.dialogueTurns === 1 ? 'y' : 'ies'} so far.`);
   if (!scene.seated) parts.push(scene.stage === 'arrival' ? `${We} have just met at the entrance and have not sat down yet.` : `${We} are not at the table right now.`);
-  else if (!scene.order) parts.push(`${We} are seated at ${ours} table with menus; nothing has been ordered yet.`);
+  else if (!scene.order) parts.push(`${We} are at ${ours} table together.`);
   if (scene.order) {
     const theirs = e.main.dateDish ? `, ${dateName} ordered the ${e.main.dateDish.toLowerCase()}` : '';
     const main = { none: 'ordered', waiting: 'ordered and are waiting for the food', served: 'have the mains on the table', finished: 'have finished the mains and Eli has cleared the plates' }[e.main.status];

@@ -58,3 +58,16 @@ test('denied capture can be retried and a permission result arriving after dispo
     await assert.rejects(capture.acquire(), { name: 'AbortError' });
   } finally { capture.dispose(); restore(); }
 });
+
+test('background suspension stops capture and a late permission result cannot reopen it', async () => {
+  const old = new Stream([new Track()]), next = new Stream([new Track()]); let complete!: (stream: Stream) => void, calls = 0;
+  const restore = microphone(() => ++calls === 1 ? new Promise(resolve => { complete = resolve; }) : Promise.resolve(next));
+  const capture = new SharedMicrophone();
+  try {
+    const pending = capture.acquire(); capture.suspend();
+    const resumed = await capture.acquire(); complete(old);
+    await assert.rejects(pending, { name: 'AbortError' });
+    assert.equal(old.tracks[0].readyState, 'ended'); assert.equal(resumed.getTracks()[0].readyState, 'live');
+    capture.suspend(); assert.equal(next.tracks[0].readyState, 'ended'); assert.equal(resumed.getTracks()[0].readyState, 'ended');
+  } finally { capture.dispose(); restore(); }
+});

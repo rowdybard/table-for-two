@@ -6,7 +6,6 @@ import type { Couple, DateSheet } from '../server/double-date/table-note';
 import { SPOKEN_REGISTER, VOICE_REMINDER, TRIMMED_NOTE } from '../server/restaurant/dialogue-policy';
 import { EMOTIONS, SOCIAL_SIGNALS } from '../server/restaurant/providers';
 import { emptyUsage } from '../server/restaurant/scene';
-import { noteTableFact } from '../server/restaurant/table-facts';
 import { CHARACTER_STORIES } from '../src/restaurant/story';
 import { getDate } from '../src/restaurant/content';
 
@@ -94,7 +93,7 @@ test('the turn note is short prose: both couples, the speaker’s words last, no
   const text = note();
   assert.match(text, /^Right now: The evening is about 12 minutes old\.\n- Alex and Mira \(h1, d1\): /);
   assert.match(text, /\n- Jamie and Jules \(h2, d2\): /);
-  assert.match(text, /Alex and Mira are seated|Alex and Mira have just met|Alex and Mira are not at the table/, 'the couple, not “you”, is the subject');
+  assert.match(text, /Alex and Mira are at their table together/, 'the couple, not “you”, is the subject');
   assert.ok(!/[{}]/.test(text), 'no JSON in the note');
   assert.ok(text.endsWith('Alex said to the whole table: “My graduating class was under seventy people.”') || /Alex said to the whole table: “My graduating class was under seventy people\.”\n/.test(text));
   const paragraphs = text.split('\n\n');
@@ -102,14 +101,11 @@ test('the turn note is short prose: both couples, the speaker’s words last, no
   assert.match(note({ target: 'h2', speaker: 'h1' }), /Alex said to Jamie: /); assert.match(note({ target: 'd2' }), /Alex said to Jules: /);
 });
 
-test('each date’s notes, private goal and boundaries are labelled by name, and only the speaker’s pair can earn agenda evidence', () => {
+test('each date’s private notes and boundaries stay labelled by their owner', () => {
   const text = note({}, { memory: 'HUMAN: Alex says the class had 70 people.', boundaries: { boundaries: [{ topic: 'food-drink', refusal: 'Please let me choose my own food.', delivered: true, disregardCount: 1, humanId: 'h1' } as never] } }, { memory: 'HUMAN: Jamie works nights.', agenda: { ...agenda, goal: 'Wants to feel heard.' } });
   assert.match(text, /Mira’s notes \(rewrite them into Mira’s "memory"\):\nHUMAN: Alex says the class had 70 people\./);
   assert.match(text, /Jules’s notes \(rewrite them into Jules’s "memory"\):\nHUMAN: Jamie works nights\./);
-  assert.match(text, /Mira’s private goal, not to recite: Wants to be asked before being advised\./);
-  assert.match(text, /Jules’s private goal, not to recite: Wants to feel heard\./);
-  assert.equal((text.match(/may now signal/g) ?? []).length, 1, 'the milestone rubric is offered once, for the date paired with the friend who spoke');
-  assert.match(text, /Mira’s private goal[^\n]*Mira may now signal "noticed"/, 'and it names the date, not “you”');
+  assert.doesNotMatch(text, /private goal|may now signal/, 'the table-only flow has no scripted agenda rubric');
   assert.match(text, /Boundaries Mira has set:\n- food-drink: Alex heard you say “Please let me choose my own food\.” and has disregarded it once\./);
 });
 
@@ -119,20 +115,9 @@ test('a date who has left or stepped away is told to the model as offstage and g
   const text = doubleTurnNote({ couples: [{ ...mira, available: false, agenda: null, memory: 'HUMAN: old' }, couples()[1]], speaker: 'h2', target: 'd2', humanText: 'Tell me about your week.', flow: {}, elapsedMinutes: 40 });
   assert.match(text, /Mira has left the table and Alex’s evening with Mira is over; Alex stays on as a wingman\. Write nothing for Mira\./);
   assert.ok(!text.includes('Mira’s notes') && !text.includes('Mira’s private goal'), 'nothing is asked of an offstage date');
-  assert.match(text, /Jules’s private goal/);
+  assert.match(text, /Jules’s notes/);
   const away = note({}, { available: false, agenda: null });
   assert.match(away, /Mira is away from the table, so write nothing for Mira/);
-});
-
-test('table events are written about the friend by name, whatever voice the server wrote them in', () => {
-  const [mira, jules] = couples();
-  mira.view.evening.moments.push({ id: 'm1', title: 'Returned', description: 'You returned the risotto.' });
-  noteTableFact(mira.view, 'Your date notices before you do.');
-  const text = doubleTurnNote({ couples: [{ ...mira, facts: [] }, jules], speaker: 'h1', target: 'table', humanText: 'Hello', flow: {}, elapsedMinutes: 3 });
-  assert.match(text, /At the table so far \(facts\):\n- Alex returned the risotto\./);
-  const withFacts = doubleTurnNote({ couples: [{ ...mira, facts: ['Your date notices before you do.'] }, jules], speaker: 'h1', target: 'table', humanText: 'Hello', flow: {}, elapsedMinutes: 3 });
-  assert.match(withFacts, /- Mira notices before Alex does\./);
-  assert.ok(!/\bYou\b|\byour\b/.test(withFacts.split('At the table so far')[1].split('\n\n')[0]), 'no second person in the facts');
 });
 
 test('how the words arrived: out loud, over the date, before the reply landed, after a pause, or answering a question', () => {
@@ -162,11 +147,6 @@ test('“what is cake gossip?” points at the date who said it, by name', () =>
   for (const humanText of ordinary) assert.ok(!note({ humanText, flow: { lastDateLine: { by: 'Mira', text: 'Wow, that is a lot of people for cake gossip.' } } }).includes('seems to be asking about'), humanText);
 });
 
-test('left-out dates are described as a fact, and only once the friends have kept to themselves', () => {
-  assert.ok(!note().includes('left out'));
-  assert.match(note({}, { friendOnlyTurns: 2 }, { friendOnlyTurns: 2 }), /The two friends have talked only to each other for the last 2 public turns, so Mira and Jules are starting to feel left out\./);
-});
-
 test('reply-shape hints speak about the speaker and name the date whose lines were repetitive', () => {
   assert.match(note({ humanText: 'ok' }), /Alex said very little: answer in a few words or one short sentence\./);
   const long = 'My graduating class was under seventy people which is really small and honestly I never minded because everybody knew everybody and we ran the whole school like a family for years.';
@@ -188,22 +168,6 @@ test('a name typed with special characters or line breaks cannot rewrite the not
   for (const entry of rendered) assert.ok(!entry.content.includes('\n'), 'one line per speaker: ' + entry.content);
   const text = doubleTurnNote({ couples: couples({ humanName: tricky.h1 }), speaker: 'h1', target: 'table', humanText: 'ok', flow: {}, elapsedMinutes: 1 });
   assert.ok(text.includes(`${tricky.h1} said very little`), 'the typed name is used as text');
-});
-
-test('a shared incident is told once, about the pair it happened to, and a busy pair does not crowd out the other', () => {
-  const [mira, jules] = couples();
-  mira.view.evening.moments.push({ id: 'spilled-drink', title: 'A little teamwork', description: 'You and your date mopped it up together.', owner: 'h1' });
-  jules.view.evening.moments.push({ id: 'spilled-drink', title: 'A little teamwork', description: 'You and your date mopped it up together.', owner: 'h1' });
-  const text = doubleTurnNote({ couples: [mira, jules], speaker: 'h1', target: 'table', humanText: 'Hello', flow: {}, elapsedMinutes: 3 });
-  const facts = text.split('At the table so far (facts):\n')[1].split('\n\n')[0];
-  assert.equal(facts, '- Alex and Mira mopped it up together.', facts);
-  const busy = { ...mira, view: mira.view, facts: Array.from({ length: 12 }, (_, index) => `Your date mentioned dish number ${index}.`) };
-  const crowded = doubleTurnNote({ couples: [busy, { ...jules, facts: ['Your date likes the window table.'] }], speaker: 'h1', target: 'table', humanText: 'Hello', flow: {}, elapsedMinutes: 3 });
-  assert.match(crowded, /Jamie’s date likes the window table|Jules likes the window table/, 'the quieter pair keeps its fact');
-  assert.equal((crowded.match(/dish number/g) ?? []).length, 9, 'a pair with room to spare keeps more than five while the other pair has little');
-  const [first, second] = couples();
-  const both = doubleTurnNote({ couples: [{ ...first, facts: Array.from({ length: 12 }, (_, index) => `Your date mentioned dish number ${index}.`) }, { ...second, facts: Array.from({ length: 12 }, (_, index) => `Your date mentioned wine number ${index}.`) }], speaker: 'h1', target: 'table', humanText: 'Hello', flow: {}, elapsedMinutes: 3 });
-  assert.equal((both.match(/dish number/g) ?? []).length, 5); assert.equal((both.match(/wine number/g) ?? []).length, 5);
 });
 
 test('an empty notebook says so, and two people who share a name are noticed whichever pair they are in', () => {

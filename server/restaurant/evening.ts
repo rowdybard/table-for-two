@@ -115,6 +115,7 @@ export class EveningDirector {
   private farewellHeard = false;
   private seatedOnce = false;
   private seatedAt: number | null = null;
+  private seatedCuePending = false;
   private nudged = false;
   private cutleryRestedAt: number | null = null;
   private thirdBiteAt: number | null = null;
@@ -144,8 +145,6 @@ export class EveningDirector {
     this.chemistry = new DateChemistryDirector(state);
     this.tabletop = new TabletopDirector(state);
     this.interest = new DateInterestDirector(state, openingInterest(state, this.blind?.traits.openness));
-    if (state.mode !== 'double-date') state.evening.scenario = createRestaurantScenario(state.blindDate?.seed ?? state.id, options.scenarioId);
-    this.cue('welcome');
   }
   get departing() { return this.leavingAt !== null || !!this.state.evening.farewell.ending; }
   private get story() { return this.blind?.biography ?? CHARACTER_STORIES[this.state.dateId]; }
@@ -211,6 +210,7 @@ export class EveningDirector {
    * shared Double room only the pair's own human can choose that pair's dessert (`speakerId`).
    */
   noteHumanTurn(text = '', speakerId?: string) {
+    this.seatedCuePending = false;
     this.lastHumanAt = this.state.elapsed; this.lastSpokeAt = this.state.elapsed; this.awaitingReply = true;
     // A question this date put to their own human is answered (or not) by that human; the friend's words do not settle it.
     if (!speakerId || speakerId === this.ownHumanId) { this.dateAsked = false; this.openQuestion = null; this.noteDessertWords(text); }
@@ -226,8 +226,10 @@ export class EveningDirector {
     if (hit) { this.namedDessert = hit; this.declinedDessert = false; } else if (NO_DESSERT.test(text)) this.declinedDessert = true;
     else if (withdrawsDessert(text, this.namedDessert)) this.namedDessert = null;
   }
-  seated() { if (!this.seatedOnce) { this.seatedOnce = true; this.seatedAt = this.state.elapsed; this.cue('seated'); } }
+  seated() { if (!this.seatedOnce) { this.seatedOnce = true; this.seatedAt = this.state.elapsed; this.seatedCuePending = true; } }
+  stood() { this.seatedCuePending = false; }
   ordered() {
+    this.seatedCuePending = false;
     const e = this.state.evening; e.main.status = 'waiting';
     e.main.dateDish = this.story.preferredMain || MENU[({ mira: 0, jules: 2, dev: 1 }[this.state.dateId] + e.variation) % MENU.length];
     e.chapter = 'mains'; this.orderedAt = this.state.elapsed; e.main.orderedAt = this.orderedAt; this.orderKitchenDelay = scenarioKitchenDelay(this.state);
@@ -359,8 +361,7 @@ export class EveningDirector {
     this.dateAsked = ENDS_ASKING.test(lastLine);
     const humanId = context.humanId ?? this.ownHumanId, paired = context.paired !== false;
     const boundary = this.boundaries.assess(turn.social?.boundary, humanText, turn.utterances, humanId);
-    if (boundary.kind === 'disregard') { if (paired) { this.agenda.pressure(); this.chemistry.revoke(); } }
-    else this.agenda.assess(paired ? turn.agenda : turn.agenda ? { ...turn.agenda, signal: 'none', evidence: '' } : undefined, paired ? humanText : '', turn.utterances);
+    if (boundary.kind === 'disregard' && paired) this.chemistry.revoke();
     this.chemistry.observe(turn, humanText, { paired, boundaryEvent: boundary.kind });
     if (turn.social) {
       const { signal, reason, wantsToLeave } = turn.social;
@@ -368,9 +369,9 @@ export class EveningDirector {
       // The reply the model just gave is already the acknowledgment, so no canned repair line follows it.
       else if (boundary.kind === 'repair') { this.pressure = boundary.count + 1; this.repair(reason, true); }
       else if (signal === 'repair' && !this.pressure) this.repair(reason, true);
-      else if (['kindness', 'curiosity', 'humor'].includes(signal) && e.stance !== 'hurt' && e.stance !== 'guarded' && hasEarnedConfidence(e.agenda)) { e.stance = 'comfortable'; e.stanceReason = reason; }
       if (wantsToLeave && boundary.canLeave) { e.stance = 'leaving'; e.stanceReason = reason; this.beginEnding('walked-away', paired ? undefined : context.name ?? 'your friend'); }
     }
+    this.promoteDeliveredChemistry();
     // A read-out only: it follows what this turn established and feeds nothing back.
     this.interest.observe(turn, { paired, boundary: boundary.kind });
     this.interest.noticeProgress();
@@ -383,7 +384,7 @@ export class EveningDirector {
   private repair(reason: string, modelSpoke = false) {
     const e = this.state.evening; if (e.stance === 'leaving') return;
     const wasUpset = this.pressure > 0 || e.stance === 'guarded' || e.stance === 'hurt'; // read before the lines below calm it
-    this.repaired = true; this.pressure = Math.max(0, this.pressure - 1); e.stance = this.pressure ? 'guarded' : hasEarnedConfidence(e.agenda) ? 'comfortable' : 'curious'; e.stanceReason = reason;
+    this.repaired = true; this.pressure = Math.max(0, this.pressure - 1); e.stance = this.pressure ? 'guarded' : this.chemistry.unlocked ? 'comfortable' : 'curious'; e.stanceReason = reason;
     if (wasUpset && !modelSpoke) this.cue('repair');
   }
   private beginEnding(kind: EveningEnding['kind'], responsibleFriend?: string) {
@@ -391,12 +392,9 @@ export class EveningDirector {
     this.chemistry.revoke();
     this.agenda.finish();
     const descriptions: Record<EveningEnding['kind'], [string, string]> = { 'another-evening': ['Another evening', 'A second date sounds like a possibility you both want to explore.'], 'new-friend': ['A good kind of company', 'The evening became a connection without needing to become a romance.'], 'second-chance': ['Room to try again', 'You owned an awkward moment and found a kinder way forward.'], 'quiet-goodbye': ['A complete goodbye', 'Not every first date asks for a second. This evening still had its own story.'], 'early-exit': ['An early goodbye', 'You chose when this evening was finished for you.'], 'walked-away': ['A boundary respected', 'Your date chose to leave after repeated pressure. Their decision stands.'] };
-    // A friendship farewell is warm only when the date came to trust the human; otherwise it is kind and plain.
-    const context: StoryCueContext = { reserved: !hasEarnedConfidence(this.state.evening.agenda), endingMotif: this.endingMotif(kind) };
-    const lines = responsibleFriend ? [{ speaker: 'date' as const, text: `I asked ${responsibleFriend} to stop. I’m leaving the table. Take care.`, emotion: 'defensive' as const }] : this.lines(`ending-${kind}`, context), [title, description] = descriptions[kind];
-    this.state.evening.farewell.ending = { kind, title, description, dateLine: lines.find(line => line.speaker === 'date')?.text || 'Thank you for the evening. Take care.' };
+    const [title, description] = descriptions[kind];
+    this.state.evening.farewell.ending = { kind, title, description, dateLine: '' };
     this.state.evening.chapter = 'farewell'; this.state.stage = 'farewell'; this.leavingAt = this.state.elapsed;
-    if (responsibleFriend) this.state.evening.cues.push({ id: `cue-${++this.cueSequence}`, key: `ending-${kind}`, utterances: lines }); else this.cue(`ending-${kind}`, context);
   }
   /** Read this pair's accepted acts and existing own-listener receipts; memory prose is never evidence. */
   private endingMotif(kind: EveningEnding['kind']): EndingMotif | undefined {
@@ -412,19 +410,13 @@ export class EveningDirector {
   }
   earlyExit() { this.beginEnding('early-exit'); if (this.state.order && !this.state.evening.bill.settlement) { this.state.evening.bill.requested = true; this.state.evening.bill.settlement = 'separate'; this.moment('bill', 'Dinner is settled', 'The ordered dinner was settled separately before the early goodbye.'); } this.state.phase = 'ended'; this.state.stage = 'finished'; this.state.reason = this.state.evening.farewell.ending!.description; }
   window() { if (this.state.evening.moments.some(m => m.id === 'window')) return; this.moment('window', 'Away from the table', 'You took a quiet moment together by the rain-streaked window.'); this.cue('quiet-window'); }
-  acknowledge(line: SceneUtterance, humanId = this.ownHumanId) { this.boundaries.acknowledge(line, humanId); if (humanId === this.ownHumanId) { this.agenda.acknowledge(line); this.chemistry.acknowledge(line); this.interest.noticeProgress(); if (line.speaker === 'date' && line.text === this.state.evening.farewell.ending?.dateLine) this.farewellHeard = true; } }
-  /** A provider limit creates a scene beat, never a personal-boundary strike. */
-  redirectConversation(allowIncident = true) {
-    if (this.state.phase !== 'playing' || this.departing) return;
+  private promoteDeliveredChemistry() {
     const e = this.state.evening;
-    if (allowIncident && this.state.seated && e.main.status === 'served' && e.main.bites === 0 && !e.incident && e.scenario?.phase !== 'active' && !e.resolutions['wrong-order'] && !e.bill.requested && this.state.elapsed - e.lastInterruptionAt > 25) {
-      this.startIncident('wrong-order'); return;
-    }
-    const lines = ['Quick check—does anyone need anything for the table?', 'Sorry to cut in. Take your time with dinner; I’m nearby if you need me.', 'Just checking on the table. Everything all right here?'];
-    const sequence = this.redirectSequence++;
-    e.cues.push({ id: `redirect-${sequence}`, key: 'table-check', utterances: [{ speaker: 'waiter', text: lines[sequence % lines.length], emotion: 'neutral' }] });
-    e.cues = e.cues.slice(-70); this.lastSpokeAt = this.state.elapsed;
+    if (this.chemistry.unlocked && e.stance === 'curious') { e.stance = 'comfortable'; e.stanceReason = 'Mutual interest emerged in the conversation.'; }
   }
+  acknowledge(line: SceneUtterance, humanId = this.ownHumanId) { this.boundaries.acknowledge(line, humanId); if (humanId === this.ownHumanId) { this.chemistry.acknowledge(line); this.promoteDeliveredChemistry(); this.interest.noticeProgress(); if (line.speaker === 'date' && line.text === this.state.evening.farewell.ending?.dateLine) this.farewellHeard = true; } }
+  /** A provider limit creates a scene beat, never a personal-boundary strike. */
+  redirectConversation(_allowIncident = true) { /* Provider refusals do not create an authored interruption. */ }
   /** Which authored silence breakers fit the moment. */
   private beatPhase(): BeatPhase | null {
     const e = this.state.evening;
@@ -434,98 +426,12 @@ export class EveningDirector {
     if (e.main.status === 'finished') return 'after';
     return null;
   }
-  step(dt: number, options: EveningStepOptions = {}) {
+  step(_dt: number, _options: EveningStepOptions = {}) {
     if (this.state.phase !== 'playing') return;
-    stepScenarioEffects(this.state, { allowReturn: options.dateReturned });
-    this.tabletop.step();
-    const e = this.state.evening, t = this.state.elapsed, P = EVENING_PACE;
-    if (this.leavingAt === null && e.farewell.ending) this.leavingAt = t;
-    if (e.care.water.status === 'requested' && e.care.water.requestedAt !== null && t - e.care.water.requestedAt >= 12 && !this.departing) {
-      e.care.water.status = 'served';
-      this.tabletop.restockWater();
-      const delivery = this.waterDeliverySequence++;
-      this.state.evening.cues.push({ id: delivery ? `care-water-served-${delivery}` : 'care-water-served', key: 'care-water-served', utterances: [{ speaker: 'waiter', text: 'Fresh water. Take your time; I’ll leave you to it.', emotion: 'warm' }] });
+    const ending = this.state.evening.farewell.ending;
+    if (ending && this.leavingAt !== null && this.state.elapsed - this.leavingAt > 45) {
+      this.state.phase = 'ended'; this.state.stage = 'finished'; this.state.reason = ending.description;
     }
-    const canInterrupt = options.allowIncidents !== false && this.state.seated && !e.bill.requested && !e.bill.settlement && e.chapter !== 'farewell' && this.state.stage !== 'farewell' && t - e.lastInterruptionAt > 25 && t >= e.care.quietUntil && t - this.lastIncidentAt > 25 && this.calm();
-    // Interruptions land before the courses move on, so a spill is never lost to the plates being cleared in the same moment.
-    // Each has its own window and none depends on another having happened: the glass goes over a minute into the main course
-    // (or as soon as the table is calm again, any time before dessert reaches it) and the neighbour's call starts over dessert.
-    // A wrong plate is a physical event of service and arrives regardless; a spill or a loud neighbour waits for the
-    // talk to settle, so it never lands on a question or cancels the answer that is on its way.
-    if (canInterrupt && !e.incident && !this.conversing) {
-      if (!e.resolutions['spilled-drink'] && !this.state.events.includes('spilled-drink') && ['served', 'finished'].includes(e.main.status) && !['served', 'finished'].includes(e.dessert.status) && e.main.servedAt !== undefined && t - e.main.servedAt >= P.spillAfterService) this.startIncident('spilled-drink');
-      else if (!e.resolutions['disruptive-diner'] && !this.state.events.includes('disruptive-diner') && e.scenarioCare?.table !== 'quiet' && e.dessert.status === 'served' && e.dessert.servedAt !== undefined && t - e.dessert.servedAt >= P.dinerAfterDessertServed) this.startIncident('disruptive-diner');
-    }
-    const calm = this.calm(), seatedAndCalm = calm && this.state.seated;
-    // Eli notices a seated guest who has not opened the menu.
-    if (!this.nudged && seatedAndCalm && !this.state.order && this.seatedAt !== null && t - this.seatedAt >= P.orderNudge) { this.nudged = true; this.cue('order-nudge'); }
-    let justServed = false;
-    if (calm && e.main.status === 'waiting' && t - this.orderedAt - (scenarioKitchenDelay(this.state) - this.orderKitchenDelay) >= P.mainKitchen) {
-      e.main.status = 'served'; e.main.servedDish = this.state.order; e.main.servedAt = t; e.main.dateBites = 0; this.lastDateBiteAt = t - P.dateBiteEvery + P.dateFirstBite; this.state.stage = 'dining'; justServed = true;
-      this.mainServeDelay = scenarioKitchenDelay(this.state); this.cutleryRestedAt = null; this.thirdBiteAt = null;
-      // An incorrect plate arrives with service, before any bites, rather than replacing eaten food.
-      if (!canInterrupt || !this.startIncident('wrong-order')) this.cue('main-served', { dish: this.state.order ?? '' });
-      e.lastInterruptionAt = t;
-    }
-    // The date eats their own plate at their own pace while it is in front of them, never mid-reply or
-    // during something at the table. It is how the plate looks, not a step towards clearing it.
-    if (e.main.status === 'served' && seatedAndCalm && !this.awaitingReply && (e.main.dateBites ?? 0) < P.dateBiteLimit && t - this.lastDateBiteAt >= P.dateBiteEvery) {
-      e.main.dateBites = (e.main.dateBites ?? 0) + 1; this.lastDateBiteAt = t;
-    }
-    // Resting the cutlery across the plate tells Eli the course is done.
-    if (e.main.status === 'served') {
-      if (e.tabletop?.cutleryCrossed) this.cutleryRestedAt ??= t; else this.cutleryRestedAt = null;
-      const held = scenarioKitchenDelay(this.state) - this.mainServeDelay, onTable = t - (e.main.servedAt ?? t) - held;
-      const rested = this.cutleryRestedAt !== null && t - this.cutleryRestedAt >= P.mainAfterCutleryRested;
-      const eaten = this.thirdBiteAt !== null && t - this.thirdBiteAt >= P.mainAfterEating;
-      if (seatedAndCalm && !justServed && (onTable >= P.mainCourse || rested || eaten)) this.finishMain();
-    }
-    // The dessert offer stays open for a while; then the date goes with what the human said they wanted, or picks their
-    // own favourite, unless the evening has cooled or the human said they were done. Never in the middle of an exchange.
-    if (seatedAndCalm && !this.conversing && e.main.status === 'finished' && e.dessert.status === 'none' && e.dessert.offeredAt !== undefined && t - e.dessert.offeredAt >= P.dessertDecision) {
-      if (GUARDED.includes(e.stance) || this.declinedDessert) this.skipDessert(this.declinedDessert ? 'you' : 'date');
-      else this.orderDessert(this.namedDessert ?? this.story.preferredDessert, 'date', !!this.namedDessert);
-    }
-    if (calm && e.dessert.status === 'waiting' && t - this.dessertAt - (scenarioKitchenDelay(this.state) - this.dessertKitchenDelay) >= P.dessertKitchen) {
-      e.dessert.status = 'served'; e.dessert.servedAt = t; this.dessertServeDelay = scenarioKitchenDelay(this.state); this.secondSpoonAt = null; this.dessertTalkDone = false;
-      e.lastInterruptionAt = t; this.cue('dessert-served', { choice: e.dessert.choice ?? undefined });
-    }
-    if (e.dessert.status === 'served') {
-      const held = scenarioKitchenDelay(this.state) - this.dessertServeDelay, onTable = t - (e.dessert.servedAt ?? t) - held;
-      if (seatedAndCalm && !this.dessertTalkDone && (e.dessert.bites >= 1 || onTable >= P.dessertTalk)) {
-        this.dessertTalkDone = true;
-        if (!e.sharedActivities.includes('dessert')) e.sharedActivities.push('dessert');
-        const name = DESSERTS.find(d => d.id === e.dessert.choice)?.name.toLowerCase() ?? 'dessert';
-        this.moment('dessert', 'Something to share', `You shared the ${name}${e.dessert.chosenBy === 'date' ? this.dessertNamed ? ', the one you asked for' : ', your date’s pick' : ''}, two spoons and one plate.`);
-        this.cue('dessert-shared', { reserved: this.reserved });
-      }
-      const eaten = this.secondSpoonAt !== null && t - this.secondSpoonAt >= P.dessertAfterEating;
-      if (seatedAndCalm && this.dessertTalkDone && (onTable >= P.dessertCourse || eaten)) { e.dessert.status = 'finished'; e.dessert.finishedAt = t; }
-    }
-    // Eli brings the check once dessert is over, unless the shared table is still eating.
-    if (seatedAndCalm && ['finished', 'skipped'].includes(e.dessert.status) && !e.bill.requested && !options.holdBill && e.dessert.finishedAt !== undefined && t - e.dessert.finishedAt >= P.checkDelay) {
-      e.bill.requested = true; e.bill.arrivedAt = t; e.chapter = 'bill'; e.lastInterruptionAt = t; this.cue('bill-requested', { reserved: this.reserved });
-    }
-    if (options.allowScenarios !== false && this.state.mode !== 'double-date' && e.scenario && scenarioMayOpen(this.state) && !this.departing && !this.conversing && t - this.lastIncidentAt > 25 && t - e.lastInterruptionAt > 25 && t >= e.care.quietUntil) {
-      e.lastInterruptionAt = t;
-      appendScenarioCue(this.state, `${e.scenario.id}-opening`, activateRestaurantScenario(e.scenario, t, scenarioStyle(this.state)));
-      applyScenarioEffects(this.state, e.scenario); this.lastSpokeAt = t;
-    }
-    // The date breaks a long silence with an authored line; no model request is made for it.
-    // It waits for the human to answer the date's own question, and says so plainly when the human has not spoken at all.
-    const phase = this.beatPhase(), silence = phase === 'waiting' ? P.beatSilenceWaiting : P.beatSilence + (e.variation % 3) * 17;
-    if (phase && seatedAndCalm && !this.conversing && !GUARDED.includes(e.stance) && !this.dateAsked && e.beats < P.beatsPerEvening && t >= e.care.quietUntil && t - e.lastInterruptionAt > 25 && t - this.lastSpokeAt >= silence && t - this.lastBeatAt >= P.beatSpacing) {
-      const key = e.dialogueTurns === 0 ? BEAT_COLD : BEAT_CUES[phase].find(candidate => !this.usedBeats.has(candidate));
-      if (key && !this.usedBeats.has(key)) {
-        this.usedBeats.add(key);
-        const line = this.cue(key).find(u => u.speaker === 'date');
-        // The line is already in the spoken history; the only thing to carry is that it still wants an answer.
-        if (line) { e.beats++; this.lastBeatAt = t; if (ASKS.test(line.text)) this.askOpen(line.text); }
-      }
-    }
-    this.interest.step(t - this.lastHumanAt, { calm: seatedAndCalm && !this.departing && !this.awaitingReply && !!this.state.order && !e.bill.requested, likesQuiet: this.agenda.likesQuiet, quietRequested: t < e.care.quietUntil });
-    refreshScenarioBill(this.state);
-    if (this.leavingAt !== null && (this.farewellHeard || t - this.leavingAt >= 30)) { const date = this.state.participants[1].position; if (Math.hypot(date[0] - .8, date[2] - 5.5) < .8 || t - this.leavingAt > 45) { this.state.phase = 'ended'; this.state.stage = 'finished'; this.state.reason = e.farewell.ending!.description; } }
   }
   /** Nothing outside the JS heap is held any more; kept for the scene lifecycle. */
   free() {}

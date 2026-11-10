@@ -127,7 +127,7 @@ kbd {display:inline-flex;align-items:center;justify-content:center;min-width:1.4
 .interaction {position:absolute;top:54%;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:8px;max-width:80vw;padding:5px 8px;background:#101d31e8;font:600 15px/1.4 var(--body);}
 .interaction kbd {height:2em;min-width:2em;margin:0;border:3px solid var(--live);border-radius:6px;background:#21121fe8;color:white;font:700 16px var(--body);}
 .interaction span {max-width:30ch;text-align:left;}
-.bottom-tray {position:absolute;bottom:4%;left:3%;display:flex;gap:14px;align-items:center;text-shadow:0 1px 3px #12121b;}
+.bottom-tray {position:absolute;bottom:max(20px,4%);left:50%;transform:translateX(-50%);display:flex;gap:18px;align-items:center;padding:8px 18px;border:1px solid #fff2dc2b;border-radius:30px;background:#151c29e8;text-shadow:0 1px 3px #12121b;}
 .tray-button {display:flex;align-items:center;gap:6px;padding:3px;color:white;font:600 14px var(--body);text-shadow:0 1px 3px #101624;}
 .tray-button:not(#mic-toggle):not(#type-toggle):not(#pause-open) {display:none;}
 #mic-toggle {padding:4px;color:var(--paper);}

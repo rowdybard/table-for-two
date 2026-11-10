@@ -12,6 +12,7 @@ import { MEMORY_HARD, MEMORY_REJECT, MEMORY_TARGET, clampMemory } from '../serve
 import { TRIMMED_NOTE, START_NOTE, alternatingMessages, humanVoice, replyShapeHint, tableNow } from '../server/restaurant/dialogue-policy';
 import { NOTES_EMPTY, QUIET_GAP_SECONDS, clarificationNudge, conversationMessages, deliveryLabel, heardPrefix, hintTurn, renderHistory, serviceFacts, turnNote, type AgendaPrompt, type TurnNoteInput } from '../server/restaurant/turn-note';
 import { createEvening } from '../src/restaurant/evening';
+import { DATES } from '../src/restaurant/content';
 import type { DateId, DinnerCommand, DinnerState, SceneTurn, SceneUtterance, TurnEvent } from '../src/restaurant/types';
 import { humanLine, noteOf, privateAgenda, recordedAtTable, rightNow, section } from './helpers/turn-note';
 
@@ -253,38 +254,28 @@ test('reply-shape hints come from the human’s length and the date’s last thr
 
 /* ------------------------------------------------------------------ the note */
 
-test('the note is prose in a fixed order, with the human’s words last', () => {
-  const state = seated(); state.evening.dialogueTurns = 2; state.evening.moments.push({ id: 'water', title: 'Water', description: 'You asked Eli for fresh water.' });
-  const note = turnNote(input({ scene: state, tableNow: tableNow(state, 'Mira'), memory: 'HUMAN: teaches.', facts: ['You: Offered a taste of the risotto.'], avoid: ['the weather'], via: 'voice',
-    scenario: { phase: 'active', description: 'Your date has gone quiet and keeps glancing at the door.' },
-    boundaries: { boundaries: [{ topic: 'family', refusal: 'I would rather not talk about family.', delivered: true, disregardCount: 2 }] } }));
-  const labels = ['Right now:', 'Your notes (rewrite them into "memory"):', 'At the table so far (facts):', 'Happening now:', 'Private to you, not to recite:', 'Boundaries in play:', 'Do not bring up unprompted:', 'They said this out loud;', 'The human just said:'];
-  const at = labels.map(label => note.indexOf(label));
-  assert.ok(at.every(index => index >= 0), `every section is present: ${at}`);
-  assert.deepEqual([...at].sort((a, b) => a - b), at, 'sections appear in the documented order');
-  assert.ok(note.split('\n\n').at(-1)!.startsWith('The human just said:'), 'the human’s words come last');
-  assert.doesNotMatch(note, /[{}]|spokenResponse|tableNow/, 'it is prose, not a serialised object');
-  assert.equal(humanLine(note), HUMAN);
-  assert.match(section(note, 'Happening now')!, /^Mira has gone quiet and keeps glancing at the door\.$/, 'server copy is in the third person');
-  assert.match(section(note, 'At the table so far')!, /- The human asked Eli for fresh water\.\n- The human: Offered a taste of the risotto\./);
+test('the table-only note keeps memory, boundaries and the human words without scripted scenes', () => {
+  const state = seated(); state.evening.moments.push({ id: 'water', title: 'Water', description: 'You asked Eli for fresh water.' });
+  const note = turnNote(input({ scene: state, tableNow: tableNow(state, 'Mira'), memory: 'HUMAN: teaches.', facts: ['You: Offered a taste.'], avoid: ['the weather'], via: 'voice', scenario: { phase: 'active', description: 'An invented interruption.' }, boundaries: { boundaries: [{ topic: 'family', refusal: 'I would rather not talk about family.', delivered: true, disregardCount: 2 }] } }));
+  const labels = ['Right now:', 'Your notes (rewrite them into "memory"):', 'Boundaries in play:', 'Do not bring up unprompted:', 'They said this out loud;', 'The human just said:'];
+  const at = labels.map(label => note.indexOf(label)); assert.ok(at.every(index => index >= 0)); assert.deepEqual([...at].sort((a, b) => a - b), at);
+  assert.equal(humanLine(note), HUMAN); assert.doesNotMatch(note, /Eli|invented interruption|Offered a taste|Private to you, not to recite/);
 });
+
 test('sections with nothing to say are absent, and an empty notebook says it is empty', () => {
   const note = turnNote(input());
-  assert.deepEqual(note.split('\n\n').map(part => part.split(':')[0]), ['Right now', 'Your notes (rewrite them into "memory")', 'Private to you, not to recite', 'The human just said']);
+  assert.deepEqual(note.split('\n\n').map(part => part.split(':')[0]), ['Right now', 'Your notes (rewrite them into "memory")', 'The human just said']);
   assert.ok(note.includes(`Your notes (rewrite them into "memory"):\n${NOTES_EMPTY}`), 'an empty notebook is stated, so the model neither invents entries nor reads a missing section as nothing to rewrite');
   for (const label of ['At the table so far', 'Happening now', 'Boundaries in play', 'Do not bring up', 'They said this out loud']) assert.equal(section(note, label), undefined, label);
   assert.equal(section(turnNote(input({ scenario: { phase: 'dormant', description: 'A story that has not started.' } })), 'Happening now'), undefined, 'a dormant story is not mentioned');
   assert.equal(section(turnNote(input({ scenario: { phase: 'resolved', description: 'A story that is over.' } })), 'Happening now'), undefined, 'a resolved story is not "happening now"');
 });
-test('the table facts are de-duplicated, voiced for the model and capped at the eight most recent', () => {
-  const state = scene(); for (let i = 1; i <= 5; i++) state.evening.moments.push({ id: `m${i}`, title: `Moment ${i}`, description: `You did thing ${i}.` });
-  const facts = ['You did thing 5.', 'You: tried the bread.', 'Your date laughed.', 'Fact four.', 'Fact five.'];
-  const body = section(turnNote(input({ scene: state, facts })), 'At the table so far')!.split('\n');
-  assert.equal(body.length, 8);
-  assert.equal(body.filter(item => item.includes('thing 5')).length, 1, 'a fact recorded as both a moment and a fact appears once');
-  assert.equal(body.at(-1), '- Fact five.'); assert.ok(body.includes('- Mira laughed.'));
-  assert.ok(!body.some(item => item.includes('thing 1.')), 'the oldest are dropped');
+test('stale scripted facts do not enter the table-only note', () => {
+  const state = scene(); state.evening.moments.push({ id: 'service', title: 'Service', description: 'Eli brought a plate.' });
+  const note = turnNote(input({ scene: state, facts: ['A scripted event.'] }));
+  assert.doesNotMatch(note, /Eli brought a plate|A scripted event/);
 });
+
 test('the human’s line is quoted on one line, whatever whitespace it arrived with', () => {
   const note = turnNote(input({ humanText: '  I teach\n\n primary   school.  ' }));
   assert.equal(humanLine(note), 'I teach primary school.');
@@ -305,32 +296,14 @@ test('kitchen and staff facts are phrased for the date, and absent when nothing 
   const facts = serviceFacts({ dinnerHeld: true, table: 'quiet', staff: 'medical', spaceCleared: true, alcoholStopped: true, contactRequested: true, cleanup: { wine: 'clean', glassesCleared: true }, extraOrder: [{ dish: 'Garlic Bread', quantity: 3, status: 'pending' }] }, 'Mira');
   assert.deepEqual(facts, ['The kitchen is holding dinner for now.', 'You have moved to a quieter part of the restaurant.', 'Eli and the staff are helping Mira with a medical need.', 'The space around the table has been cleared.', 'No more alcohol is being served.', 'Someone has been contacted to help.', 'The spilled wine has been cleaned up.', 'The glasses have been cleared.', 'Mira ordered extra dishes: 3 garlic bread (still cooking).']);
   const state = seated();
-  assert.match(rightNow(turnNote(input({ scene: state, tableNow: tableNow(state, 'Mira'), mechanics: { dinnerHeld: true } }))), /The kitchen is holding dinner for now\./);
+  assert.doesNotMatch(rightNow(turnNote(input({ scene: state, tableNow: tableNow(state, 'Mira'), mechanics: { dinnerHeld: true } }))), /kitchen|holding dinner/);
 });
 
 /* ------------------------------------------------------------------ the private agenda */
 
-test('the signal rubric is shown only on a turn whose signal the server could accept', () => {
-  const quiet = privateAgenda(turnNote(input({ agenda: agenda({ evidenceReady: false }) })));
-  assert.equal(quiet.milestone, null); assert.equal(quiet.rubric, undefined);
-  const ready = privateAgenda(turnNote(input({ agenda: agenda({ evidenceReady: true }) })));
-  assert.equal(ready.milestone, 'noticed'); assert.equal(ready.rubric, 'They pick up a detail you let slip.');
-  assert.equal(privateAgenda(turnNote(input({ agenda: agenda({ evidenceReady: true, nextMilestone: 'respected' }) }))).rubric, 'They leave it alone when you pull back.');
-  assert.equal(privateAgenda(turnNote(input({ agenda: agenda({ evidenceReady: true, nextMilestone: null }) }))).milestone, null, 'nothing left to signal');
-});
-test('the natural hint is offered on the third human turn and every third after, or when they ask directly', () => {
-  const shown = (turns: number, humanText = HUMAN) => { const state = scene(); state.evening.dialogueTurns = turns; return privateAgenda(turnNote(input({ scene: state, humanText }))).hint; };
-  assert.deepEqual([0, 1, 2, 3, 4, 5, 6, 7, 8].map(turn => shown(turn) !== undefined), [false, false, true, false, false, true, false, false, true]);
-  assert.equal(shown(2), 'Ask what their week was like.');
-  assert.equal(shown(0, 'So what are you looking for tonight?'), 'Ask what their week was like.', 'asked directly, the date can answer');
-  assert.equal(hintTurn(0, 'what do you want out of this'), true); assert.equal(hintTurn(1, 'nice weather'), false);
-});
-test('what the human has already heard, earned trust and the goal are one private paragraph', () => {
-  const body = privateAgenda(turnNote(input({ agenda: agenda({ heardClues: ['I miss home a bit.', 'My sister set this up.'], confidence: 'earned' }) })));
-  assert.match(body.goal, /^You want to find out whether they really listen\.$/);
-  assert.equal(body.heard, '“I miss home a bit.” “My sister set this up.”');
-  assert.equal(body.trusted, true);
-  assert.equal(privateAgenda(turnNote(input())).trusted, false);
+test('private agenda hints and hidden scores are absent from the table-only prompt', () => {
+  const note = turnNote(input({ agenda: agenda({ evidenceReady: true, heardClues: ['A hidden clue.'], confidence: 'earned' }) }));
+  assert.doesNotMatch(note, /Private to you, not to recite|hidden clue|earned your trust|signal "noticed"/i);
 });
 test('boundaries say what was actually heard; a refusal still being said is not yet in force', () => {
   const note = turnNote(input({ boundaries: { boundaries: [
@@ -452,6 +425,68 @@ test('a notebook over the hard cap completes the turn with a trimmed notebook', 
   assert.equal(section(noteOf(requests[1]), 'Your notes (rewrite them into "memory")'), kept, 'the next turn is shown the stored, trimmed notebook');
   assert.equal((await api.snapshot()).memory, 'HUMAN: short again.');
 });
+
+test('notebook disclosures wait for complete delivery and old receipts cannot roll back corrections', async t => {
+  const firstMemory = 'HUMAN: name Sam.\nTOLD THEM: six prints.\nOPEN: promised to show a print.';
+  const corrected = 'HUMAN: name Nia.\nTOLD THEM: six prints; bakery story.\nOPEN: promised to show a print; shared premise: bakery.';
+  const { claude, requests } = recorder(call => reply({ memory: call === 1 ? firstMemory : corrected }));
+  const server = await boot(claude); t.after(() => server.close()); const api = await server.start();
+  const first = await api.turn('My name is Sam.');
+  assert.equal((await api.snapshot()).memory, 'HUMAN: name Sam.');
+  await api.hear(first.generation, REPLY_LINE, false, .2);
+  assert.equal((await api.snapshot()).memory, 'HUMAN: name Sam.');
+  await api.hear(first.generation, REPLY_LINE, true, 1);
+  assert.equal((await api.snapshot()).memory, firstMemory);
+  const second = await api.turn('Actually, my name is Nia.');
+  assert.equal((await api.snapshot()).memory, 'HUMAN: name Nia.\nTOLD THEM: six prints.\nOPEN: promised to show a print.');
+  await api.turn('Please drop the joke.');
+  await api.hear(second.generation, REPLY_LINE, true, 1);
+  const memory = (await api.snapshot()).memory;
+  assert.match(memory, /name Nia/); assert.doesNotMatch(memory, /bakery story|shared premise/);
+  assert.match(noteOf(requests[2]), /name Nia/); assert.doesNotMatch(noteOf(requests[2]), /shared premise: bakery/);
+});
+
+test('an early caption receipt commits the validated notebook when the rest of the response arrives', async t => {
+  const gate = deferred();
+  const claude: ClaudeAdapter = { async *stream() {
+    const text = JSON.stringify(reply({ memory: 'HUMAN: name Nia.\nTOLD THEM: six prints.\nOPEN: promised a print.' }));
+    const end = text.indexOf('],"emotion"');
+    yield { type: 'text', text: text.slice(0, end) };
+    await gate.promise;
+    yield { type: 'text', text: text.slice(end) };
+  } };
+  const server = await boot(claude); t.after(() => { gate.resolve(); return server.close(); }); const api = await server.start();
+  const response = await api.request('/turn', { turnId: 'early-receipt', text: 'I am Nia.', model: 'claude-haiku-5-5' });
+  assert.ok(response.body); const reader = response.body.getReader(), decoder = new TextDecoder(); let received = '';
+  while (!received.includes('"type":"utterance"')) { const part = await reader.read(); assert.equal(part.done, false); received += decoder.decode(part.value, { stream: true }); }
+  const start = decode(received).find(event => event.type === 'start'); assert.ok(start && start.type === 'start');
+  await api.hear(start.generation, REPLY_LINE, true, 0);
+  assert.equal((await api.snapshot()).memory, '', 'a receipt cannot commit unvalidated bookkeeping');
+  gate.resolve(); while (!(await reader.read()).done) { /* drain the real event stream */ }
+  assert.match((await api.snapshot()).memory, /TOLD THEM: six prints/);
+});
+
+test('indistinguishable repeated Solo lines cannot use one receipt as proof that both were heard', async t => {
+  const line = { speaker: 'date' as const, text: REPLY_LINE, emotion: 'warm' as const };
+  const { claude } = recorder(() => reply({ utterances: [line, line], memory: 'HUMAN: name Nia.\nTOLD THEM: six prints.\nOPEN: promised a print.' }));
+  const server = await boot(claude); t.after(() => server.close()); const api = await server.start();
+  const first = await api.turn('I am Nia.'); await api.hear(first.generation, REPLY_LINE, true, 1);
+  assert.equal((await api.snapshot()).memory, 'HUMAN: name Nia.');
+});
+
+test('a stop retires the shared premise even if the provider fails', async t => {
+  let call = 0;
+  const claude: ClaudeAdapter = { async *stream() {
+    call++;
+    if (call === 2) throw new Error('offline fixture failure');
+    yield { type: 'text', text: JSON.stringify(reply({ memory: 'HUMAN: name Nia.\nTOLD THEM: six prints.\nOPEN: promised to show a print; shared premise: bakery.' })) };
+  } };
+  const server = await boot(claude); t.after(() => server.close()); const api = await server.start();
+  const first = await api.turn('I am Nia.'); await api.hear(first.generation, REPLY_LINE, true, 1);
+  const failed = await api.turn('Please drop the joke.'); assert.ok(failed.events.some(event => event.type === 'error'));
+  const memory = (await api.snapshot()).memory;
+  assert.match(memory, /name Nia/); assert.match(memory, /six prints/); assert.match(memory, /promised/); assert.doesNotMatch(memory, /shared premise/);
+});
 test('a runaway notebook is an invalid response and leaves the stored notebook alone', async t => {
   const { claude } = recorder(call => reply({ memory: call === 2 ? 'x'.repeat(MEMORY_REJECT + 1) : `HUMAN: note ${call}.` }));
   const server = await boot(claude); t.after(() => server.close()); const api = await server.start();
@@ -568,34 +603,16 @@ test('the director is told when the human spoke and when the date’s reply ende
   assert.deepEqual(spoken, ['This one will be replaced.', 'Second go.']);
 });
 
-test('the welcome is in the transcript once, as still being said until its receipts arrive, then as heard', async t => {
-  const { claude, requests } = recorder();
-  const server = await boot(claude); t.after(() => server.close());
-  const unheard = await server.start();
-  const [greeting, staff] = unheard.state.evening.cues[0].utterances;
-  await unheard.turn('Hi there.');
-  const [lead, welcome, note] = requests[0].messages;
-  assert.equal(requests[0].messages.length, 3); assert.equal(lead.content, START_NOTE);
-  assert.equal(welcome.content, `Mira: ${greeting.text} (still being said)\nEli (waiter): ${staff.text} (still being said)`, 'an opening nobody has confirmed hearing is not claimed as heard');
-  assert.equal(welcome.content.split(greeting.text).length, 2, 'the opening line is there once, not once from the seed and once from the welcome cue');
-  assert.equal(note.role, 'user'); assert.match(note.content, /^Right now: /);
-  const heard = await server.start();
-  const [heardGreeting, heardStaff] = heard.state.evening.cues[0].utterances;
-  assert.equal((await heard.hear(0, heardGreeting.text, true, 4)).status, 200); assert.equal((await heard.hear(0, heardStaff.text, true, 3, 'waiter')).status, 200);
-  await heard.turn('Hi there.');
-  assert.deepEqual(requests[1].messages.slice(0, 2), [{ role: 'user', content: START_NOTE }, { role: 'assistant', content: `Mira: ${heardGreeting.text}\nEli (waiter): ${heardStaff.text}` }]);
-  await heard.turn('And again.'); await heard.turn('And again.');
-  assert.equal(requests[3].messages[0].content, START_NOTE, 'a short evening keeps its opening line');
-  assert.ok(!requests[3].messages.some(message => message.content.includes(TRIMMED_NOTE)));
+test('the conversation begins with the human rather than a scripted welcome', async t => {
+  const { claude, requests } = recorder(); const server = await boot(claude); t.after(() => server.close()); const api = await server.start();
+  assert.deepEqual(api.state.evening.cues, []); await api.turn('Hi there.');
+  assert.equal(requests[0].messages.length, 1); assert.equal(requests[0].messages[0].role, 'user');
+  assert.match(requests[0].messages[0].content, /Hi there/); assert.doesNotMatch(requests[0].messages[0].content, /Eli|welcome/);
 });
-test('the opening line is still authorized for speech even though it is not seeded into the transcript', async t => {
-  const { claude } = recorder();
-  const server = await boot(claude, { env: {}, speech: { async *stream() { yield Buffer.from('opening-audio'); } } }); t.after(() => server.close());
-  const api = await server.start();
-  const welcome = api.state.evening.cues[0].utterances.find(item => item.speaker === 'date')!;
-  const spoken = await api.request('/speech', { generation: 0, utterance: welcome });
-  assert.equal(spoken.status, 200, await spoken.clone().text());
-  assert.equal(await spoken.text(), 'opening-audio');
+test('a scripted opening is not authorized for voice before a generated line', async t => {
+  const { claude } = recorder(); const server = await boot(claude, { env: {}, speech: { async *stream() { yield Buffer.from('opening-audio'); } } }); t.after(() => server.close());
+  const api = await server.start(), opening = { speaker: 'date', text: DATES[0].opening, emotion: 'neutral' };
+  assert.equal((await api.request('/speech', { generation: 0, utterance: opening })).status, 400);
 });
 
 test('the transcript window holds sixty entries, starts on the human, and says when older talk is not shown', async t => {
@@ -604,7 +621,7 @@ test('the transcript window holds sixty entries, starts on the human, and says w
   for (let i = 1; i <= 36; i++) await api.turn(`Human remark number ${i}.`);
   const early = requests[9].messages;
   assert.ok(!early.some(message => message.content.includes(TRIMMED_NOTE)), 'a young evening is not marked trimmed');
-  assert.equal(early[0].content, START_NOTE, 'while the whole evening fits, it starts at the welcome');
+  assert.equal(early[0].content, 'Human remark number 1.', 'while the whole evening fits, it starts at the first human turn');
   assert.ok(early.some(message => message.content.startsWith('Human remark number 1.')));
   const last = requests.at(-1)!.messages, history = last.slice(0, -1);
   assert.ok(history.length <= 60, `at most sixty entries (${history.length})`);
@@ -629,15 +646,10 @@ test('long speeches hit the byte cap before the entry cap, so a window never gro
   assert.ok(last.map(message => message.content).join('\n').includes('Speech 23:'));
 });
 
-test('table facts are shown to the model, and survive the model rewriting its own notebook', async t => {
+test('successive model notebooks survive without adding scripted table facts', async t => {
   const { claude, requests } = recorder(call => reply({ memory: `HUMAN: rewrite ${call}.` }));
-  const server = await boot(claude, { autoTick: true }); t.after(() => server.close()); const api = await server.start();
-  for (let i = 0; i < 45 && (await api.snapshot()).participants[0].position[2] >= 1.5; i++) { assert.equal((await api.command({ type: 'move', x: 0, z: -1, yaw: 0 })).status, 200); api.advance(100); await delay(20); }
-  assert.equal((await api.command({ type: 'interact', target: 'seat' })).status, 200);
-  const changed = await api.command({ type: 'evening', action: 'request-water' }); assert.equal(changed.status, 200);
-  assert.match(recordedAtTable((await changed.json()).state), /Asked Eli for fresh water/);
-  await api.turn('Thanks for the water.'); await api.turn('Where were we?');
-  for (const index of [0, 1]) assert.match(section(noteOf(requests[index]), 'At the table so far')!, /The human: Asked Eli for fresh water/, `turn ${index + 1} still sees the fact`);
-  assert.equal(section(noteOf(requests[1]), 'Your notes'), 'HUMAN: rewrite 1.', 'the notebook is only what the model wrote');
-  assert.match(rightNow(noteOf(requests[1])), /The human ordered|seated at your table|menus/);
+  const server = await boot(claude); t.after(() => server.close()); const api = await server.start();
+  await api.turn('I like books.'); await api.turn('Where were we?');
+  assert.equal(section(noteOf(requests[1]), 'Your notes'), 'HUMAN: rewrite 1.');
+  assert.doesNotMatch(noteOf(requests[1]), /Eli|At the table so far|menus/);
 });
