@@ -352,7 +352,7 @@ test('a request to clarify and the reply-shape hints trail the human’s words',
   const note = turnNote(input({ humanText: 'what do you mean by that', flow: { lastDateLine: 'I am only here for the cake gossip.' }, recentDelivered: [line('Is that right?'), line('So you like it?'), line('Really?')] }));
   const trailing = after(note).split('\n');
   assert.match(trailing[0], /They seem to be asking about your last line/);
-  assert.match(trailing.at(-1)!, /They said very little/);
+  assert.doesNotMatch(after(note), /They asked you|Short answer/, 'a clarification is not also read as a fresh question or a short answer');
   assert.match(after(note), /end this one on a statement/);
 });
 

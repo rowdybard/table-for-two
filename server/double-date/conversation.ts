@@ -215,7 +215,8 @@ export class DoubleConversation {
         const scenario = this.state.scenario;
         const note = doubleTurnNote({ couples, speaker: turn.human, target: turn.request.target, humanText: turn.request.text, ...(turn.request.via ? { via: turn.request.via } : {}),
           ...(scenario ? { scenario: { phase: scenario.phase, description: scenario.description, target: scenario.target } } : {}), flow: this.flowFor(turn, dateNames),
-          elapsedMinutes: Math.floor(Math.max(...Object.values(this.state.views).map(view => view.elapsed)) / 60) });
+          elapsedMinutes: Math.floor(Math.max(...Object.values(this.state.views).map(view => view.elapsed)) / 60),
+          previousHuman: this.history.filter(entry => entry.human === turn.human && entry.text).slice(-3).map(entry => entry.text!) });
         const listeners = this.state.members.filter(member => member.connected).map(member => member.id);
         const recent = this.history.slice(-RECENT_ENTRIES);
         const messages = doubleMessages(renderDoubleHistory(recent, names, dateNames, listeners, (lineId, human) => this.heard.get(lineId)?.[human]), this.trimmed || this.history.length > RECENT_ENTRIES, note);

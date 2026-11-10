@@ -3,7 +3,8 @@
 // history keeps its JSON form because conversation-routing parses it; it is rendered for the model at send time.
 import type { DinnerState, SceneUtterance, TurnVia } from '../../src/restaurant/types';
 import type { RestaurantScenarioState } from '../../src/restaurant/scenario-types';
-import { TRIMMED_NOTE, alternatingMessages, humanVoice, replyShapeHint, START_NOTE } from './dialogue-policy';
+import { TRIMMED_NOTE, alternatingMessages, dateShapeHint, humanVoice, START_NOTE } from './dialogue-policy';
+import { conversationMove } from './conversation-move';
 import { createBlindDate } from '../../src/restaurant/blind-date';
 import { conversationContentNote } from '../../src/restaurant/conversation-content';
 
@@ -192,6 +193,8 @@ export interface TurnNoteInput {
   recentDelivered?: readonly SceneUtterance[];
   flow?: TurnFlow;
   human?: string;
+  /** The human's previous few turns, oldest first, for the conversation's momentum. */
+  previousHuman?: readonly string[];
 }
 
 export const quote = (text: string) => `“${text}”`;
@@ -282,7 +285,11 @@ export function turnNote(input: TurnNoteInput): string {
   if (flow.pendingQuestion) after.push(`You asked them ${quote(lastQuestion(flow.pendingQuestion))} a little while ago and have not had an answer. If what they say next is not an answer, just respond to what they said.`);
   const nudge = clarificationNudge(input.humanText, flow.lastDateLine, [date]);
   if (nudge) after.push(nudge);
-  const shape = replyShapeHint(input.recentDelivered ?? [], input.humanText);
+  const move = conversationMove({ dateId: scene.dateId, humanText: input.humanText, lastDateLine: flow.lastDateLine, recentDelivered: input.recentDelivered,
+    previousHuman: input.previousHuman, clarifying: !!nudge, guarded: ['guarded', 'hurt', 'leaving'].includes(e.stance), romanceClosed: e.care.romanceClosed,
+    ...(blind ? { blind: { occupation: blind.biography.occupation } } : {}) });
+  if (move) after.push(move);
+  const shape = dateShapeHint(input.recentDelivered ?? []);
   if (shape) after.push(shape);
   out.push([`${Human} just said: ${quote(clean(input.humanText))}`, ...after].join('\n'));
   return out.join('\n\n');

@@ -495,7 +495,7 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
       pendingQuestion: s.scene.director.pendingQuestion,
       ...(lastDateLine?.heard ? { lastDateLine: lastDateLine.line.text } : {}),
     };
-    const note = turnNote({ scene, dateName: date, humanText: request.text, via: request.via, tableNow: tableNow(scene, date), memory: scene.memory, facts: tableFacts(s.scene.state), agenda: s.scene.director.agenda.promptContext(), boundaries: s.scene.director.boundaries.promptContext(), avoid: dialogueLoopContext(recentDelivered, request.text).avoidUnpromptedTopics, mechanics: scenarioMechanicsContext(scene), scenario: e.scenario, recentDelivered, flow });
+    const note = turnNote({ scene, dateName: date, humanText: request.text, via: request.via, tableNow: tableNow(scene, date), memory: scene.memory, facts: tableFacts(s.scene.state), agenda: s.scene.director.agenda.promptContext(), boundaries: s.scene.director.boundaries.promptContext(), avoid: dialogueLoopContext(recentDelivered, request.text).avoidUnpromptedTopics, mechanics: scenarioMechanicsContext(scene), scenario: e.scenario, recentDelivered, flow, previousHuman: s.history.filter(entry => entry.role === 'user').slice(-3).map(entry => entry.content) });
     const messages = conversationMessages(s.history, !!s.trimmed, date, note);
     // One token per UTF-8 byte plus framing is a conservative upper bound even
     // for non-English transcripts; characters/4 would under-reserve some scripts.

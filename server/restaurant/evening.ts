@@ -408,7 +408,19 @@ export class EveningDirector {
     if (dessert && e.sharedActivities.includes('dessert') && heard('dessert-shared')) return `dessert-${dessert.id}`;
     return undefined;
   }
-  earlyExit() { this.beginEnding('early-exit'); if (this.state.order && !this.state.evening.bill.settlement) { this.state.evening.bill.requested = true; this.state.evening.bill.settlement = 'separate'; this.moment('bill', 'Dinner is settled', 'The ordered dinner was settled separately before the early goodbye.'); } this.state.phase = 'ended'; this.state.stage = 'finished'; this.state.reason = this.state.evening.farewell.ending!.description; }
+  /** How this pair's evening actually went, read from earned state only (never the interest read-out). */
+  private verdict(): EveningEnding['kind'] {
+    const e = this.state.evening;
+    if (e.dialogueTurns < 3) return 'early-exit';
+    if (GUARDED.includes(e.stance)) return 'quiet-goodbye';
+    if (this.repaired && this.wasHurt) return 'second-chance';
+    if (!e.care.romanceClosed && this.chemistry.unlocked && e.stance === 'comfortable') return 'another-evening';
+    return 'new-friend';
+  }
+  /** The human ends the evening. The ending says how it went: a few words exchanged is an early exit, earned chemistry is another evening. No authored farewell line is put in the date's mouth. */
+  earlyExit() {
+    this.beginEnding(this.verdict());
+    if (this.state.order && !this.state.evening.bill.settlement) { this.state.evening.bill.requested = true; this.state.evening.bill.settlement = 'separate'; this.moment('bill', 'Dinner is settled', 'The ordered dinner was settled separately before the early goodbye.'); } this.state.phase = 'ended'; this.state.stage = 'finished'; this.state.reason = this.state.evening.farewell.ending!.description; }
   window() { if (this.state.evening.moments.some(m => m.id === 'window')) return; this.moment('window', 'Away from the table', 'You took a quiet moment together by the rain-streaked window.'); this.cue('quiet-window'); }
   private promoteDeliveredChemistry() {
     const e = this.state.evening;

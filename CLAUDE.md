@@ -40,7 +40,7 @@ TypeScript, plain imperative Three.js, Vite, Node, Rapier and DOM game overlays.
 | Finite table supplies and personal prop state | `server/restaurant/tabletop.ts`, `src/restaurant/tabletop.ts` |
 | Goals, skepticism, boundaries and earned chemistry | `server/restaurant/agendas.ts`, `skepticism.ts`, `boundaries.ts`, `chemistry.ts` |
 | Solo transport, provider orchestration and spending ledger | `server/restaurant/index.ts` and provider adapters in that directory |
-| What the date model reads (system prompt order, per-turn note, rendered transcript, notebook contract) | `server/restaurant/dialogue-policy.ts`, `turn-note.ts`, `memory.ts`, `table-facts.ts`; Double: `server/double-date/table-note.ts` |
+| What the date model reads (system prompt order, per-turn note, rendered transcript, notebook contract) | `server/restaurant/dialogue-policy.ts`, `turn-note.ts`, `conversation-move.ts` (local read of the human's turn: questions, bounces, flirts, short answers, and each date's plain answerable facts), `memory.ts`, `table-facts.ts`; Double: `server/double-date/table-note.ts` |
 | Shared Double world, story and one-call conversation director | `server/double-date/` |
 | Production packaging and hosting | `deployment/cloudflare/` |
 
