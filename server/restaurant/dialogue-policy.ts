@@ -88,7 +88,7 @@ function contentWords(text: string): Set<string> {
   const words = new Set<string>();
   for (const raw of text.toLowerCase().match(/[a-z][a-z’']{3,}/g) ?? []) {
     const bare = raw.replace(/[’'].*$/, ''), word = bare.length > 4 && bare.endsWith('ies') ? `${bare.slice(0, -3)}y` : bare.length > 4 && bare.endsWith('s') && !bare.endsWith('ss') ? bare.slice(0, -1) : bare;
-    if (word.length >= 4 && !COMMON_WORDS.has(word) && !COMMON_WORDS.has(bare)) words.add(word);
+    if (word.length >= 3 && !COMMON_WORDS.has(word) && !COMMON_WORDS.has(bare)) words.add(word);
   }
   return words;
 }
