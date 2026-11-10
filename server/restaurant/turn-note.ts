@@ -269,7 +269,7 @@ export function turnNote(input: TurnNoteInput): string {
   out.push(`Right now: ${now.join(' ')}`);
   out.push(`Your notes (rewrite them into "memory"):\n${input.memory.trim() || NOTES_EMPTY}`);
   const boundaries = boundaryLines(input.boundaries);
-  if (boundaries.length) out.push(`Boundaries in play:\n${boundaries.join('\n')}`);
+  if (boundaries.length) out.push(`Boundaries in play:\n${boundaries.join('\n')}\nIf what they just said pushes on one of these again, record boundary kind repeat under that same topic: copy the refusal exactly and quote their current words as evidence.`);
   if (input.avoid.length) out.push(`Do not bring up unprompted: ${input.avoid.join(', ')}.`);
   const blind = scene.blindDate ? createBlindDate(scene.blindDate.seed) : undefined;
   const material = conversationContentNote({ dateId: scene.dateId, latestHumanText: input.humanText, memory: input.memory,

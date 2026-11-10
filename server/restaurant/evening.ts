@@ -90,6 +90,8 @@ export function withdrawsDessert(spoken: string, id: string | null): boolean {
  * The waiter serves and clears on scene time and the date fills silences with authored
  * lines, so the evening moves on its own; the player eats, talks and makes the real choices.
  */
+/** The human says, about the two of them, that this is not romantic. Narrow: talk about other people's friendships must not match. */
+export const NO_SPARK = /\b(?:(?:i(?:'m| am) )?not feeling (?:a |any |the )?(?:romantic|spark|chemistry)|no (?:romantic )?(?:spark|chemistry) (?:here|for me|between us)|not (?:interested|into you|into this) romantically|don't (?:see|think of) (?:you|this|us) (?:that way|romantically)|(?:let's|we(?:'re| are| should| could)?|you and (?:i|me)|us)\b[^.?!]{0,30}\b(?:just|only|better(?: off)? as|stay|be) friends)\b/i;
 export class EveningDirector {
   readonly agenda: DateAgendaDirector;
   readonly boundaries: DateBoundaryDirector;
@@ -220,7 +222,11 @@ export class EveningDirector {
     this.seatedCuePending = false;
     this.lastHumanAt = this.state.elapsed; this.lastSpokeAt = this.state.elapsed; this.awaitingReply = true;
     // A question this date put to their own human is answered (or not) by that human; the friend's words do not settle it.
-    if (!speakerId || speakerId === this.ownHumanId) { this.dateAsked = false; this.openQuestion = null; this.noteDessertWords(text); }
+    if (!speakerId || speakerId === this.ownHumanId) {
+      this.dateAsked = false; this.openQuestion = null; this.noteDessertWords(text);
+      // The human saying plainly that there is no romance settles it for tonight, whatever is said later.
+      if (NO_SPARK.test(text.normalize('NFKC').replace(/[’‘]/g, "'")) && !this.state.evening.care.romanceClosed) { this.state.evening.care.romanceClosed = true; this.chemistry.revoke(); }
+    }
   }
   /** The date's reply to the latest human turn has finished (or was cut off). */
   replyEnded() { this.awaitingReply = false; this.lastSpokeAt = this.repliedAt = this.state.elapsed; }

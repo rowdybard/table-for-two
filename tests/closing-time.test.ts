@@ -37,7 +37,7 @@ test('the date hears nothing about the clock until the last stretch, then its fi
   const soon = closingLine({ left: 3, final: false, verdict: 'invited-home' });
   assert.match(soon, /closing soon/); assert.match(soon, /about 2 more exchanges/); assert.doesNotMatch(soon, /invite|second date/i, 'the verdict is not leaked early');
   assert.match(closingLine({ left: 2, final: false, verdict: 'new-friend' }), /about 1 more exchange after/);
-  assert.match(closingLine({ left: 1, final: true, verdict: 'invited-home' }), /last thing you say tonight[\s\S]*Invite them to come back with you/);
+  assert.match(closingLine({ left: 1, final: true, verdict: 'invited-home' }), /last thing you say tonight[\s\S]*Ask them to come home with you, to your place/);
   assert.match(closingLine({ left: 1, final: true, verdict: 'another-evening' }), /second date/);
   assert.match(closingLine({ left: 1, final: true, verdict: 'new-friend' }), /do not promise or hint at a second date/);
   assert.match(closingLine({ left: 1, final: true, verdict: 'quiet-goodbye' }), /short, civil goodnight/);

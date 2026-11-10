@@ -317,6 +317,7 @@ test('boundaries say what was actually heard; a refusal still being said is not 
     '- exes: they heard you say “I do not discuss exes.” and have disregarded it once. You do not owe this evening your patience: if it is pressed again you can end the date. Say in one plain sentence that you are leaving and set wantsToLeave true.',
     '- money: they heard you say “Money is private.” and have disregarded it 3 times. You do not owe this evening your patience: if it is pressed again you can end the date. Say in one plain sentence that you are leaving and set wantsToLeave true.',
     '- work: you started to say “Not work, please.”, but they have not heard it, so it is not in force yet.',
+    'If what they just said pushes on one of these again, record boundary kind repeat under that same topic: copy the refusal exactly and quote their current words as evidence.',
   ].join('\n'));
 });
 

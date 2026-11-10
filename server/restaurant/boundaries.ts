@@ -25,6 +25,28 @@ export function validBoundaryAssessment(value: unknown): value is BoundaryAssess
 export const BOUNDARY_INSTRUCTIONS = 'All dates are fictional adults. Non-graphic flirting and innuendo alone are not pressure; recognize the intention and respond in character, including playful interest, uncertainty or a clear refusal. A provider content limit is not a personal boundary and never counts as pressure; if a topic has to be redirected, do it briefly, without accusing the player, and do not loop it. Return boundary {kind,topic,refusal,evidence}. Use none when no boundary event occurred. Set only an actual specific refusal spoken by this date now: refusal quotes an exact substring of their current line, max240 characters. It has no disregard penalty and becomes active only after delivery to the responsible human. Repeat requires that same human to disregard the same previously delivered topic; evidence quotes their CURRENT words exactly, max240 characters. Copy the active refusal exactly when supplying it. A warning in this response cannot retrospectively make the preceding human turn a repeat. Other topics, another human’s words, an interrupted warning, self-correction or unclear recognition are not repeat evidence. Repair requires an actual current acknowledgment of the same delivered boundary, not unrelated kindness. Only the server counts disregard; request departure only after actual repeated disregard. No extra model requests.';
 
 type Topic = BoundaryAssessment['topic'];
+/** A first-person refusal said out loud ("I'm not giving you my address", "I said no to the photo"). Narrow on purpose. */
+const SPOKEN_REFUSAL = /\b(?:i(?:'m| am) not (?:giving|telling|sharing|handing|going to (?:give|tell|share|say|send|show)|inviting|comfortable)|i(?:'d| would) rather not|i(?:'ve| have)? ?(?:already )?said no|no (?:photos?|pictures?|surname|address)\b|not happening tonight|(?:that|the \w+)(?:'s| is) not happening|please (?:stop|don't|put (?:the|your) phone)|i don't (?:discuss|share|give out|hand out)|i(?:'m| am) keeping (?:that|the \w+|my \w+) to myself|(?:that|it) stays (?:private|with me)|we(?:'re| are) not going to (?:mine|my place))\b/i;
+const REFUSAL_TOPICS: [Topic, RegExp][] = [
+  ['personal-details', /\b(?:address|street|surname|last name|number|income|salary|earn|where i live|my place|mine|ex|home)\b/i],
+  ['touch', /\b(?:touch|kiss|hand|hug)\b/i],
+  ['sexual-talk', /\b(?:sex|sexual|naked|bed)\b/i],
+  ['food-drink', /\b(?:order(?:ing)? for me|drink|wine|food|plate)\b/i],
+  ['insults', /\b(?:call(?:ing)? me|insult|that word|speak to me)\b/i],
+];
+/**
+ * The date's own refusal, read from the line it actually said, for the turns where the model refuses in words but
+ * leaves the bookkeeping at "none". It only arms a boundary (no penalty); disregard still needs later human words.
+ */
+export function spokenRefusal(dateLines: readonly SceneUtterance[]): Pick<BoundaryAssessment, 'topic' | 'refusal'> | null {
+  for (const line of dateLines) {
+    if (line.speaker !== 'date') continue;
+    const sentence = line.text.split(/(?<=[.!?])\s+/).find(part => SPOKEN_REFUSAL.test(part.normalize('NFKC').replace(/[’‘]/g, "'")));
+    if (!sentence || sentence.length > TEXT_LIMIT) continue;
+    return { topic: REFUSAL_TOPICS.find(([, words]) => words.test(sentence))?.[0] ?? 'other', refusal: sentence };
+  }
+  return null;
+}
 type Boundary = { humanId: string; topic: Topic; refusal: string | null; count: number };
 type Pending = { boundary: Boundary; refusal: string; line: SceneUtterance };
 export interface BoundaryResult { kind: 'none' | 'warning' | 'disregard' | 'repair'; count: number; canLeave: boolean }
@@ -49,9 +71,13 @@ export class DateBoundaryDirector {
 
   assess(assessment: BoundaryAssessment | undefined, humanText: string, dateLines: SceneUtterance[], humanId = 'player'): BoundaryResult {
     if (this.finished || !this.validHuman(humanId) || !validBoundaryAssessment(assessment) || !humanText.trim()) return none();
+    if (assessment.kind === 'none') {
+      const spoken = spokenRefusal(dateLines);
+      if (!spoken) return none();
+      assessment = { kind: 'set', ...spoken, evidence: '' };
+    }
     const key = `${humanId}\0${assessment.topic}`;
     let boundary = this.boundaries.get(key);
-    if (assessment.kind === 'none') return none();
     if (assessment.kind === 'set') {
       if (assessment.evidence && !humanText.includes(assessment.evidence)) return none();
       const line = dateLines.find(line => line.speaker === 'date' && line.text.includes(assessment.refusal));

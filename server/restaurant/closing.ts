@@ -37,7 +37,7 @@ export function closingContext(dialogueTurns: number, verdict: ClosingVerdict, t
 }
 
 const LAST_LINE: Record<ClosingVerdict, string> = {
-  'invited-home': 'You do not want tonight to end here. Invite them to come back with you, plainly and warmly, in your own words; it is an invitation, not a description of what happens next.',
+  'invited-home': 'You do not want tonight to end here. Ask them to come home with you, to your place, plainly and warmly, in your own words; not a coffee or a walk somewhere else. It is an invitation, not a description of what happens next.',
   'another-evening': 'You want to see them again. Ask for a second date in your own words, with one specific idea that comes from tonight.',
   'second-chance': 'It got rocky and they made it right. Say goodnight honestly and leave the door open to trying again, without pretending nothing happened.',
   'new-friend': 'It was good company without a spark. Say a kind, honest goodnight; do not promise or hint at a second date.',
