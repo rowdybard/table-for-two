@@ -29,7 +29,7 @@ export interface DateInterest { level: number; trend: -1 | 0 | 1; changedAt: num
 export interface EveningCue { id: string; key: string; utterances: SceneUtterance[] }
 /** `owner` (a shared room's human id) marks a moment written for one friend's pair that was copied to the other's view. */
 export interface EveningMoment { id: string; title: string; description: string; owner?: string }
-export interface EveningEnding { kind: 'another-evening' | 'new-friend' | 'second-chance' | 'quiet-goodbye' | 'early-exit' | 'walked-away'; title: string; description: string; dateLine: string }
+export interface EveningEnding { kind: 'invited-home' | 'another-evening' | 'new-friend' | 'second-chance' | 'quiet-goodbye' | 'early-exit' | 'walked-away'; title: string; description: string; dateLine: string }
 export interface EveningState {
   tabletop?: import('./tabletop').TabletopState;
   scenarioCare?: import('./scenario-types').ScenarioCareState;
@@ -42,7 +42,9 @@ export interface EveningState {
   care: import('./scenario-types').RestaurantCareState;
   chapter: 'welcome' | 'mains' | 'dessert' | 'bill' | 'farewell';
   lastInterruptionAt: number;
-  variation: number; dialogueTurns: number; stance: DateStance; stanceReason: string;
+  variation: number; dialogueTurns: number;
+  /** Exchanges before closing time; the restaurant clock shows this. Counts down once per completed exchange. */
+  exchangesLeft: number; stance: DateStance; stanceReason: string;
   /** Courses are served and cleared by the waiter on scene time; bites are the player's own physical eating. */
   main: { status: 'none' | 'waiting' | 'served' | 'finished'; bites: number;
     /** The date eats their own plate at their own pace while it is on the table; it never touches the human's. */

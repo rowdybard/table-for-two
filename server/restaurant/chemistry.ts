@@ -24,6 +24,8 @@ export class DateChemistryDirector {
   }
 
   get unlocked(): boolean { return this.progress.unlocked; }
+  /** Flirts that landed both ways and were fully delivered (two unlock chemistry). */
+  get reciprocalFlirts(): number { return this.moments.length; }
 
   observe(turn: SceneTurn, humanText: string, options: { paired?: boolean; boundaryEvent?: BoundaryEvent } = {}): void {
     this.candidate = undefined;

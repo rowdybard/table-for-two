@@ -1,5 +1,6 @@
 import { MENU, RESTAURANT } from '../../src/restaurant/content';
-import { DESSERTS, EVENING_PACE } from '../../src/restaurant/evening';
+import { DESSERTS, EVENING_EXCHANGES, EVENING_PACE } from '../../src/restaurant/evening';
+import { closingContext, closingVerdict, exchangesLeft, settledVerdict, type ClosingContext, type ClosingVerdict } from './closing';
 import { BEAT_COLD, BEAT_CUES, CHARACTER_STORIES, getStoryCue, type BeatPhase, type EndingMotif, type StoryCueContext } from '../../src/restaurant/story';
 import { createBlindDate, getBlindDateCue, type BlindDateIdentity } from '../../src/restaurant/blind-date';
 import type { DinnerCommand, DinnerEvent, DinnerState, EveningEnding, SceneTurn, SceneUtterance } from '../../src/restaurant/types';
@@ -112,6 +113,10 @@ export class EveningDirector {
   private repaired = false;
   private wasHurt = false;
   private leavingAt: number | null = null;
+  /** The verdict the date was given before its last line, and when the clock-ended evening finishes after that line is heard. */
+  private closingPromise: ClosingVerdict | null = null;
+  private closedByClock = false;
+  private endAt: number | null = null;
   private farewellHeard = false;
   private seatedOnce = false;
   private seatedAt: number | null = null;
@@ -355,6 +360,7 @@ export class EveningDirector {
   }
   social(turn: SceneTurn, humanText = '', context: { humanId?: string; paired?: boolean; name?: string } = {}) {
     const e = this.state.evening; e.dialogueTurns++; this.lastSpokeAt = this.state.elapsed;
+    e.exchangesLeft = exchangesLeft(e.dialogueTurns);
     if (this.departing) return;
     // A reply that ends on a question is waiting for its answer, so no silence breaker piles another on top.
     const lastLine = turn.utterances.filter(line => line.speaker === 'date').at(-1)?.text.trim() ?? '';
@@ -375,6 +381,20 @@ export class EveningDirector {
     // A read-out only: it follows what this turn established and feeds nothing back.
     this.interest.observe(turn, { paired, boundary: boundary.kind });
     this.interest.noticeProgress();
+    // Closing time (Solo and Blind): the reply just given was the date's last line, so the evening ends on the verdict it was told to deliver.
+    if (!context.humanId && !this.departing && e.dialogueTurns >= EVENING_EXCHANGES) { this.closedByClock = true; this.beginEnding(settledVerdict(this.closingPromise, this.closingVerdictNow())); }
+  }
+  private closingVerdictNow(): ClosingVerdict {
+    const e = this.state.evening;
+    return closingVerdict({ guarded: GUARDED.includes(e.stance), romanceClosed: e.care.romanceClosed, repairedAfterHurt: this.repaired && this.wasHurt, chemistryUnlocked: this.chemistry.unlocked,
+      comfortable: e.stance === 'comfortable', reciprocalFlirts: this.chemistry.reciprocalFlirts, trustEarned: hasEarnedConfidence(e.agenda) });
+  }
+  /** What the next reply should know about the clock: null until the last stretch. On the final exchange the verdict is fixed here. */
+  closingContext(): ClosingContext | null {
+    if (this.departing) return null;
+    const closing = closingContext(this.state.evening.dialogueTurns, this.closingVerdictNow());
+    this.closingPromise = closing?.final ? closing.verdict : null;
+    return closing;
   }
   /**
    * Settle the date down after an apology. The canned line is for the apologize gesture only (no model
@@ -391,7 +411,7 @@ export class EveningDirector {
     if (this.departing) return;
     this.chemistry.revoke();
     this.agenda.finish();
-    const descriptions: Record<EveningEnding['kind'], [string, string]> = { 'another-evening': ['Another evening', 'A second date sounds like a possibility you both want to explore.'], 'new-friend': ['A good kind of company', 'The evening became a connection without needing to become a romance.'], 'second-chance': ['Room to try again', 'You owned an awkward moment and found a kinder way forward.'], 'quiet-goodbye': ['A complete goodbye', 'Not every first date asks for a second. This evening still had its own story.'], 'early-exit': ['An early goodbye', 'You chose when this evening was finished for you.'], 'walked-away': ['A boundary respected', 'Your date chose to leave after repeated pressure. Their decision stands.'] };
+    const descriptions: Record<EveningEnding['kind'], [string, string]> = { 'invited-home': ['Not ready to say goodnight', 'Your date asked you to come back with them. Tonight is not over.'], 'another-evening': ['Another evening', 'A second date sounds like a possibility you both want to explore.'], 'new-friend': ['A good kind of company', 'The evening became a connection without needing to become a romance.'], 'second-chance': ['Room to try again', 'You owned an awkward moment and found a kinder way forward.'], 'quiet-goodbye': ['A complete goodbye', 'Not every first date asks for a second. This evening still had its own story.'], 'early-exit': ['An early goodbye', 'You chose when this evening was finished for you.'], 'walked-away': ['A boundary respected', 'Your date chose to leave after repeated pressure. Their decision stands.'] };
     const [title, description] = descriptions[kind];
     this.state.evening.farewell.ending = { kind, title, description, dateLine: '' };
     this.state.evening.chapter = 'farewell'; this.state.stage = 'farewell'; this.leavingAt = this.state.elapsed;
@@ -426,7 +446,7 @@ export class EveningDirector {
     const e = this.state.evening;
     if (this.chemistry.unlocked && e.stance === 'curious') { e.stance = 'comfortable'; e.stanceReason = 'Mutual interest emerged in the conversation.'; }
   }
-  acknowledge(line: SceneUtterance, humanId = this.ownHumanId) { this.boundaries.acknowledge(line, humanId); if (humanId === this.ownHumanId) { this.chemistry.acknowledge(line); this.promoteDeliveredChemistry(); this.interest.noticeProgress(); if (line.speaker === 'date' && line.text === this.state.evening.farewell.ending?.dateLine) this.farewellHeard = true; } }
+  acknowledge(line: SceneUtterance, humanId = this.ownHumanId) { this.boundaries.acknowledge(line, humanId); if (humanId === this.ownHumanId) { if (this.closedByClock && line.speaker === 'date' && this.endAt === null) this.endAt = this.state.elapsed + 4; this.chemistry.acknowledge(line); this.promoteDeliveredChemistry(); this.interest.noticeProgress(); if (line.speaker === 'date' && line.text === this.state.evening.farewell.ending?.dateLine) this.farewellHeard = true; } }
   /** A provider limit creates a scene beat, never a personal-boundary strike. */
   redirectConversation(_allowIncident = true) { /* Provider refusals do not create an authored interruption. */ }
   /** Which authored silence breakers fit the moment. */
@@ -441,7 +461,8 @@ export class EveningDirector {
   step(_dt: number, _options: EveningStepOptions = {}) {
     if (this.state.phase !== 'playing') return;
     const ending = this.state.evening.farewell.ending;
-    if (ending && this.leavingAt !== null && this.state.elapsed - this.leavingAt > 45) {
+    // A clock-ended evening finishes a few seconds after the last line is heard; anything else keeps the long goodbye.
+    if (ending && ((this.endAt !== null && this.state.elapsed >= this.endAt) || (this.leavingAt !== null && this.state.elapsed - this.leavingAt > 45))) {
       this.state.phase = 'ended'; this.state.stage = 'finished'; this.state.reason = ending.description;
     }
   }

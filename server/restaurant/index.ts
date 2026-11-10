@@ -1,3 +1,4 @@
+import { EVENING_EXCHANGES } from '../../src/restaurant/evening';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
@@ -54,7 +55,8 @@ type GenerationRecord = { lines: SceneUtterance[]; playback: Map<string, { compl
 type Session = { scene: DinnerScene; token: string; model: ClaudeModel; generation: number; controller?: AbortController; speechControllers: Set<AbortController>; turns: Map<string, TurnRecord>; allowed: Map<string, SceneUtterance>; generations: Map<number, GenerationRecord>; capturedCues: Set<string>; history: { role: 'user' | 'assistant'; content: string }[]; reserved: number; touched: number; activeTurn?: string; turnStarted: number; trimmed?: boolean; lastHeardAt?: number; replyGeneration?: number };
 type Clip = { id: string; text: string; emotion: SceneUtterance['emotion']; voiceId: string; model: string; file: string; provider?: SpeechRequest['provider']; settings?: SpeechRequest['settings'] };
 const models: ClaudeModel[] = ['claude-haiku-5-5', 'claude-sonnet-5-5'];
-const HISTORY_ENTRIES = 60, HISTORY_BYTES = 20_000;
+// A whole evening (EVENING_EXCHANGES exchanges) fits in the verbatim window, so nothing said tonight drops out of view.
+const HISTORY_ENTRIES = EVENING_EXCHANGES * 2, HISTORY_BYTES = 24_000;
 const numberEnv = (env: NodeJS.ProcessEnv, key: string, fallback: number, min: number, max: number) => { const v = Number(env[key]); return env[key] && Number.isFinite(v) ? Math.max(min, Math.min(max, v)) : fallback; };
 const keyFor = (u: SceneUtterance) => JSON.stringify([u.speaker, u.text, u.emotion]);
 const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
@@ -495,7 +497,7 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
       pendingQuestion: s.scene.director.pendingQuestion,
       ...(lastDateLine?.heard ? { lastDateLine: lastDateLine.line.text } : {}),
     };
-    const note = turnNote({ scene, dateName: date, humanText: request.text, via: request.via, tableNow: tableNow(scene, date), memory: scene.memory, facts: tableFacts(s.scene.state), agenda: s.scene.director.agenda.promptContext(), boundaries: s.scene.director.boundaries.promptContext(), avoid: dialogueLoopContext(recentDelivered, request.text).avoidUnpromptedTopics, mechanics: scenarioMechanicsContext(scene), scenario: e.scenario, recentDelivered, flow, previousHuman: s.history.filter(entry => entry.role === 'user').slice(-3).map(entry => entry.content) });
+    const note = turnNote({ scene, dateName: date, humanText: request.text, via: request.via, tableNow: tableNow(scene, date), memory: scene.memory, facts: tableFacts(s.scene.state), agenda: s.scene.director.agenda.promptContext(), boundaries: s.scene.director.boundaries.promptContext(), avoid: dialogueLoopContext(recentDelivered, request.text).avoidUnpromptedTopics, mechanics: scenarioMechanicsContext(scene), scenario: e.scenario, recentDelivered, flow, closing: s.scene.director.closingContext(), previousHuman: s.history.filter(entry => entry.role === 'user').slice(-3).map(entry => entry.content) });
     const messages = conversationMessages(s.history, !!s.trimmed, date, note);
     // One token per UTF-8 byte plus framing is a conservative upper bound even
     // for non-English transcripts; characters/4 would under-reserve some scripts.

@@ -5,6 +5,7 @@ import type { DinnerState, SceneUtterance, TurnVia } from '../../src/restaurant/
 import type { RestaurantScenarioState } from '../../src/restaurant/scenario-types';
 import { TRIMMED_NOTE, alternatingMessages, dateShapeHint, humanVoice, START_NOTE } from './dialogue-policy';
 import { conversationMove } from './conversation-move';
+import { closingLine, type ClosingContext } from './closing';
 import { createBlindDate } from '../../src/restaurant/blind-date';
 import { conversationContentNote } from '../../src/restaurant/conversation-content';
 
@@ -173,6 +174,8 @@ export interface TurnFlow {
   lastDateLine?: string;
 }
 export interface TurnNoteInput {
+  /** Closing time, from the evening director; absent until the last stretch. */
+  closing?: ClosingContext | null;
   scene: DinnerState;
   dateName: string;
   humanText: string;
@@ -290,7 +293,9 @@ export function turnNote(input: TurnNoteInput): string {
     ...(blind ? { blind: { occupation: blind.biography.occupation } } : {}) });
   if (move) after.push(move);
   const shape = dateShapeHint(input.recentDelivered ?? []);
-  if (shape) after.push(shape);
+  if (shape && !input.closing?.final) after.push(shape);
+  const closing = closingLine(input.closing);
+  if (closing) after.push(closing);
   out.push([`${Human} just said: ${quote(clean(input.humanText))}`, ...after].join('\n'));
   return out.join('\n\n');
 }

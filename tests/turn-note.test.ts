@@ -615,23 +615,22 @@ test('a scripted opening is not authorized for voice before a generated line', a
   assert.equal((await api.request('/speech', { generation: 0, utterance: opening })).status, 400);
 });
 
-test('the transcript window holds sixty entries, starts on the human, and says when older talk is not shown', async t => {
+test('a whole evening stays in the transcript window word for word, and the thirty-sixth exchange is the last', async t => {
   const { claude, requests } = recorder(call => reply({ utterances: [{ speaker: 'date', text: `${REPLY_LINE} (${call})`, emotion: 'warm' }] }));
   const server = await boot(claude); t.after(() => server.close()); const api = await server.start();
   for (let i = 1; i <= 36; i++) await api.turn(`Human remark number ${i}.`);
-  const early = requests[9].messages;
-  assert.ok(!early.some(message => message.content.includes(TRIMMED_NOTE)), 'a young evening is not marked trimmed');
-  assert.equal(early[0].content, 'Human remark number 1.', 'while the whole evening fits, it starts at the first human turn');
-  assert.ok(early.some(message => message.content.startsWith('Human remark number 1.')));
   const last = requests.at(-1)!.messages, history = last.slice(0, -1);
-  assert.ok(history.length <= 60, `at most sixty entries (${history.length})`);
-  assert.equal(last[0].role, 'user'); assert.ok(last[0].content.startsWith(TRIMMED_NOTE), 'the window says it is a window');
+  assert.equal(requests.length, 36);
+  assert.ok(history.length <= 72, `at most seventy-two entries (${history.length})`);
+  assert.ok(!last.some(message => message.content.includes(TRIMMED_NOTE)), 'nothing said tonight has been dropped');
+  assert.equal(last[0].content, 'Human remark number 1.', 'the evening still starts at the first human turn');
   assert.ok(last.every((message, index) => index === 0 || message.role !== last[index - 1].role), 'roles alternate');
   assert.equal(last.at(-1)!.role, 'user'); assert.ok(last.at(-1)!.content.startsWith('Right now: '));
   const text = last.map(message => message.content).join('\n');
-  assert.ok(!text.includes('Human remark number 1.') && !text.includes('Human remark number 2.'), 'the oldest talk has gone');
-  assert.ok(text.includes('Human remark number 35.') && text.includes, 'the newest exchange is verbatim');
-  assert.ok(text.indexOf(TRIMMED_NOTE) === text.lastIndexOf(TRIMMED_NOTE), 'the note appears once');
+  assert.ok(text.includes('Human remark number 2.') && text.includes('Human remark number 35.'), 'the oldest and newest talk are both verbatim');
+  assert.match(last.at(-1)!.content, /last thing you say tonight/, 'the final exchange is told it is the last');
+  assert.doesNotMatch(requests[29].messages.at(-1)!.content, /closing/, 'the thirtieth exchange hears nothing about the clock');
+  assert.match(requests[32].messages.at(-1)!.content, /closing soon/);
 });
 test('long speeches hit the byte cap before the entry cap, so a window never grows without bound', async t => {
   const { claude, requests } = recorder(call => reply({ utterances: [{ speaker: 'date', text: `${REPLY_LINE} (${call})`, emotion: 'warm' }] }));
@@ -639,8 +638,8 @@ test('long speeches hit the byte cap before the entry cap, so a window never gro
   const speech = (i: number) => `Speech ${i}: ${'and then I kept going about the river, '.repeat(36)}`.slice(0, 1500);
   for (let i = 1; i <= 24; i++) assert.equal((await api.turn(speech(i))).status, 200);
   const last = requests.at(-1)!.messages, history = last.slice(0, -1);
-  assert.ok(history.length < 40, `the byte cap binds well before sixty entries (${history.length})`);
-  assert.ok(history.reduce((total, message) => total + message.content.length, 0) <= 20_000, 'the window is within the byte budget');
+  assert.ok(history.length < 40, `the byte cap binds well before the entry cap (${history.length})`);
+  assert.ok(history.reduce((total, message) => total + message.content.length, 0) <= 24_000, 'the window is within the byte budget');
   assert.equal(last[0].role, 'user'); assert.ok(last[0].content.startsWith(TRIMMED_NOTE));
   assert.ok(!last.map(message => message.content).join('\n').includes('Speech 1:'));
   assert.ok(last.map(message => message.content).join('\n').includes('Speech 23:'));

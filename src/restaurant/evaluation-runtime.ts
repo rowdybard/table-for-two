@@ -130,7 +130,7 @@ export class EvaluationConversation {
       this.history.push({ role: 'user', content: input.text }, { role: 'assistant', content: JSON.stringify({ spokenResponse }) });
       if (delivery === 'heard') for (const line of turn.utterances) { director.acknowledge(line); if (line.speaker === 'date') this.recent.push(line); }
       this.recent.splice(0, Math.max(0, this.recent.length - 8)); this.previous = { lines: turn.utterances, delivery };
-      while (this.history.length > 60 || this.history.length > 2 && Buffer.byteLength(JSON.stringify(this.history)) > 20_000) { this.history.shift(); this.trimmed = true; }
+      while (this.history.length > 72 || this.history.length > 2 && Buffer.byteLength(JSON.stringify(this.history)) > 24_000) { this.history.shift(); this.trimmed = true; }
       return;
     }
     const speaker = input.human ?? 'h1', nextListener = this.script.turns[index + 1]?.human ?? speaker;

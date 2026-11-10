@@ -89,3 +89,22 @@ test('endurance scripts run past the history window, stay out of the frozen corp
   assert.deepEqual(codes(checkReportOutputs(one('You’re a nurse, right?'))), ['fail:probe_wrong']);
   assert.deepEqual(codes(checkReportOutputs(one('Something with long hours, I think.'))), ['review:probe_missed']);
 });
+
+test('Dolphin reads the same notebook, transcript and turn context as Haiku', async () => {
+  const { EvaluationConversation } = await import('../src/restaurant/evaluation');
+  const { DOLPHIN_LLM_MODEL } = await import('../src/restaurant/types');
+  const { validateTurn } = await import('../server/restaurant');
+  const script = EVALUATION_SCRIPTS.find(item => item.mode === 'solo')!;
+  const memory = 'HUMAN: shares fries, prefers the tiny crispy ones\nTOLD THEM: lives above a bakery\nOPEN: who gets the last fry';
+  const requests = (['claude-haiku-5-5', DOLPHIN_LLM_MODEL] as const).map(model => {
+    const conversation = new EvaluationConversation(script, model);
+    for (const index of [0, 1]) { conversation.request(index); conversation.commit(index, { kind: 'solo', turn: validateTurn(JSON.parse(raw(index ? 'Tiny crispy ones. Agreed, reluctantly.' : 'A serious statement. I respect it.', memory))) }); }
+    return conversation.request(2);
+  });
+  const [haiku, dolphin] = requests;
+  assert.deepEqual(dolphin.messages, haiku.messages, 'identical transcript and per-turn note');
+  const note = String(dolphin.messages.at(-1)!.content);
+  assert.match(note, /Your notes/); assert.match(note, /prefers the tiny crispy ones/); assert.match(note, /lives above a bakery/);
+  assert.ok(dolphin.messages.some(message => /A serious statement/.test(String(message.content))), 'the earlier date line is in the transcript');
+  assert.match(dolphin.system, /Mira/); assert.match(dolphin.system, /Your life/);
+});
