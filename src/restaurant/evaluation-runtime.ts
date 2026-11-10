@@ -91,7 +91,7 @@ export class EvaluationConversation {
       ...(this.previous?.delivery === 'heard' && lastDateLine ? { lastDateLine: lastDateLine.text } : {}) };
     const note = turnNote({ scene: view, dateName, humanText: turn.text, via: turn.via ?? 'typed', tableNow: tableNow(view, dateName), memory: view.memory, facts: tableFacts(view),
       agenda: null, boundaries: director.boundaries.promptContext(), avoid: dialogueLoopContext(this.recent, turn.text).avoidUnpromptedTopics,
-      recentDelivered: this.recent, flow });
+      recentDelivered: this.recent, flow, ...(this.script.closingClock ? { closing: director.closingContext() } : {}) });
     return { model: this.model, system: soloSystem({ dateId: view.dateId, blindDate: view.blindDate, model: this.model }),
       messages: conversationMessages(this.history, this.trimmed, dateName, note), maxTokens: this.maxTokens, outputSchema: TURN_SCHEMA };
   }
@@ -156,6 +156,9 @@ export class EvaluationConversation {
   }
 
   reviewSnapshot() {
-    return Object.fromEntries(humans.map(human => [human, { dateId: this.views[human].dateId, memory: this.views[human].memory, phase: this.views[human].phase, agenda: structuredClone(this.views[human].evening.agenda) }]));
+    return Object.fromEntries(humans.map(human => [human, { dateId: this.views[human].dateId, memory: this.views[human].memory, phase: this.views[human].phase, agenda: structuredClone(this.views[human].evening.agenda),
+      stance: this.views[human].evening.stance, exchangesLeft: this.views[human].evening.exchangesLeft, ending: this.views[human].evening.farewell.ending?.kind ?? null }]));
   }
+  /** A clocked Solo evening is over once the controllers began an ending: the clock ran out, or the date left first. */
+  get over() { return !!this.script.closingClock && this.script.mode !== 'double' && this.directors.h1.departing; }
 }

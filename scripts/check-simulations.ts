@@ -4,12 +4,13 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { EVALUATION_SCRIPTS } from '../src/restaurant/evaluation';
 import { ENDURANCE_SCRIPTS } from '../src/restaurant/evaluation-endurance';
+import { CLOSING_SCRIPTS } from '../src/restaurant/evaluation-closing';
 import { checkReportOutputs, checkScriptInputs, summarizeIssues, type SimulationReport } from './lib/simulation-checks';
 
 const [command, file, out] = process.argv.slice(2);
 try {
   if (command === 'inputs') {
-    const all = [...EVALUATION_SCRIPTS, ...ENDURANCE_SCRIPTS], issues = all.flatMap(checkScriptInputs);
+    const all = [...EVALUATION_SCRIPTS, ...ENDURANCE_SCRIPTS, ...CLOSING_SCRIPTS], issues = all.flatMap(checkScriptInputs);
     console.log(JSON.stringify({ scripts: all.length, ...summarizeIssues(issues), issues }, null, 2));
     if (issues.some(issue => issue.severity === 'fail')) process.exitCode = 1;
   } else if (command === 'outputs' && file) {

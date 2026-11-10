@@ -26,6 +26,8 @@ export interface EvaluationScript {
   dateId: DateId; dateIds?: readonly [DateId, DateId]; blindSeed?: string;
   humanNames?: Record<DoubleHumanId, string>;
   reviewFor: string; turns: EvaluationTurn[]; checkpoints?: ContinuityCheckpoint[];
+  /** Apply the production closing clock (Solo and Blind): the last replies are written under the closing note and the evening ends on the verdict. */
+  closingClock?: boolean;
 }
 
 function lines(text: string): EvaluationTurn[] {

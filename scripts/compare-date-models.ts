@@ -12,7 +12,7 @@ import { CampaignLedger, campaignLedgerPath, readCampaignManifest } from './lib/
 
 async function main() {
   const options = parseEvaluationOptions(process.argv.slice(2));
-  if (options.help) console.log('Usage: pnpm compare:models [--suite all|short|continuity] [--scripts id,id] [--models haiku,sonnet,horde,dolphin,venice] [--run --budget USD] [--campaign]. Dolphin uses DOLPHIN_LLM_API_KEY; Venice uses OPENROUTER_API_KEY. Default is a dry run. $0 permits only Horde. Maximum explicit run budget is $10.');
+  if (options.help) console.log('Usage: pnpm compare:models [--suite all|short|continuity|endurance|closing] [--scripts id,id] [--models haiku,sonnet,horde,dolphin,venice] [--run --budget USD] [--campaign]. Dolphin uses DOLPHIN_LLM_API_KEY; Venice uses OPENROUTER_API_KEY. Default is a dry run. $0 permits only Horde. Maximum explicit run budget is $10.');
   console.log(JSON.stringify(evaluationPreview(options), null, 2));
   if (!options.run) return; // Do not read credentials, create a provider, or write reports in a dry run.
   if (existsSync('.env')) process.loadEnvFile('.env');
