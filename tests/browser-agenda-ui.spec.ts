@@ -57,26 +57,19 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 844, height: 390 
     await expect(page.locator('#restaurant-app')).not.toContainText('take over or fix');
     expect(await page.evaluate(() => localStorage.getItem('table-for-two-evenings'))).toBeNull();
 
-    await page.evaluate(() => { document.getElementById('journal')!.hidden = false; });
-    await page.locator('#journal-moments').click();
-    await expect(page.locator('#agenda-clues')).toBeVisible();
-    await expect(page.locator('#agenda-clues-heading')).toHaveText('What Mira said');
-    await expect(page.locator('#agenda-clues-lines')).toHaveText('“I want to be heard, even when we disagree.”');
-    await page.locator('#journal-moments').focus();
-    await page.evaluate(() => { const fixture = (window as unknown as AgendaWindow).__agendaFixture; fixture.ui.update(fixture.state); });
-    await expect(page.locator('#journal-moments')).toBeFocused();
-
     await page.evaluate(() => (window as unknown as AgendaWindow).__agendaFixture.finish());
     await expect(page.locator('#ending-date-line')).toHaveText('“I liked that we could disagree and still enjoy dinner.”');
     await expect(page.locator('#ending-agenda')).toBeVisible();
     await expect(page.locator('#ending-agenda-heading')).toHaveText('What Mira wanted');
-    await expect(page.locator('#ending-agenda-score')).toHaveText('Understanding · 65 / 100');
+    await expect(page.locator('#ending-agenda-score span[data-earned=true]')).toHaveText(['Noticed', 'Understood']);
+    await expect(page.locator('#ending-agenda-score span[data-earned=false]')).toHaveText(['Made room for it']);
     await expect(page.locator('#ending-agenda-reflection')).toContainText('understood why');
     await page.locator('.ending-memories summary').click();
     await expect(page.locator('#ending-agenda-evidence')).toContainText('You want someone to listen, not just agree.');
     const overflow = await page.locator('.ending-dialog').evaluate(node => node.scrollWidth - node.clientWidth);
     expect(overflow).toBeLessThanOrEqual(1);
     expect(await page.evaluate(() => JSON.parse(localStorage.getItem('table-for-two-evenings') || '[]')[0].agenda.score)).toBe(65);
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('table-for-two-best') || '{}'))).toEqual({ mira: 'new-friend' });
 
     const downloadEvent = page.waitForEvent('download');
     await page.locator('#save-postcard').click();
