@@ -55,6 +55,24 @@ function canonicalSections(text: string): string {
   return ['human', 'told them', 'open'].filter(label => sections.has(label)).map(label => sections.get(label)!).join('\n');
 }
 
+/** Commit the human's facts immediately, but treat date disclosures and obligations as heard
+ * only after every generated line from this date has reached its own listener. */
+export function mergeMemoryForDelivery(next: string, previous: string, heard: boolean, latestHumanText = ''): string {
+  const prior = clampMemory('', previous, latestHumanText);
+  if (heard) return clampMemory(next, prior, latestHumanText);
+  const proposed = canonicalSections(next.replace(/\r/g, '').split('\n').map(line => line.trim()).filter(Boolean).join('\n'));
+  const sections = (text: string): Map<string, string> | undefined => {
+    if (!text) return new Map();
+    const parts = text.split(/(?=\b(?:HUMAN|TOLD THEM|OPEN):)/).map(part => part.trim()).filter(Boolean);
+    if (!parts.every(part => /^(?:HUMAN|TOLD THEM|OPEN):/.test(part))) return undefined;
+    return new Map(parts.map(part => [part.slice(0, part.indexOf(':')), part]));
+  };
+  const oldParts = sections(canonicalSections(prior)), newParts = sections(proposed);
+  if (!oldParts || !newParts) return prior;
+  const human = newParts.get('HUMAN') ?? oldParts.get('HUMAN');
+  return clampMemory([human, oldParts.get('TOLD THEM'), oldParts.get('OPEN')].filter(Boolean).join('\n'), prior, latestHumanText);
+}
+
 /**
  * Model notebook in, stored notebook out. A blank answer keeps the previous notebook, and an
  * overlong one is trimmed section by section so the human's own facts are the last thing lost.

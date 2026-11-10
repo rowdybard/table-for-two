@@ -1,19 +1,34 @@
 import { createServer, type Server } from 'node:http';
-import { readFile, mkdir } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { readFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { extname, resolve, sep } from 'node:path';
-import { test, expect, type Page, type Route } from '@playwright/test';
+import { chromium, test, expect, type Browser, type Page, type Route } from '@playwright/test';
 import { attachRestaurantServer, type ClaudeAdapter } from '../server/restaurant';
 import type { ClaudeModel, DinnerState, SceneTurn } from '../src/restaurant/types';
 import { captureRestaurantScene, reloadRestaurantScene, waitForRestaurantScene } from './restaurant-browser-helpers';
 import { createBlindDate } from '../src/restaurant/blind-date';
+import { installMobileGLDiagnostics } from './mobile-webgl-diagnostics';
 
 let http: Server, app: Awaited<ReturnType<typeof attachRestaurantServer>>, base = '';
 const calls: { model: ClaudeModel; text: string }[] = [];
+let lifecycleWaitGate: { marker: string; started: boolean; aborted: boolean; lateAttempted: boolean } | undefined;
 const claude: ClaudeAdapter = { async *stream(request, signal) {
   const content = request.messages.at(-1)!.content;
   calls.push({ model: request.model, text: content });
+  const gate = lifecycleWaitGate;
+  if (gate && content.includes(gate.marker)) {
+    gate.started = true;
+    await new Promise<void>(resolve => {
+      const aborted = () => { gate.aborted = true; resolve(); };
+      if (signal.aborted) aborted(); else signal.addEventListener('abort', aborted, { once: true });
+    });
+    gate.lateAttempted = true;
+    yield { type: 'text', text: JSON.stringify({ utterances: [{ speaker: 'date', text: 'A suspended reply must never play.', emotion: 'neutral' }], emotion: 'neutral', action: 'none', memory: '' } satisfies SceneTurn) };
+    return;
+  }
   yield { type: 'usage', usage: { inputTokens: 1200, outputTokens: 0, cacheReadTokens: 400, cacheWriteTokens: 0 } };
-  const turn: SceneTurn = { utterances: [{ speaker: 'date', text: content.includes('mushroom') ? 'Mushroom risotto is a strong choice. What do you like to cook?' : 'You have my attention. Tell me a little more about that.', emotion: 'amused' }, { speaker: 'waiter', text: 'I will give you two another minute.', emotion: 'warm' }], emotion: 'amused', action: 'none', memory: 'The player enjoys mushroom dishes.' };
+  const turn: SceneTurn = { utterances: [{ speaker: 'date', text: content.includes('mushroom') ? 'Mushroom risotto is a strong choice. What do you like to cook?' : 'You have my attention. Tell me a little more about that.', emotion: 'amused' }], emotion: 'amused', action: 'none', memory: 'The player enjoys mushroom dishes.' };
   const json = JSON.stringify(turn);
   for (let i = 0; i < json.length; i += 25) { if (signal.aborted) return; yield { type: 'text', text: json.slice(i, i + 25) }; await new Promise(resolve => setTimeout(resolve, 5)); }
   yield { type: 'usage', usage: { outputTokens: 100 } };
@@ -117,7 +132,7 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => { await app?.close(); http?.closeAllConnections(); await new Promise<void>(resolve => http?.close(() => resolve())); });
 
-test('solo restaurant: roster, real movement, seat, order, streamed cast, private model command, pause and ending', async ({ page }) => {
+test('solo date: seated start, date arrival, conversation, private model command, pause and ending', async ({ page }) => {
   test.setTimeout(120_000);
   page.setDefaultTimeout(8000);
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
@@ -157,9 +172,20 @@ test('solo restaurant: roster, real movement, seat, order, streamed cast, privat
   expect(expectedAssets.map(path => environmentResponses.get(path))).toEqual(expectedAssets.map(() => 200));
   if (tier === 'low') expect(environmentRequests.has(plantAsset)).toBe(false);
   await captureRestaurantScene(page, '.qa/restaurant-arrival.png');
+  const callsBeforeJoin = calls.length;
+  const createdResponse = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/date/sessions');
   await page.keyboard.press('Enter');
+  const created = await (await createdResponse).json() as { state: DinnerState };
+  expect(created.state.seated).toBe(true);
+  const arrivingDate = created.state.participants.find(participant => participant.kind === 'ai')!;
+  expect(Math.hypot(arrivingDate.position[0], arrivingDate.position[2] + 2.25)).toBeGreaterThan(1);
+  expect(created.state.evening.cues).toEqual([]);
   await expect(page.locator('#arrival-screen')).toBeHidden();
   await expect.poll(async () => (await state(page)).participants.map(p => p.kind).join(',')).toBe('human,ai');
+  await expect.poll(async () => { const date = (await state(page)).participants.find(participant => participant.kind === 'ai')!; return Math.hypot(date.position[0], date.position[2] + 2.25); }, { timeout: 20000 }).toBeLessThan(.2);
+  expect(calls.length).toBe(callsBeforeJoin);
+  expect((await state(page)).evening.cues).toEqual([]);
+  await captureRestaurantScene(page, '.qa/restaurant-seated.png');
   expect((await state(page)).dateId).toBe('jules');
   await expect(page.locator('#conversation-form')).toBeHidden();
   await expect(page.locator('#type-toggle')).toHaveAttribute('aria-expanded', 'false');
@@ -193,116 +219,16 @@ test('solo restaurant: roster, real movement, seat, order, streamed cast, privat
   await expect(page.locator('#type-toggle')).toHaveAttribute('aria-expanded', 'false');
   await page.keyboard.press('j');
   await expect(page.locator('#conversation-log')).toContainText('What do you like to cook?');
-  await expect(page.locator('#conversation-log')).toContainText('I will give you two another minute.');
   await page.locator('#journal-close').click();
   await waitForRestaurantScene(page);
-  const before = (await state(page)).participants[0].position[2];
-  await page.locator('#conversation-input').blur();
-  // Hold animation callbacks to verify keyboard movement and release do not
-  // depend on another rendered frame, then restore all queued callbacks.
-  const movementResponse = (moving: boolean) => page.waitForResponse(response => {
-    const request = response.request();
-    if (request.method() !== 'POST' || !new URL(request.url()).pathname.endsWith('/command')) return false;
-    const command = request.postDataJSON();
-    return command.type === 'move' && (Math.hypot(command.x, command.z) > 0) === moving;
-  }, { timeout: 15000 });
-  await page.evaluate(() => {
-    const win = window as typeof window & { __testRafGate?: { original: typeof requestAnimationFrame; pending: FrameRequestCallback[] } };
-    const original = window.requestAnimationFrame.bind(window), pending: FrameRequestCallback[] = [];
-    win.__testRafGate = { original, pending };
-    window.requestAnimationFrame = callback => { pending.push(callback); return -pending.length; };
-  });
-  try {
-    // Let any frame already queued before interception finish; new frames stay held.
-    await page.evaluate(() => new Promise<void>(resolve => {
-      const gate = (window as typeof window & { __testRafGate: { original: typeof requestAnimationFrame } }).__testRafGate;
-      gate.original(() => gate.original(() => resolve()));
-    }));
-    await expect.poll(() => page.evaluate(() => (window as typeof window & { __testRafGate?: { pending: FrameRequestCallback[] } }).__testRafGate!.pending.length), { timeout: 15000 }).toBeGreaterThan(0);
-    const start = movementResponse(true);
-    await page.keyboard.down('w');
-    expect((await start).status()).toBe(200);
-    const stop = movementResponse(false);
-    await page.keyboard.up('w');
-    expect((await stop).status()).toBe(200);
-  } finally {
-    await page.keyboard.up('w');
-    await page.evaluate(() => {
-      const win = window as typeof window & { __testRafGate?: { original: typeof requestAnimationFrame; pending: FrameRequestCallback[] } };
-      const gate = win.__testRafGate;
-      if (gate) { window.requestAnimationFrame = gate.original; gate.pending.forEach(callback => gate.original(callback)); delete win.__testRafGate; }
-    });
-  }
-  // Aim at the real chair, walk to its interaction, and sit before releasing W.
-  await page.mouse.move(640, 400); await page.mouse.down(); await page.mouse.move(640, 610, { steps: 8 }); await page.mouse.up();
-  await page.keyboard.down('w');
-  try {
-    await expect.poll(async () => (await state(page)).participants[0].position[2], { timeout: 15000 }).toBeLessThan(before - 2);
-    await expect(page.locator('#interaction').filter({ hasText: /seat/i })).toBeVisible({ timeout: 15000 });
-    await page.keyboard.press('e');
-  } finally { await page.keyboard.up('w'); }
-  await expect.poll(async () => (await state(page)).seated).toBe(true);
-  await expect.poll(async () => {
-    const date = (await state(page)).participants.find(participant => participant.kind === 'ai')!;
-    return Math.hypot(date.position[0], date.position[2] + 2.25);
-  }, { timeout: 12_000 }).toBeLessThan(.2);
-  await page.waitForTimeout(400);
-  await captureRestaurantScene(page, '.qa/restaurant-seated.png');
-  // The prompt line offers the menu; its numbered chip works under pointer lock, where no mouse can reach a button.
-  await page.keyboard.press('Escape');
-  await expect(page.locator('#pause-dialog')).toBeVisible();
-  await page.locator('#resume-date').click();
-  await expect.poll(async () => (await state(page)).phase).toBe('playing');
-  await expect(page.locator('#prompt-copy')).toHaveText('Look over the menu whenever you’re ready.');
-  const menuChip = page.locator('#prompt-chips button', { hasText: 'Open the menu' });
-  await expect(menuChip).toBeVisible();
-  await expect(menuChip.locator('kbd')).toHaveText('1');
-  await page.locator('.restaurant-canvas').click({ position: { x: 850, y: 350 } });
-  await expect.poll(() => page.evaluate(() => !!document.pointerLockElement)).toBe(true);
-  await page.keyboard.press('1');
-  await expect(page.locator('#menu-dialog')).toBeVisible();
-  await expect.poll(() => page.evaluate(() => !!document.pointerLockElement)).toBe(false);
-  await expect(page.locator('.restaurant-canvas')).toHaveAttribute('aria-label', 'Reading the dinner menu at the table');
-  await expect.poll(async () => (await state(page)).phase).toBe('paused');
-  // A held Escape closes the menu once and never falls through into a pause.
-  await page.keyboard.down('Escape');
-  await expect(page.locator('#menu-dialog')).toBeHidden();
-  await page.keyboard.down('Escape');
-  await expect(page.locator('#pause-dialog')).toBeHidden();
-  await expect.poll(async () => (await state(page)).phase).toBe('playing');
-  await page.keyboard.up('Escape');
-  await expect(page.locator('.restaurant-canvas')).toHaveAttribute('aria-label', 'First-person view of Table for Two restaurant');
-  // Deliberately hold the second menu's pause: ordering immediately must wait for
-  // the pause before resuming and submitting the order, even on a slow connection.
-  let releaseMenuPause!: () => void, pauseHeld = false;
-  const menuPauseReleased = new Promise<void>(resolve => { releaseMenuPause = resolve; });
-  const menuCommands: string[] = [];
-  const holdMenuPause = async (route: Route) => {
-    const command = route.request().postDataJSON();
-    if (command.type === 'pause') {
-      menuCommands.push(command.paused ? 'pause' : 'resume');
-      if (command.paused) { pauseHeld = true; await menuPauseReleased; }
-    } else if (command.type === 'interact' && command.target === 'menu') menuCommands.push('order');
-    await route.continue();
-  };
+  const seatedPosition = (await state(page)).participants[0].position;
+  const commands: string[] = [];
+  page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/command')) commands.push(request.postDataJSON().type); });
+  await page.keyboard.press('w'); await page.keyboard.press('e');
+  await page.waitForTimeout(250);
+  expect((await state(page)).participants[0].position).toEqual(seatedPosition);
+  expect(commands).not.toContain('move'); expect(commands).not.toContain('interact');
   const commandRoute = '**/api/date/sessions/*/command';
-  await page.route(commandRoute, holdMenuPause);
-  try {
-    await menuChip.click();
-    await expect(page.locator('#menu-dialog')).toBeVisible();
-    await expect.poll(() => pauseHeld).toBe(true);
-    await page.locator('[data-order="Wild mushroom risotto"]').focus();
-    await page.keyboard.press('Enter');
-    await expect(page.locator('[data-order="Wild mushroom risotto"]')).toBeDisabled();
-    expect(menuCommands).toEqual(['pause']);
-    releaseMenuPause();
-    await expect.poll(async () => (await state(page)).order).toBe('Wild mushroom risotto');
-    expect(menuCommands).toEqual(['pause', 'resume', 'order']);
-  } finally {
-    releaseMenuPause();
-    await page.unroute(commandRoute, holdMenuPause);
-  }
-  await expect(page.locator('.restaurant-canvas')).toHaveAttribute('aria-label', 'First-person view of Table for Two restaurant');
 
   // Exercise the settings handler while playing. The visible settings entry is
   // normally under Pause, so invoke the same button handler directly here.
@@ -460,11 +386,11 @@ test('menus and rapid date changes stay usable during warmup, including disposal
     await waitForRestaurantScene(page);
     expect((await state(page)).dateId).toBe(expected.dateId);
     await captureRestaurantScene(page, '.qa/restaurant-warmup-rebuilt.png');
-    const startZ = (await state(page)).participants[0].position[2];
-    await page.keyboard.down('w');
-    try { await expect.poll(async () => (await state(page)).participants[0].position[2]).toBeLessThan(startZ - .2); }
-    finally { await page.keyboard.up('w'); }
-    expect(inputCommands).toContain('move'); expect(calls.length).toBe(callsBeforeWarmup); expect(errors).toEqual([]);
+    const seatedPosition = (await state(page)).participants[0].position;
+    await page.keyboard.press('w'); await page.keyboard.press('e');
+    await page.waitForTimeout(250);
+    expect((await state(page)).participants[0].position).toEqual(seatedPosition);
+    expect(inputCommands).toEqual([]); expect(calls.length).toBe(callsBeforeWarmup); expect(errors).toEqual([]);
   } finally { releaseAssets(); }
 });
 
@@ -735,20 +661,6 @@ test('model reset discards an ordinary turn still waiting for interruption befor
   } finally { releaseInterruption(); }
 });
 
-async function takeNewcomerSeat(page: Page) {
-  const viewport = page.viewportSize()!;
-  await page.mouse.move(viewport.width / 2, viewport.height * .48);
-  await page.mouse.down();
-  await page.mouse.move(viewport.width / 2, viewport.height * .74, { steps: 9 });
-  await page.mouse.up();
-  await page.keyboard.down('w');
-  try {
-    await expect(page.locator('#interaction').filter({ hasText: /seat/i })).toBeVisible({ timeout: 20000 });
-    await page.keyboard.press('e');
-  } finally { await page.keyboard.up('w'); }
-  await expect.poll(async () => (await state(page)).seated).toBe(true);
-}
-
 test('unavailable audio never traps a newcomer at start, typed conversation or Resume', async ({ page }) => {
   test.setTimeout(90000);
   const errors: string[] = [];
@@ -772,11 +684,11 @@ test('unavailable audio never traps a newcomer at start, typed conversation or R
   expect(errors).toEqual([]);
 });
 
-test('failed typed turns keep the player draft and rejected orders never become transcript facts', async ({ page }) => {
+test('failed typed turns keep the player draft and can be retried', async ({ page }) => {
   test.setTimeout(120000);
   await beginNewSolo(page);
   const draft = 'I like mushroom pasta, but I have another question.';
-  let rejectedTurn = false, rejectedOrder = false;
+  let rejectedTurn = false;
   await page.route('**/api/date/sessions/*/turn', route => {
     if (!rejectedTurn) { rejectedTurn = true; return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'The conversation service is taking a break. Please try again.' }) }); }
     return route.continue();
@@ -790,25 +702,215 @@ test('failed typed turns keep the player draft and rejected orders never become 
   await page.locator('#send-turn').click();
   await expect(page.locator('#conversation-log')).toContainText('What do you like to cook?');
   await expect(page.locator('#conversation-input')).toHaveValue('');
-  await takeNewcomerSeat(page);
-  await page.route('**/api/date/sessions/*/command', route => {
-    const body = route.request().postDataJSON();
-    if (!rejectedOrder && body.type === 'interact' && body.target === 'menu' && body.choice) {
-      rejectedOrder = true;
-      return route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: 'The waiter needs another moment before taking that order.' }) });
+
+});
+
+/** Attach to a real Chromium default context without Playwright's focus emulation. */
+async function openRealTabBrowser() {
+  const profile = await mkdtemp(resolve(tmpdir(), 'table-lifecycle-'));
+  const child = spawn(chromium.executablePath(), [
+    '--no-sandbox', '--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1',
+    `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
+    '--disable-background-networking', '--disable-component-update', '--disable-sync',
+    '--window-size=1280,800',
+    ...(process.env.LFS_SOFTWARE_GPU === '1' ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : []),
+    'about:blank',
+  ], { stdio: ['ignore', 'ignore', 'pipe'] });
+  let browser: Browser | undefined;
+  const waitForExit = async (ms: number) => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    await new Promise<void>(resolve => {
+      const done = () => { clearTimeout(timer); child.off('exit', done); resolve(); };
+      const timer = setTimeout(done, ms); child.once('exit', done);
+    });
+  };
+  const close = async () => {
+    if (browser) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([browser.close().catch(() => {}), new Promise<void>(resolve => { timer = setTimeout(resolve, 2000); })]);
+      clearTimeout(timer);
     }
-    return route.continue();
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGTERM');
+      await waitForExit(3000);
+      if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await waitForExit(2000); }
+    }
+    await rm(profile, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  };
+  try {
+    const endpoint = await new Promise<string>((resolve, reject) => {
+      let output = '';
+      const timeout = setTimeout(() => finish(new Error('Chromium did not expose its debugging endpoint.')), 20000);
+      const finish = (error?: Error, url?: string) => {
+        clearTimeout(timeout); child.stderr.off('data', data); child.off('error', failed); child.off('exit', exited);
+        child.stderr.resume();
+        if (error) reject(error); else resolve(url!);
+      };
+      const data = (chunk: Buffer) => {
+        output = (output + chunk.toString()).slice(-16384);
+        const match = output.match(/DevTools listening on (ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[\w-]+)/);
+        if (match) finish(undefined, match[1]);
+      };
+      const failed = (error: Error) => finish(error);
+      const exited = () => finish(new Error('Chromium exited before its debugging endpoint was ready.'));
+      child.stderr.on('data', data); child.once('error', failed); child.once('exit', exited);
+    });
+    browser = await chromium.connectOverCDP(endpoint, { noDefaults: true, timeout: 20000 });
+    const context = browser.contexts()[0], page = context?.pages()[0];
+    if (!context || !page) throw new Error('Chromium did not provide its default context and initial tab.');
+    return { page, close };
+  } catch (error) { await close(); throw error; }
+}
+
+// Assert the window identity as well as actual visibility; emulation is disabled on the default context.
+async function useRealTabFocus(...pages: Page[]) {
+  const windows: number[] = [];
+  for (const page of pages) {
+    const session = await page.context().newCDPSession(page);
+    await session.send('Emulation.setFocusEmulationEnabled', { enabled: false });
+    windows.push((await session.send('Browser.getWindowForTarget')).windowId);
+  }
+  console.info(`Lifecycle Chromium window IDs: ${windows.join(', ')}`);
+  expect(new Set(windows).size, `Expected actual tabs in one Chromium window; window IDs: ${windows.join(', ')}`).toBe(1);
+}
+
+async function openCompanionTab(page: Page) {
+  const opened = page.context().waitForEvent('page');
+  await page.evaluate(() => { window.open('about:blank', '_blank'); });
+  const companion = await opened;
+  await useRealTabFocus(page, companion);
+  return companion;
+}
+
+test('a newly opened background tab defers WebGL until it is activated', async ({ browserName }) => {
+  test.skip(browserName !== 'chromium', 'This check uses real Chromium tab visibility and focus.');
+  test.setTimeout(90000);
+  const real = await openRealTabBrowser();
+  try {
+  const page = real.page;
+  const background = await openCompanionTab(page);
+  await background.addInitScript(() => {
+    const win = window as Window & { __webglInitializations?: number };
+    win.__webglInitializations = 0;
+    const prototype = HTMLCanvasElement.prototype as unknown as { getContext(...args: unknown[]): unknown };
+    const original = prototype.getContext;
+    prototype.getContext = function(this: HTMLCanvasElement, ...args: unknown[]) {
+      if (['webgl', 'webgl2', 'experimental-webgl'].includes(String(args[0]))) win.__webglInitializations!++;
+      return original.apply(this, args);
+    };
   });
-  await page.locator('#prompt-chips button', { hasText: 'Open the menu' }).click();
-  const dish = await page.locator('[data-order]').first().getAttribute('data-order');
-  await page.locator('[data-order]').first().click();
-  await expect(page.locator('#toast')).toContainText('another moment');
-  expect((await state(page)).order).toBeNull();
-  await expect(page.locator('#conversation-log')).not.toContainText(`You ordered ${dish}.`);
-  if (!await page.locator('#menu-dialog').isVisible()) await page.locator('#prompt-chips button', { hasText: 'Open the menu' }).click();
-  await page.locator('[data-order]').first().click();
-  await expect.poll(async () => (await state(page)).order).toBe(dish);
-  await expect(page.locator('#conversation-log')).toContainText(`You ordered ${dish}.`);
+  let releaseEntry!: () => void, entryReached = false;
+  const entryReleased = new Promise<void>(resolve => { releaseEntry = resolve; });
+  await background.route('**/assets/index-*.js', async route => {
+    const response = await route.fetch();
+    entryReached = true;
+    await entryReleased;
+    await route.fulfill({ response });
+  }, { times: 1 });
+  try {
+    await background.goto(base, { waitUntil: 'commit' });
+    await expect.poll(() => entryReached, { timeout: 20000 }).toBe(true);
+    await page.bringToFront();
+    await expect.poll(() => background.evaluate(() => ({ hidden: document.hidden, focused: document.hasFocus() }))).toEqual({ hidden: true, focused: false });
+    releaseEntry();
+    await background.waitForLoadState('domcontentloaded');
+    await expect.poll(() => background.evaluate(() => ({ hidden: document.hidden, focused: document.hasFocus() }))).toEqual({ hidden: true, focused: false });
+    await expect(background.locator('.restaurant-canvas')).toHaveCount(0);
+    expect(await background.evaluate(() => (window as Window & { __webglInitializations?: number }).__webglInitializations)).toBe(0);
+    await background.waitForTimeout(1800);
+    await expect(background.locator('.restaurant-canvas')).toHaveCount(0);
+    expect(await background.evaluate(() => (window as Window & { __webglInitializations?: number }).__webglInitializations)).toBe(0);
+    await background.bringToFront();
+    await expect.poll(() => background.evaluate(() => ({ hidden: document.hidden, focused: document.hasFocus() }))).toEqual({ hidden: false, focused: true });
+    await waitForRestaurantScene(background);
+    await expect(background.locator('.restaurant-canvas')).toHaveCount(1);
+    expect(await background.evaluate(() => (window as Window & { __webglInitializations?: number }).__webglInitializations)).toBeGreaterThan(0);
+    await background.locator('#title-start').click(); await background.locator('#mode-solo').click(); await background.locator('#start-date').click();
+    await expect(background.locator('#dinner-hud')).toBeVisible();
+    await expect.poll(async () => (await state(background)).seated).toBe(true);
+    await expect(background.locator('.restaurant-canvas')).toHaveCount(1);
+  } finally { releaseEntry(); await background.close(); }
+  } finally { await real.close(); }
+});
+
+test('background tab stops work and resumes the same paused date without replaying a pending turn', async ({ browserName }) => {
+  test.skip(browserName !== 'chromium', 'This check uses Chromium tab visibility and WebGL instrumentation.');
+  const real = await openRealTabBrowser();
+  try {
+  const page = real.page;
+  test.setTimeout(120000); page.setDefaultTimeout(12000);
+  await installMobileGLDiagnostics(page);
+  await page.addInitScript(() => {
+    localStorage.setItem('table-for-two-settings', JSON.stringify({ speech: false, ambience: false }));
+    const win = window as Window & { __lifecycleTrack?: MediaStreamTrack; __lifecycleAudio?: AudioContext };
+    const NativeWorker = window.Worker;
+    window.Worker = new Proxy(NativeWorker, { construct(target, args) {
+      if (!String(args[0]).includes('moonshine')) return Reflect.construct(target, args);
+      const worker = { onmessage: null as ((event: MessageEvent) => void) | null, onerror: null, postMessage() {}, terminate() {} };
+      setTimeout(() => worker.onmessage?.(new MessageEvent('message', { data: { type: 'ready' } })), 0);
+      return worker;
+    } });
+    Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { configurable: true, value: async () => {
+      const context = win.__lifecycleAudio = new AudioContext();
+      const stream = context.createMediaStreamDestination().stream;
+      win.__lifecycleTrack = stream.getAudioTracks()[0];
+      return stream;
+    } });
+  });
+  let statusRequests = 0, sessionPolls = 0, speechRequests = 0, rejectStatus = true;
+  page.on('request', request => {
+    const path = new URL(request.url()).pathname;
+    if (path === '/api/date/status') statusRequests++;
+    if (request.method() === 'GET' && /^\/api\/date\/sessions\/[^/]+$/.test(path)) sessionPolls++;
+    if (/^\/api\/date\/sessions\/[^/]+\/(speech|playback)$/.test(path)) speechRequests++;
+  });
+  await page.route('**/api/date/status', route => rejectStatus ? route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }) : route.continue());
+  const gate = { marker: 'A unique pending lifecycle turn.', started: false, aborted: false, lateAttempted: false };
+  lifecycleWaitGate = gate;
+  const other = await openCompanionTab(page);
+  try {
+    await page.goto(base + '/?stats', { waitUntil: 'domcontentloaded' }); await page.bringToFront();
+    await expect(page.locator('#start-error')).toBeVisible();
+    await other.bringToFront();
+    await expect.poll(() => page.evaluate(() => document.hidden)).toBe(true);
+    const dormantStatus = statusRequests;
+    await page.waitForTimeout(2100); // Longer than the scheduled 1.5s connection retry.
+    expect(statusRequests).toBe(dormantStatus);
+    rejectStatus = false; await page.bringToFront();
+    await expect.poll(() => statusRequests).toBeGreaterThan(dormantStatus);
+    await expect(page.locator('#start-error')).toBeHidden();
+    await page.locator('#title-start').click(); await page.locator('#mode-solo').click(); await page.locator('#start-date').click();
+    await expect(page.locator('#dinner-hud')).toBeVisible(); await waitForRestaurantScene(page);
+    const sessionId = (await state(page)).id, beforeCalls = calls.length;
+    await expect.poll(() => page.evaluate(() => window.__mobileGLDiagnostics?.drawCalls ?? 0)).toBeGreaterThan(0);
+    await expect(page.locator('#mic-toggle')).toBeEnabled();
+    await page.locator('#mic-toggle').click();
+    await expect(page.locator('#mic-toggle')).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(() => page.evaluate(() => (window as Window & { __lifecycleTrack?: MediaStreamTrack }).__lifecycleTrack?.readyState)).toBe('live');
+    await page.keyboard.press('t'); await page.locator('#conversation-input').fill(gate.marker); await page.locator('#send-turn').click();
+    await expect.poll(() => gate.started).toBe(true);
+    const pause = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname.endsWith('/command') && response.request().postDataJSON()?.type === 'pause' && response.request().postDataJSON()?.paused === true);
+    await other.bringToFront(); await expect.poll(() => page.evaluate(() => document.hidden)).toBe(true);
+    expect((await pause).status()).toBe(200);
+    await expect.poll(() => gate.aborted && gate.lateAttempted).toBe(true);
+    await expect.poll(() => page.evaluate(() => (window as Window & { __lifecycleTrack?: MediaStreamTrack }).__lifecycleTrack?.readyState)).toBe('ended');
+    const dormant = { polls: sessionPolls, speech: speechRequests, calls: calls.length, draws: await page.evaluate(() => window.__mobileGLDiagnostics!.drawCalls) };
+    await page.waitForTimeout(1800);
+    expect(sessionPolls).toBe(dormant.polls); expect(speechRequests).toBe(dormant.speech); expect(calls.length).toBe(dormant.calls);
+    expect(await page.evaluate(() => window.__mobileGLDiagnostics!.drawCalls)).toBe(dormant.draws);
+    await page.bringToFront();
+    await expect(page.locator('#pause-dialog')).toBeVisible();
+    expect((await state(page)).id).toBe(sessionId);
+    await expect(page.locator('#mic-toggle')).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.locator('#conversation-log')).not.toContainText('A suspended reply must never play.');
+    await expect(page.locator('#caption-text')).not.toContainText('A suspended reply must never play.');
+    expect(calls.length).toBe(beforeCalls + 1);
+    await page.locator('#resume-date').click(); await expect.poll(async () => (await state(page)).phase).toBe('playing');
+    await page.keyboard.press('t'); await page.locator('#conversation-input').fill('A fresh turn after returning.'); await page.locator('#send-turn').click();
+    await expect.poll(() => calls.length).toBe(beforeCalls + 2);
+    await expect(page.locator('#conversation-log')).toContainText('A fresh turn after returning.');
+  } finally { lifecycleWaitGate = undefined; await other.close(); }
+  } finally { lifecycleWaitGate = undefined; await real.close(); }
 });
 
 test('a persisted page departure returns to the same usable paused dinner', async ({ page }) => {
@@ -825,10 +927,10 @@ test('a persisted page departure returns to the same usable paused dinner', asyn
   await page.locator('#resume-date').click();
   await expect.poll(async () => (await state(page)).phase).toBe('playing');
   await waitForRestaurantScene(page);
-  const initialZ = (await state(page)).participants[0].position[2];
-  await page.keyboard.down('w');
-  try { await expect.poll(async () => (await state(page)).participants[0].position[2]).toBeLessThan(initialZ - .25); }
-  finally { await page.keyboard.up('w'); }
+  await page.keyboard.press('t');
+  await page.locator('#conversation-input').fill('I am glad to continue.');
+  await page.locator('#send-turn').click();
+  await expect(page.locator('#conversation-log')).toContainText('I am glad to continue.');
   await page.keyboard.press('Escape');
   await expect(page.locator('#pause-dialog')).toBeVisible();
 });
@@ -847,8 +949,8 @@ test('pending starts and rejected resumes keep a single coherent newcomer flow',
     await expect(page.locator('#arrival-screen')).toHaveAttribute('data-screen', 'select');
     await expect(page.locator('#dinner-hud')).toBeHidden(); expect(requests).toBe(1);
     release(); await expect(page.locator('#dinner-hud')).toBeVisible(); await waitForRestaurantScene(page);
-    // Nothing asks anything of a guest who is still walking in; the prompt line waits for the chair.
-    await expect(page.locator('#prompt-line')).toBeHidden(); expect((await state(page)).seated).toBe(false);
+    // The guest starts at the table while the date approaches.
+    expect((await state(page)).seated).toBe(true);
     await page.keyboard.press('Escape'); await expect(page.locator('#pause-dialog')).toBeVisible();
     let rejectResume = true;
     await page.route('**/api/date/sessions/*/command', route => {

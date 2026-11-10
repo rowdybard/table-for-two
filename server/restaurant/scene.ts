@@ -23,16 +23,16 @@ export class DinnerScene {
   private moving = false;
   private seatedClock = 0;
   private freed = false;
-  private actorMode: 'follow' | 'sit' = 'follow';
+  private actorMode: 'follow' | 'sit' = 'sit';
   private diningCollider?: RAPIER.RigidBody;
   private tableOffset = 0;
   readonly director: EveningDirector;
   private storyRate: number;
   constructor(dateId: DateId, sessionLimit: number, opts: { storyRate?: number; variation?: number; blindDate?: { seed: string }; scenarioId?: RestaurantScenarioId } = {}) {
     const date = getDate(dateId)!;
-    this.state = { id: randomBytes(12).toString('hex'), generation: 0, mode: opts.blindDate ? 'blind-date' : 'ai-date', ...(opts.blindDate ? { blindDate: { ...opts.blindDate } } : {}), phase: 'playing', dateId, stage: 'arrival', elapsed: 0,
-      participants: [{ id: 'p1', kind: 'human', name: 'You', position: [RESTAURANT.spawn[0], 0, RESTAURANT.spawn[2]] }, { id: 'p2', kind: 'ai', name: date.name, position: [1.15, 0, 4.9] }],
-      events: [], emotion: 'neutral', seated: false, order: null, glassRaised: false, memory: '', usage: emptyUsage(), sessionLimit, evening: createEvening(dateId, opts.variation ?? randomBytes(1)[0] % 3) };
+    this.state = { id: randomBytes(12).toString('hex'), generation: 0, mode: opts.blindDate ? 'blind-date' : 'ai-date', ...(opts.blindDate ? { blindDate: { ...opts.blindDate } } : {}), phase: 'playing', dateId, stage: 'seated', elapsed: 0,
+      participants: [{ id: 'p1', kind: 'human', name: 'You', position: [RESTAURANT.seat[0], 0, RESTAURANT.seat[2] + .28] }, { id: 'p2', kind: 'ai', name: date.name, position: [1.15, 0, 4.9] }],
+      events: [], emotion: 'neutral', seated: true, order: null, glassRaised: false, memory: '', usage: emptyUsage(), sessionLimit, evening: createEvening(dateId, opts.variation ?? randomBytes(1)[0] % 3) };
     this.storyRate = Number.isFinite(opts.storyRate) ? Math.max(.1, Math.min(120, opts.storyRate!)) : 1;
     this.world = new RAPIER.World({ x: 0, y: 0, z: 0 }); this.world.timestep = 1 / 60;
     const b = RESTAURANT.bounds;
@@ -44,7 +44,8 @@ export class DinnerScene {
       else this.world.createCollider(RAPIER.ColliderDesc.cuboid(box.hx, 2, box.hz), body);
     }
     const actor = (x: number, z: number) => { const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(x, 0, z).lockRotations().enabledTranslations(true, false, true).setCcdEnabled(true)); this.world.createCollider(RAPIER.ColliderDesc.ball(.23).setFriction(0), body); return body; };
-    this.human = actor(RESTAURANT.spawn[0], RESTAURANT.spawn[2]); this.date = actor(1.15, 4.9);
+    this.human = actor(RESTAURANT.seat[0], RESTAURANT.seat[2] + .28); this.date = actor(1.15, 4.9);
+    setActorSeated(this.human, true, { x: RESTAURANT.seat[0], y: 0, z: RESTAURANT.seat[2] + .28 });
     this.director = new EveningDirector(this.state, { scenarioId: opts.scenarioId });
   }
   snapshot(): DinnerState { this.state.revision = (this.state.revision ?? 0) + 1; return structuredClone(this.state); }
@@ -54,37 +55,10 @@ export class DinnerScene {
     if (command.type === 'finish') { this.director.earlyExit(); return; }
     if (command.type === 'pause') { this.state.phase = command.paused ? 'paused' : 'playing'; this.input = { x: 0, z: 0, at: 0 }; return; }
     if (this.state.phase !== 'playing') throw new Error('Resume the date first.');
-    if (command.type === 'move') {
-      if (!Number.isFinite(command.x) || !Number.isFinite(command.z) || !Number.isFinite(command.yaw) || Math.abs(command.x) > 1 || Math.abs(command.z) > 1) throw new Error('Invalid movement.');
-      const n = Math.max(1, Math.hypot(command.x, command.z)); this.input = { x: command.x / n, z: command.z / n, at: now }; return;
-    }
-    if (command.type === 'scenario') { this.director.scenario(command.choice); this.syncDiningArea(); this.syncPositions(); return; }
-    if (command.type === 'evening') { this.director.action(command, now); return; }
-    if (command.type === 'tabletop') { this.director.tabletop.action(command.action); return; }
-    const { target, choice } = command;
-    const offset = diningOffsetZ(this.state);
-    if (target === 'exit') { if (!this.near(RESTAURANT.entrance[0], RESTAURANT.entrance[2], RESTAURANT.entranceRadius)) throw new Error('Walk to the entrance to leave.'); if (!this.state.evening.bill.settlement) this.director.earlyExit(); }
-    else if (target === 'seat') {
-      if (this.state.seated) { this.state.seated = false; this.actorMode = 'follow'; setActorSeated(this.human, false); this.human.setTranslation({ x: 1.2, y: 0, z: .8 + offset }, true); }
-      else { if (!this.near(RESTAURANT.seat[0], RESTAURANT.seat[2] + offset, 2.1)) throw new Error('Approach your table to sit.'); this.state.seated = true; this.state.stage = this.state.order ? this.state.stage : 'seated'; const position = { x: RESTAURANT.seat[0], y: 0, z: RESTAURANT.seat[2] + .28 + offset }; setActorSeated(this.human, true, position); this.human.setTranslation(position, true); this.actorMode = 'sit'; this.director.seated(); }
-      this.input = { x: 0, z: 0, at: 0 };
-    } else if (target === 'menu') {
-      if (!this.state.seated) throw new Error('Sit down before ordering.');
-      if (!choice) return;
-      if (!MENU.includes(choice)) throw new Error('Choose a dish from the menu.');
-      if (this.state.order) throw new Error('Your order is already with the kitchen.');
-      this.state.order = choice; this.state.stage = 'ordered'; this.seatedClock = this.state.elapsed; this.director.ordered();
-    } else if (target === 'glass') { if (!this.state.seated) throw new Error('Your glass is at the table.'); if (this.state.evening.incident?.event === 'spilled-drink') this.director.action({ type: 'evening', action: 'steady-glass' }, now); else { this.director.tabletop.cancelSip(); this.state.glassRaised = !this.state.glassRaised; } }
-    else if (target === 'meal' || target === 'dessert') this.director.action({ type: 'evening', action: 'taste' }, now);
-    else if (target === 'bill') { if (!this.state.seated) throw new Error('Take your seat at the table first.'); }
-    else if (target === 'ticket') this.director.action({ type: 'evening', action: 'inspect-ticket' }, now);
-    else if (target === 'napkin') { if (!this.state.seated) throw new Error('Take your seat at the table first.'); if (this.state.evening.incident?.event === 'spilled-drink') this.director.action({ type: 'evening', action: 'wipe' }, now); }
-    else if (['service-bell', 'carafe', 'bread', 'salt', 'pepper', 'cutlery', 'lamp', 'vase', 'plate'].includes(target)) { if (!this.state.seated) throw new Error('Take your seat at the table first.'); }
-    else if (target === 'window') { if (!this.near(-5.5, -1, 3)) throw new Error('Walk to the window to look outside.'); this.director.window(); }
-    else if (target === 'date') { const p = this.date.translation(); if (!this.near(p.x, p.z, 3)) throw new Error('Move closer to your date.'); }
-    else throw new Error('Unknown interaction.');
-    this.syncPositions();
+    if (command.type === 'move') { if (![command.x, command.z, command.yaw].every(Number.isFinite) || Math.abs(command.x) > 1 || Math.abs(command.z) > 1) throw new Error('Invalid movement.'); return; }
+    throw new Error('This date takes place at the table.');
   }
+
   applyTurn(turn: SceneTurn, humanText = '') {
     this.state.emotion = turn.emotion; this.state.memory = clampMemory(turn.memory, this.state.memory, humanText);
     this.director.social(turn, humanText);

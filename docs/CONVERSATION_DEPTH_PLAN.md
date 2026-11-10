@@ -1,6 +1,12 @@
 # Conversation depth: persistent implementation goal
 
-Status: **active**. Branch: `codex/conversation-depth`.
+Status: **active**. Current branch: `codex/conversation-delivery-continuity`.
+
+## Current direction: conversation at the table
+
+The owner's November 9 follow-up supersedes the restaurant choreography requirements below: start the human seated, let the date arrive second, and keep play at the table. Remove walking, waiter/diner dialogue, service choices, forced scenarios, agenda objectives and canned conversational interruptions. Keep the cast, Solo/Blind/Double modes, genuine model replies, earned chemistry, model routing, truthful delivery-aware memory and same-evening recovery. Frame the date clearly on portrait and landscape screens. An inactive tab must stop drawing, polling, recognition, speech preparation and audio connections; foreground reconnection must preserve the evening without replaying missed dialogue or generating an automatic reply.
+
+The original implementation checklist is retained as historical scope, not authority to restore removed mechanics. Technical verification runs without live providers; browser rendering runs in GitHub Actions only. Model-quality and physical-device performance claims still require evidence.
 
 Implement the user's approved “Make Table for Two's conversations worth sharing” plan, starting from canonical `main` (`05ff06a5e5727fc99d78fe64469460ab286a4d0a`). Preserve subsequent Claude work and the unrelated desktop checkout. The target is funny, flirty, surprising, emotionally believable conversations with distinct characters and earned callbacks. Keep the current cast, modes, restaurant, eleven scenarios, sixteen agendas, six outcomes and dinner mechanics.
 

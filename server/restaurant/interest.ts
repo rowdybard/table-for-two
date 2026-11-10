@@ -86,7 +86,7 @@ export class DateInterestDirector {
     if (evening.stance === 'hurt') return 15;
     if (evening.stance === 'guarded') return 30;
     // Liking someone's company without trusting them yet; friendship is warm but not a spark.
-    let ceiling = hasEarnedConfidence(evening.agenda) ? 100 : 72;
+    let ceiling = evening.chemistry?.unlocked ? 100 : 72;
     if (evening.care.romanceClosed) ceiling = Math.min(ceiling, 60);
     return ceiling;
   }

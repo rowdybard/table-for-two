@@ -59,6 +59,22 @@ test('a canceled server attempt never starts device fallback later', async t => 
   assert.equal(env.synthesis.queued.length, 0); assert.deepEqual(receipts, [true]);
 });
 
+test('suspension while audio unlock is pending prevents a late voice request', async t => {
+  const env = environment(); let release!: () => void, requests = 0;
+  class DelayedAudioContext extends FakeAudioContext {
+    override state = 'suspended';
+    override resume() { return new Promise<void>(resolve => { release = resolve; }); }
+  }
+  Object.defineProperty(globalThis, 'AudioContext', { configurable: true, writable: true, value: DelayedAudioContext });
+  const deliveries: boolean[] = [];
+  const player = new SpeechPlayer({ onPlayback() {}, onStatus() {}, onEnded(_line, result) { deliveries.push(result.interrupted); } }, { canFallback: () => true });
+  t.after(() => { player.dispose(); env.restore(); });
+  const playing = player.play(line, () => { requests++; return failure(); });
+  player.suspend(); release(); await playing;
+  assert.equal(requests, 0); assert.equal(env.synthesis.queued.length, 0); assert.deepEqual(deliveries, [true]);
+  assert.equal(env.synthesis.cancels, 1, 'the silent activation utterance is released too');
+});
+
 test('ElevenLabs and other providers do not silently switch to device speech', async t => {
   const env = environment(); const receipts: boolean[] = [];
   const player = new SpeechPlayer({ onPlayback() {}, onStatus() {}, onEnded(_line, result) { receipts.push(result.interrupted); } }, { canFallback: () => false }); t.after(() => { player.dispose(); env.restore(); });
@@ -211,4 +227,15 @@ test('a stalled authorization error body cannot turn its deadline into a device 
   t.after(() => { player.dispose(); env.restore(); });
   await assert.rejects(player.play(line, async () => new Response(new ReadableStream(), { status: 403, headers: { 'content-type': 'application/json' } })), error => error instanceof Error && (error as Error & { status?: number }).status === 403);
   assert.equal(env.synthesis.queued.length, 0);
+});
+
+test('background suspension releases the audio element and a later gesture can create a fresh voice', async t => {
+  const env = environment(), receipts: boolean[] = []; let release!: (value: Response) => void;
+  const player = new SpeechPlayer({ onPlayback() {}, onStatus() {}, onEnded(_line, result) { receipts.push(result.interrupted); } }, { canFallback: () => true });
+  t.after(() => { player.dispose(); env.restore(); });
+  const pending = player.play(line, () => new Promise<Response>(resolve => { release = resolve; }));
+  await delay(5); const oldAudio = FakeAudio.instances.at(-1); player.suspend(); const newAudio = FakeAudio.instances.at(-1);
+  assert.notEqual(oldAudio, newAudio); release(await failure()); await pending; assert.deepEqual(receipts, [true]);
+  const resumed = player.play(line, failure), spoken = await ready(env.synthesis); spoken.onstart?.(); spoken.onend?.(); await resumed;
+  assert.deepEqual(receipts, [true, false]);
 });

@@ -54,12 +54,9 @@ test('unvaried slots retain their original authored lines and boundary variants 
   }
 });
 
-test('the evening controller uses its existing stable variation for the actual opening', async () => {
+test('table-only scene does not inject any authored opening across existing variations', async () => {
   await RAPIER.init();
   const scenes = [0, 1, 2].map(variation => new DinnerScene('mira', 1, { variation }));
-  try {
-    const openings = scenes.map(scene => scene.state.evening.cues.find(cue => cue.key === 'welcome')?.utterances.find(line => line.speaker === 'date')?.text);
-    assert.deepEqual(openings, STORY_CUE_ALTERNATIVES.mira.welcome.map(line => line.text));
-    assert.equal(new Set(openings).size, 3);
-  } finally { scenes.forEach(scene => scene.free()); }
+  try { for (const scene of scenes) { assert.equal(scene.state.seated, true); assert.deepEqual(scene.state.evening.cues, []); } }
+  finally { scenes.forEach(scene => scene.free()); }
 });

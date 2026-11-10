@@ -24,7 +24,7 @@ export interface DoubleDateOptions {
   disconnectMs?: number;
   roomIdleMs?: number;
 }
-type Seat = { tokenHash: string; lastSeen: number; disconnectedAt?: number; voiceWindow: number; voiceCount: number };
+type Seat = { tokenHash: string; lastSeen: number; disconnectedAt?: number; voiceWindow: number; voiceCount: number; epoch: number };
 type Signal = DoubleVoiceSignal & { to: DoubleHumanId; at: number };
 type Room = { state: DoubleDateRoomState; scene: DoubleTableScene; conversation: DoubleConversation; seats: Map<DoubleHumanId, Seat>; signals: Signal[]; signalId: number; touched: number; resumeAfterReconnect: boolean };
 const humans: DoubleHumanId[] = ['h1', 'h2'];
@@ -67,7 +67,7 @@ export async function attachDoubleDateServer(_http: Server, restaurant: { servic
   const bumpVoice = (room: Room) => { room.state.voice.epoch++; room.signals.length = 0; room.state.revision++; };
   const disconnect = (room: Room, id: DoubleHumanId, at: number) => {
     const seat = room.seats.get(id)!, player = member(room, id); if (!player.connected) return;
-    seat.disconnectedAt = at; player.connected = false; room.state.voice.enabled[id] = false; bumpVoice(room);
+    seat.disconnectedAt = at; seat.epoch++; player.connected = false; room.state.voice.enabled[id] = false; bumpVoice(room);
     if (room.state.phase === 'playing' || room.state.phase === 'paused') {
       if (room.state.phase === 'playing') room.resumeAfterReconnect = true;
       room.scene.setPhase('paused'); room.state.pauseReason = 'reconnect'; room.conversation.interrupt();
@@ -100,13 +100,18 @@ export async function attachDoubleDateServer(_http: Server, restaurant: { servic
     const token = /^Bearer ([a-f0-9]{48})$/.exec(req.headers.authorization || '')?.[1];
     const seat = token ? [...room.seats].find(([, item]) => timingSafeEqual(hash(token), Buffer.from(item.tokenHash, 'hex'))) : undefined;
     if (!seat) throw failure(401, 'unauthorized', 'This table requires your player token.');
-    room.touched = now(); reconnect(room, seat[0], room.touched); return { room, human: seat[0] };
+    const at = now(), isSnapshot = req.method === 'GET' && new URL(req.url || '/', 'http://localhost').pathname === `/api/double-date/rooms/${id}`;
+    if (!member(room, seat[0]).connected) {
+      if (!isSnapshot) throw failure(409, 'friend_disconnected', 'Reconnect to the table before continuing.');
+      reconnect(room, seat[0], at);
+    } else seat[1].lastSeen = at;
+    room.touched = at; return { room, human: seat[0], seat: seat[1], epoch: seat[1].epoch };
   };
   const addMember = (room: Room, id: DoubleHumanId, playerName: string) => {
-    const token = randomBytes(24).toString('hex'), position = DOUBLE_TABLE.spawns[id];
-    const player: DoubleMember = { id, name: playerName, connected: true, ready: false, dateId: null, position: [position[0], 0, position[2]], yaw: 0, seated: false };
+    const token = randomBytes(24).toString('hex'), position = DOUBLE_TABLE.seats[id];
+    const player: DoubleMember = { id, name: playerName, connected: true, ready: false, dateId: null, position: [position[0], 0, position[2]], yaw: 0, seated: true };
     room.state.members.push(player); room.state.views[id].participants[0].name = playerName;
-    room.seats.set(id, { tokenHash: hash(token).toString('hex'), lastSeen: now(), voiceWindow: now(), voiceCount: 0 }); room.state.revision++;
+    room.seats.set(id, { tokenHash: hash(token).toString('hex'), lastSeen: now(), voiceWindow: now(), voiceCount: 0, epoch: 0 }); room.state.revision++;
     return { roomId: room.state.id, memberId: id, token, state: snapshot(room) };
   };
   function resumeAfterPersonalChoice(room: Room) {
@@ -125,7 +130,7 @@ export async function attachDoubleDateServer(_http: Server, restaurant: { servic
     } else if (data.type === 'start' && exact(data, ['type'])) {
       if (human !== state.hostId) throw failure(403, 'host_only', 'Your host starts the evening.');
       if (state.phase !== 'waiting' || state.members.length !== 2 || !state.members.every(item => item.connected && item.ready && item.dateId) || state.dates.length !== 2) throw failure(409, 'not_ready', 'Both friends need to choose a date and get ready.');
-      initializeScenario(state, options.scenarioId); room.scene.setPhase('playing'); room.conversation.collectCues();
+      room.scene.setPhase('playing'); room.conversation.collectCues();
     } else if (data.type === 'set-model' && exact(data, ['type', 'model']) && services.status().models.includes(data.model as ClaudeModel)) {
       if (human !== state.hostId) throw failure(403, 'host_only', 'Your host chooses the table’s conversation model.'); if (isEarnedModel(data.model) && data.model !== DOLPHIN_LLM_MODEL && data.model !== services.status().defaultModel) throw failure(409, data.model === HORDE_MODEL ? 'horde_locked' : 'dolphin_locked', 'The alternative model unlocks independently for each couple through mutual chemistry.'); state.model = data.model as ClaudeModel;
     } else if (data.type === 'reset-model' && exact(data, ['type'])) {
@@ -137,16 +142,13 @@ export async function attachDoubleDateServer(_http: Server, restaurant: { servic
       try { room.scene.viewEnding(human, data.type === 'view-ending'); } catch (caught) { throw failure(409, 'personal_ending', caught instanceof Error ? caught.message : 'Finish your date first.'); }
       resumeAfterPersonalChoice(room);
     } else if (data.type === 'scenario' && exact(data, ['type', 'choice']) && typeof data.choice === 'string' && data.choice.length < 80) {
-      if (state.scenario?.phase === 'active' && !state.scenario.choices.some(choice => choice.id === data.choice)) throw failure(400, 'invalid_scenario_choice', 'Choose one of the available responses.');
-      try { resolveScenario(state, human, data.choice); room.scene.reconcile(); } catch (caught) { throw failure(409, 'scenario_action', caught instanceof Error ? caught.message : 'That response is unavailable.'); }
-      room.conversation.collectCues();
+      throw failure(409, 'scenario_action', 'There are no scripted table scenarios.');
     } else if (data.type === 'scene' && exact(data, ['type', 'command'])) {
       const sceneCommand = validateCommand(data.command);
       if (state.phase === 'waiting' || state.phase === 'ended') throw failure(409, 'inactive_room', 'Start the evening before interacting.');
       if (sceneCommand.type === 'pause' && !sceneCommand.paused && state.members.some(item => !item.connected)) throw failure(409, 'friend_disconnected', 'Wait for your friend to reconnect before resuming.');
       try {
-        if (sceneCommand.type === 'scenario') { resolveScenario(state, human, sceneCommand.choice); room.scene.reconcile(); }
-        else room.scene.command(human, sceneCommand, now());
+        room.scene.command(human, sceneCommand, now());
         if (sceneCommand.type === 'finish') resumeAfterPersonalChoice(room);
       } catch (caught) { throw failure(409, 'scene_action', caught instanceof Error ? caught.message : 'That action is unavailable.'); }
       if (sceneCommand.type === 'pause') {
@@ -194,10 +196,11 @@ export async function attachDoubleDateServer(_http: Server, restaurant: { servic
     }
     const match = /^\/api\/double-date\/rooms\/([a-f0-9]{24})(?:\/(command|turn|interrupt|speech|playback|leave))?$/.exec(url.pathname);
     if (!match) throw failure(404, 'route_missing', 'Unknown table endpoint.');
-    const { room, human } = authorize(req, match[1]), route = match[2];
+    const { room, human, seat, epoch } = authorize(req, match[1]), route = match[2];
     if (!route && req.method === 'GET') { const after = Number(url.searchParams.get('after') || 0); if (!Number.isSafeInteger(after) || after < 0) throw failure(400, 'invalid_cursor', 'Invalid voice signal cursor.'); json(res, 200, { state: snapshot(room), signals: room.signals.filter(signal => signal.to === human && signal.id > after).map(({ to: _to, at: _at, ...signal }) => signal) }); return; }
     if (req.method !== 'POST') throw failure(405, 'method', 'Use POST for table actions.');
     const data = await body(req);
+    if (room.seats.get(human) !== seat || seat.epoch !== epoch || !member(room, human).connected) throw failure(409, 'friend_disconnected', 'Reconnect to the table before continuing.');
     if (route === 'command') { command(room, human, data); json(res, 200, { state: snapshot(room) }); return; }
     if (route === 'leave') { if (!exact(data, [])) throw failure(400, 'invalid_leave', 'Invalid leave request.'); disconnect(room, human, now()); json(res, 200, { state: snapshot(room) }); return; }
     if (route === 'interrupt') { if (!exact(data, [])) throw failure(400, 'invalid_interrupt', 'Invalid interruption request.'); room.conversation.interrupt(); json(res, 200, { state: snapshot(room) }); return; }
@@ -209,7 +212,7 @@ export async function attachDoubleDateServer(_http: Server, restaurant: { servic
     const accepted = room.conversation.submit(human, { turnId: data.turnId, text: data.text.trim(), target: data.target as 'table', ...(data.via ? { via: data.via as 'voice' | 'typed' } : {}) }); json(res, accepted ? 202 : 200, { state: snapshot(room) });
   }
   let previous = now();
-  const tick = (dt?: number, at = now()) => { maintain(at); const elapsed = dt ?? Math.max(0, Math.min(.1, (at - previous) / 1000)); previous = at; for (const room of rooms.values()) { const wasPlaying = room.state.phase === 'playing'; room.scene.step(elapsed, at); tickScenario(room.state); room.conversation.collectCues(); if (wasPlaying && room.state.phase === 'ended') room.conversation.interrupt(); if (wasPlaying) room.state.revision++; } };
+  const tick = (dt?: number, at = now()) => { maintain(at); const elapsed = dt ?? Math.max(0, Math.min(.1, (at - previous) / 1000)); previous = at; for (const room of rooms.values()) { const wasPlaying = room.state.phase === 'playing'; room.scene.step(elapsed, at); room.conversation.collectCues(); if (wasPlaying && room.state.phase === 'ended') room.conversation.interrupt(); if (wasPlaying) room.state.revision++; } };
   const timer = options.autoTick === false ? undefined : setInterval(() => tick(), 1000 / 60); timer?.unref();
   return {
     handle(req: IncomingMessage, res: ServerResponse) { const url = new URL(req.url || '/', 'http://localhost'); if (!url.pathname.startsWith('/api/double-date/')) return false; void dispatch(req, res, url).catch(caught => errorResponse(res, caught)); return true; },

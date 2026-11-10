@@ -133,7 +133,7 @@ export function isSilentDialogueLine(value: unknown, speakers: readonly string[]
     && typeof line.text === 'string' && !line.text.trim() && EMOTIONS.includes(line.emotion as any);
 }
 export const TURN_SCHEMA = { type: 'object', additionalProperties: false, required: ['utterances', 'emotion', 'action', 'memory', 'social', 'agenda'], properties: {
-  utterances: { type: 'array', minItems: 1, maxItems: 2, items: { type: 'object', additionalProperties: false, required: ['speaker', 'text', 'emotion'], properties: { speaker: { type: 'string', enum: ['date', 'waiter', 'diner'] }, text: { type: 'string' }, emotion: { type: 'string', enum: EMOTIONS } } } },
+  utterances: { type: 'array', minItems: 1, maxItems: 2, items: { type: 'object', additionalProperties: false, required: ['speaker', 'text', 'emotion'], properties: { speaker: { type: 'string', enum: ['date'] }, text: { type: 'string' }, emotion: { type: 'string', enum: EMOTIONS } } } },
   emotion: { type: 'string', enum: EMOTIONS }, action: { type: 'string', enum: ACTIONS }, memory: { type: 'string' },
   social: { type: 'object', additionalProperties: false, required: ['signal', 'reason', 'wantsToLeave', 'boundary'], properties: { signal: { type: 'string', enum: SOCIAL_SIGNALS }, reason: { type: 'string' }, wantsToLeave: { type: 'boolean' }, boundary: BOUNDARY_SCHEMA } },
   agenda: AGENDA_SCHEMA,

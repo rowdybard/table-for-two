@@ -5,7 +5,6 @@ import type { DateAgendaProgress } from '../src/restaurant/agenda-types';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { DinnerScene } from '../server/restaurant/scene';
 import type { SceneTurn, SceneUtterance } from '../src/restaurant/types';
-import { RESTAURANT } from '../src/restaurant/content';
 
 const progress = (): DateAgendaProgress => ({ clues: [], milestones: [], score: 0, possible: 100, goal: null, reflection: null });
 const firstClue = 'I want to make my own choices tonight.';
@@ -94,62 +93,13 @@ test('all presets and seeded Blind dates remain skeptical after pleasing social 
   }
 });
 
-test('a cleanup or an apology button alone cannot buy confidence', async () => {
+test('a delivered refusal and repeated disregard do not manufacture confidence', async () => {
   await RAPIER.init();
   const scene = new DinnerScene('mira', 2);
   try {
-    scene.state.seated = true;
-    scene.state.evening.incident = { event: 'spilled-drink', progress: 3, startedAt: 0 };
-    scene.command({ type: 'evening', action: 'steady-glass' });
-    assert.equal(scene.state.evening.stance, 'curious');
-    scene.command({ type: 'evening', action: 'apologize' });
-    assert.equal(scene.state.evening.stance, 'curious');
-    assert.equal(scene.state.evening.agenda?.score, 0);
-  } finally { scene.free(); }
-});
-
-test('specific delivered evidence can establish confidence, and boundary repair must earn it back', async () => {
-  await RAPIER.init();
-  const scene = new DinnerScene('jules', 2);
-  try {
-    const disclose = (text: string) => {
-      const line: SceneUtterance = { speaker: 'date', text, emotion: 'neutral' };
-      scene.director.agenda.assess({ signal: 'none', evidence: '', clue: text }, '', [line]);
-      scene.acknowledge(line);
-    };
-    const demonstrate = (kind: keyof typeof evidence) => scene.applyTurn({ ...friendlyTurn(), agenda: { signal: kind, evidence: evidence[kind], clue: '' } }, evidence[kind]);
-    disclose(firstClue); demonstrate('noticed');
-    assert.equal(scene.state.evening.stance, 'curious');
-    disclose(secondClue); demonstrate('understood');
-    assert.equal(scene.state.evening.stance, 'curious');
-    demonstrate('respected');
-    assert.equal(scene.state.evening.stance, 'comfortable', 'actual evidence can change the date’s view');
     deliverFoodBoundary(scene);
     scene.applyTurn({ ...friendlyTurn(), social: { signal: 'pressure', reason: 'Ignored the date’s request to choose their own order.', wantsToLeave: false, boundary: { kind: 'repeat', topic: 'food-drink', refusal: foodRefusal, evidence: 'I am ordering for you anyway.' } } }, 'I am ordering for you anyway.');
     assert.equal(scene.state.evening.stance, 'guarded');
-    assert.equal(scene.state.evening.agenda?.score, 65);
-    scene.state.seated = true;
-    scene.command({ type: 'evening', action: 'apologize' });
-    assert.equal(scene.state.evening.stance, 'curious', 'an apology reopens conversation without restoring lost trust');
-    assert.equal(scene.state.evening.agenda?.score, 65);
-  } finally { scene.free(); }
-});
-
-test('a single apology cannot bypass skepticism through a second-chance farewell', async () => {
-  await RAPIER.init();
-  const scene = new DinnerScene('dev', 2);
-  try {
-    deliverFoodBoundary(scene);
-    scene.applyTurn({ ...friendlyTurn(), social: { signal: 'pressure', reason: 'Ignored a stated limit.', wantsToLeave: false, boundary: { kind: 'repeat', topic: 'food-drink', refusal: foodRefusal, evidence: 'I am not going to listen to your answer.' } } }, 'I am not going to listen to your answer.');
-    scene.state.seated = true;
-    scene.command({ type: 'evening', action: 'apologize' });
-    assert.equal(scene.state.evening.stance, 'curious');
-    scene.state.evening.bill = { requested: true, settlement: 'split' };
-    scene.state.evening.chapter = 'farewell'; scene.state.stage = 'farewell';
-    scene.state.seated = false;
-    scene.state.participants[0].position = [...RESTAURANT.entrance];
-    scene.command({ type: 'evening', action: 'farewell', choice: 'again' });
-    assert.equal(scene.state.evening.farewell.ending?.kind, 'new-friend');
     assert.equal(scene.state.evening.agenda?.score, 0);
   } finally { scene.free(); }
 });

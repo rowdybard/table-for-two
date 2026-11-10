@@ -28,7 +28,7 @@ function setup(mode: DinnerState['mode'] = 'ai-date') {
   return { state, director, publicState, begin, deliver };
 }
 
-test('Solo, Blind and Double each need two separate delivered reciprocal moments after earned confidence', () => {
+test('Solo, Blind and Double each need two separate delivered reciprocal moments', () => {
   for (const mode of ['ai-date', 'blind-date', 'double-date'] as const) {
     const f = setup(mode);
     assert.equal(f.director.unlocked, false);
@@ -112,10 +112,8 @@ test('a receipt may precede the same completed turn’s final confidence update 
   assert.equal(f.director.unlocked, true);
 });
 
-test('numeric scores, missing confidence, guarded stances and friendship cannot grant access', () => {
+test('guarded stances and friendship prevent access despite delivered flirtation', () => {
   for (const change of [
-    (state: DinnerState) => { state.evening.agenda!.milestones = []; },
-    (state: DinnerState) => { state.evening.agenda!.clues = ['One clue only.']; },
     (state: DinnerState) => { state.evening.care.romanceClosed = true; },
     (state: DinnerState) => { state.evening.stance = 'guarded'; },
     (state: DinnerState) => { state.evening.stance = 'hurt'; },
@@ -153,4 +151,13 @@ test('pause, ended evenings and later romantic refusal are reflected without sta
   f.state.evening.care.romanceClosed = true; assert.equal(f.publicState().unlocked, false);
   const g = setup(); g.deliver(firstLine, firstHuman); g.deliver(secondLine, secondHuman);
   g.state.phase = 'ended'; assert.equal(g.publicState().unlocked, false);
+});
+
+
+test('table-only chemistry does not require a removed agenda objective or reward its numeric score', () => {
+  const f = setup();
+  f.state.evening.agenda!.milestones = []; f.state.evening.agenda!.clues = []; f.state.evening.agenda!.score = 0;
+  assert.equal(f.director.unlocked, false);
+  f.deliver(firstLine, firstHuman); assert.equal(f.director.unlocked, false);
+  f.deliver(secondLine, secondHuman); assert.equal(f.director.unlocked, true);
 });

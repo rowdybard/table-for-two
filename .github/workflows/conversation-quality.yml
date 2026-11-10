@@ -86,11 +86,11 @@ jobs:
           - id: restaurant
             file: tests/browser-restaurant.spec.ts
             grep: ''
+          - id: lifecycle
+            file: tests/browser-restaurant.spec.ts
+            grep: 'background tab'
           - id: mobile
             file: tests/browser-mobile.spec.ts
-            grep: ''
-          - id: evening
-            file: tests/browser-evening.spec.ts
             grep: ''
           - id: speech
             file: tests/browser-speech.spec.ts
@@ -106,10 +106,10 @@ jobs:
             grep: '(^| )friend voice uses one opted-in microphone per browser and exchanges native RTP in both directions$'
           - id: double-wingman
             file: tests/browser-double-date.spec.ts
-            grep: '(^| )a finished date can stay as a wingman, help the active pair and return from their own ending$'
+            grep: '(^| )a finished date can stay for their friend without service tasks or transferred progress$'
           - id: double-evening
             file: tests/browser-double-date.spec.ts
-            grep: '(^| )complete double evening: both dinners, a shared dessert, one check for the table and independent farewells$'
+            grep: '(^| )shared table stays seated and unscripted until each person ends their date$'
           - id: blind
             file: tests/browser-double-date.spec.ts
             grep: '(^| )blind date starts directly, restores its seeded match and can finish without another human$'
@@ -128,8 +128,13 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - name: Install the headless Chromium pinned by Playwright
+        if: matrix.id != 'lifecycle'
         timeout-minutes: 8
         run: pnpm exec playwright install --with-deps --only-shell chromium
+      - name: Install full Chromium for real tab visibility
+        if: matrix.id == 'lifecycle'
+        timeout-minutes: 8
+        run: pnpm exec playwright install --with-deps --no-shell chromium
       - name: Run the isolated browser group
         timeout-minutes: 22
         shell: bash
@@ -137,6 +142,7 @@ jobs:
           NODE_OPTIONS: --import=${{ github.workspace }}/tests/fixtures/evaluation-network-guard.mjs
           TEST_FILE: ${{ matrix.file }}
           TEST_GREP: ${{ matrix.grep }}
+          BROWSER_GROUP: ${{ matrix.id }}
         run: |
           elapsed=$(( $(date +%s) - BROWSER_JOB_STARTED_AT ))
           remaining=$(( 26 * 60 - elapsed ))
@@ -150,8 +156,17 @@ jobs:
           if [[ -n "$TEST_GREP" ]]; then
             args+=(--grep "$TEST_GREP")
           fi
+          if [[ "$BROWSER_GROUP" == restaurant ]]; then
+            args+=(--grep-invert 'background tab')
+          fi
+          command=(pnpm exec playwright test)
+          if [[ "$BROWSER_GROUP" == lifecycle ]]; then
+            # Headed Chromium has real foreground tabs; headless-shell marks every page visible.
+            command=(xvfb-run -a pnpm exec playwright test)
+            args+=(--headed)
+          fi
           # Bound cleanup too if a browser ignores Playwright's own global deadline.
-          timeout --signal=TERM --kill-after=30s "$(( seconds + 30 ))s" pnpm exec playwright test "${args[@]}"
+          timeout --signal=TERM --kill-after=30s "$(( seconds + 30 ))s" "${command[@]}" "${args[@]}"
       - uses: actions/upload-artifact@v4
         if: always()
         timeout-minutes: 2

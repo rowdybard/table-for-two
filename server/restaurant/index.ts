@@ -27,7 +27,7 @@ import { TABLETOP_ACTIONS } from '../../src/restaurant/tabletop';
 import { scenePresenceAvailable } from '../../src/restaurant/scenario-care';
 import { scenarioMechanicsContext } from './scenario-effects';
 import { needsAdultConversation, type ConversationRoutingContext } from './conversation-routing';
-import { MEMORY_REJECT } from './memory';
+import { MEMORY_REJECT, mergeMemoryForDelivery, retireSharedPremise } from './memory';
 import { QUIET_GAP_SECONDS, conversationMessages, deliveryLabel, heardPrefix, turnNote, type TurnFlow } from './turn-note';
 import { tableFacts } from './table-facts';
 
@@ -50,7 +50,7 @@ export interface RestaurantOptions {
   storyRate?: number; scenarioId?: RestaurantScenarioId;
 }
 type TurnRecord = { fingerprint: string; events: TurnEvent[]; subscribers: Set<ServerResponse>; finished: boolean; pending?: ServerResponse };
-type GenerationRecord = { lines: SceneUtterance[]; playback: Map<string, { completed: boolean; playedSeconds: number }>; interrupted: boolean; entry?: { role: 'assistant'; content: string } };
+type GenerationRecord = { lines: SceneUtterance[]; playback: Map<string, { completed: boolean; playedSeconds: number }>; interrupted: boolean; entry?: { role: 'assistant'; content: string }; pendingMemory?: { value: string; humanText: string; lines: SceneUtterance[] } };
 type Session = { scene: DinnerScene; token: string; model: ClaudeModel; generation: number; controller?: AbortController; speechControllers: Set<AbortController>; turns: Map<string, TurnRecord>; allowed: Map<string, SceneUtterance>; generations: Map<number, GenerationRecord>; capturedCues: Set<string>; history: { role: 'user' | 'assistant'; content: string }[]; reserved: number; touched: number; activeTurn?: string; turnStarted: number; trimmed?: boolean; lastHeardAt?: number; replyGeneration?: number };
 type Clip = { id: string; text: string; emotion: SceneUtterance['emotion']; voiceId: string; model: string; file: string; provider?: SpeechRequest['provider']; settings?: SpeechRequest['settings'] };
 const models: ClaudeModel[] = ['claude-haiku-5-5', 'claude-sonnet-5-5'];
@@ -69,7 +69,7 @@ export function validateUtterance(value: unknown, index: number): SceneUtterance
   if (value.text.length > 420) throw invalid('utterance_text_length');
   if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(value.text)) throw invalid('utterance_text_controls');
   if (!EMOTIONS.includes(value.emotion as any)) throw invalid('utterance_emotion');
-  if (index === 0 ? value.speaker !== 'date' : !['date', 'waiter', 'diner'].includes(value.speaker as string)) throw invalid('utterance_speaker');
+  if (value.speaker !== 'date') throw invalid('utterance_speaker');
   const text = value.text.trim();
   const authored = AUTHORED_UTTERANCES.find(u => u.speaker === value.speaker && u.text === text && u.emotion === value.emotion);
   return { speaker: value.speaker as SceneUtterance['speaker'], text, emotion: value.emotion as SceneUtterance['emotion'], ...(authored ? { clipId: authored.clipId } : {}) };
@@ -145,8 +145,9 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
   const directDolphinConfigured = !!env.DOLPHIN_LLM_API_KEY?.trim() || !!opts.dolphinLlm;
   const earnedModel = directDolphinConfigured ? DOLPHIN_LLM_MODEL : hordeEarned || (!dolphinConfigured && hordeConfigured) ? HORDE_MODEL : DOLPHIN_MODEL;
   const claude: ClaudeAdapter = { stream(request, signal) { return (request.model === DOLPHIN_LLM_MODEL ? directDolphin : request.model === HORDE_MODEL ? horde : request.model === DOLPHIN_MODEL ? dolphin : anthropic).stream(request, signal); } };
-  // Look up worker availability early without sending dialogue or queuing inference.
-  if (hordeConfigured) void horde.prepare?.().catch(() => {});
+  // Only an explicitly configured legacy Horde route prewarms its worker list.
+  // Enabling private model commands alone must not contact an unused provider.
+  if (hordeDefault || hordeEarned) void horde.prepare?.().catch(() => {});
   // Injected adapters keep the legacy paid-accounting test contract unless the
   // caller explicitly asks to exercise free Edge accounting. Production always
   // defaults to Edge, even when an unused ElevenLabs key is still configured.
@@ -210,6 +211,12 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
     else { record.entry = { role: 'assistant', content }; s.history.push(record.entry); }
     boundHistory(s);
   };
+  const commitHeardMemory = (s: Session, generation: number, record: GenerationRecord) => {
+    const pending = record.pendingMemory;
+    if (!pending || record.interrupted || generation !== s.generation || !pending.lines.length || new Set(pending.lines.map(keyFor)).size !== pending.lines.length || !pending.lines.every(line => record.playback.get(keyFor(line))?.completed)) return;
+    s.scene.state.memory = mergeMemoryForDelivery(pending.value, s.scene.state.memory, true, pending.humanText);
+    record.pendingMemory = undefined;
+  };
   // Abandoning a reply that was still being written also ends the wait for it, so the evening does not stay hushed for a line that will never arrive.
   const invalidate = (s: Session) => { s.scene.director.boundaries.clearPending(); s.scene.director.chemistry.clearPending(); const old = s.generations.get(s.generation); if (old) { old.interrupted = true; updatePlaybackHistory(s, old); } if (s.controller) { s.controller.abort(); s.scene.director.replyEnded(); } s.controller = undefined; for (const c of s.speechControllers) c.abort(); // an abandoned reply no longer holds the table's silence
     s.speechControllers.clear(); s.allowed.clear(); s.generation++; s.scene.state.generation = s.generation; s.generations.set(s.generation, { lines: [], playback: new Map(), interrupted: false }); if (s.generations.size > 40) s.generations.delete(s.generations.keys().next().value!); };
@@ -264,7 +271,10 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
       }
       if (controller.signal.aborted || generation !== s.generation) throw apiError(499, 'interrupted', 'Response interrupted.');
       let parsed: unknown; try { parsed = JSON.parse(text); } catch { throw apiError(502, 'invalid_dialogue', 'The date returned incomplete dialogue. Please try another turn.'); }
-      const turn = validateTurn(parsed); s.scene.applyTurn(turn, request.text); captureCues(s, true); updatePlaybackHistory(s, s.generations.get(generation)!);
+      const turn = validateTurn(parsed), genRecord = s.generations.get(generation)!;
+      s.scene.applyTurn({ ...turn, memory: mergeMemoryForDelivery(turn.memory, s.scene.state.memory, false, request.text) }, request.text);
+      genRecord.pendingMemory = { value: turn.memory, humanText: request.text, lines: turn.utterances.filter(line => line.speaker === 'date') };
+      commitHeardMemory(s, generation, genRecord); captureCues(s, true); updatePlaybackHistory(s, genRecord);
       s.scene.state.usage.responseMs = now() - started;
     } catch (error) {
       const e = controller.signal.aborted ? controller.signal.reason instanceof DateApiError ? controller.signal.reason : apiError(499, 'interrupted', 'Response interrupted.') : error instanceof DateApiError ? error : apiError(502, 'claude_provider', 'The conversation could not finish this turn. Your date is still playable.');
@@ -273,9 +283,9 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
       if (e.code === 'conversation_refusal' && !controller.signal.aborted && generation === s.generation) {
         const refused = [...s.history].reverse().find(entry => entry.role === 'user' && entry.content === request.text);
         if (refused) refused.content = '[A provider-limited topic was redirected back to dinner. No personal boundary strike occurred.]';
-        s.scene.director.redirectConversation(); captureCues(s, true);
         s.scene.state.usage.responseMs = now() - started;
-      } else emit(record, { type: 'error', message: e.message, code: e.code, ...(e.details ? { details: e.details } : {}) });
+      }
+      emit(record, { type: 'error', message: e.message, code: e.code, ...(e.details ? { details: e.details } : {}) });
     } finally {
       clearTimeout(timer);
       // Usage received from Anthropic is authoritative. If an interrupted transport
@@ -293,9 +303,9 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
 
   async function streamSpeech(req: IncomingMessage, res: ServerResponse, s: Session, data: Record<string, unknown>) {
     if (!Number.isSafeInteger(data.generation) || data.generation !== s.generation || !object(data.utterance)) throw apiError(409, 'stale_generation', 'That line was interrupted.');
+    if (data.utterance.speaker !== 'date') throw apiError(400, 'unknown_utterance', 'Only this date’s generated lines can be voiced.');
     const u = validateUtterance(data.utterance, data.utterance.speaker === 'date' ? 0 : 1);
-    const authored = AUTHORED_UTTERANCES.find(line => !line.clipId.startsWith('story-') && (!s.scene.state.blindDate || line.speaker !== 'date') && keyFor(line) === keyFor(u) && (!line.dateId || line.dateId === s.scene.state.dateId) && (!line.event || s.scene.state.events.includes(line.event))) || s.scene.state.evening.cues.flatMap(cue => cue.utterances).find(line => keyFor(line) === keyFor(u));
-    if (!s.allowed.has(keyFor(u)) && !authored) throw apiError(400, 'unknown_utterance', 'Only this date’s generated or authored lines can be voiced.');
+    if (!s.allowed.has(keyFor(u))) throw apiError(400, 'unknown_utterance', 'Only this date’s generated lines can be voiced.');
     if (!s.generations.get(s.generation)?.lines.some(line => keyFor(line) === keyFor(u))) s.generations.get(s.generation)?.lines.push(u);
     if (s.scene.state.phase !== 'playing') throw apiError(409, 'inactive_session', 'Resume the date before playing a voice.');
     const request = speechRequest(u.text, u.emotion, u.speaker === 'date' ? s.scene.state.dateId : u.speaker as 'waiter' | 'diner');
@@ -417,7 +427,7 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
       const token = randomBytes(24).toString('hex');
       if (isEarnedModel(data.model) && data.model !== DOLPHIN_LLM_MODEL && data.model !== defaultModel) throw apiError(409, data.model === HORDE_MODEL ? 'horde_locked' : 'dolphin_locked', 'Start with Haiku and build mutual chemistry first.');
       const s: Session = { scene, token: tokenHash(token), model: (data.model as ClaudeModel) || defaultModel, generation: 0, speechControllers: new Set(), turns: new Map(), allowed: new Map(), generations: new Map(), capturedCues: new Set(), history: [], reserved: 0, touched: now(), turnStarted: 0 };
-      const opening: SceneUtterance = { speaker: 'date', text: blind?.opening ?? getDate(scene.state.dateId)!.opening, emotion: blind ? 'warm' : 'neutral' }; s.allowed.set(keyFor(opening), opening); s.generations.set(0, { lines: [], playback: new Map(), interrupted: false }); sessions.set(scene.state.id, s);
+      s.generations.set(0, { lines: [], playback: new Map(), interrupted: false }); sessions.set(scene.state.id, s);
       captureCues(s);
       json(res, 201, { state: scene.snapshot(), token }); return;
     }
@@ -443,7 +453,7 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
       if (!generation || !line) throw apiError(409, 'unknown_playback', 'That line does not belong to this date.');
       const old = generation.playback.get(keyFor(line)); generation.playback.set(keyFor(line), { completed: old?.completed || data.completed, playedSeconds: Math.max(old?.playedSeconds || 0, data.playedSeconds) }); updatePlaybackHistory(s, generation);
       if (data.completed) s.lastHeardAt = now();
-      if (data.completed && !generation.interrupted && data.generation === s.generation) s.scene.acknowledge(line);
+      if (data.completed && !generation.interrupted && data.generation === s.generation) { s.scene.acknowledge(line); commitHeardMemory(s, data.generation as number, generation); }
       json(res, 200, { state: s.scene.snapshot() }); return;
     }
     if (route === 'command') {
@@ -462,6 +472,7 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
     if (!scenePresenceAvailable(s.scene.state)) throw apiError(409, 'date_away', 'Give your date time to return to the table.');
     if (!status().claude) throw apiError(503, 'claude_unconfigured', 'Add ANTHROPIC_API_KEY to enable live conversation.');
     if (s.turns.size >= 250) throw apiError(429, 'turn_limit', 'This date reached its conversation limit. Start another date to continue.');
+    s.scene.state.memory = retireSharedPremise(s.scene.state.memory, request.text);
     request.model = modelFor(request.model, s.scene.state, { text: request.text, recentTurns: s.history });
     s.scene.state.conversationModel = request.model;
     const previous = s.generations.get(s.generation); if (previous) updatePlaybackHistory(s, previous);

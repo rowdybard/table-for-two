@@ -5,6 +5,7 @@ import type { AudioPlayback, DateId, DateStance, DinnerCommand, DinnerState, Emo
 import { calmEnoughForListening, type ListeningPreview } from './ListeningPreview';
 import { RestaurantActor } from './render/RestaurantActor';
 import { createCharacterEnvironment, prepareCharacterLighting } from './render/CharacterLighting';
+import { DeferredActivity } from './DeferredActivity';
 import { createRestaurantScene, type RestaurantSet } from './render/RestaurantScene';
 import { EveningTable } from './render/EveningTable';
 import { createPlaceSettingShadows } from './render/PlaceSettingShadows';
@@ -19,6 +20,8 @@ import { diningOffsetZ } from './dining-space';
 import { scenePresenceAvailable } from './scenario-care';
 import { createDrawCadence } from './FrameCap';
 import { SeatingSpeechFacing, facingPlayerYaw } from './render/SeatingSpeechFacing';
+import { seatedTableFieldOfView, seatedTablePitch, sharedTableCameraYaw } from './render/TableDateCamera';
+import { alignSeatedDate, soloDateAtSeat } from './render/SeatedDatePose';
 
 type InteractionTarget = Extract<DinnerCommand, { type: 'interact' }>['target'];
 export interface RestaurantInteraction { target: InteractionTarget; label: string; actorId?: ConversationTarget }
@@ -45,8 +48,6 @@ export class RestaurantRenderer {
   /** Adaptive resolution scale from the lighting's frame-time governor; 1 is the tier's full resolution. */
   private resolutionScale = 1;
   private readonly lighting: RestaurantLighting;
-  private readonly waiter = new RestaurantActor('waiter');
-  private readonly diner = new RestaurantActor('diner');
   private date: RestaurantActor;
   private dateId: DateId;
   private dateTarget: THREE.Mesh;
@@ -73,10 +74,8 @@ export class RestaurantRenderer {
   private lastRoom = '';
   private lastDiningOffset = 0;
   private disposed = false;
+  private readonly activity = new DeferredActivity();
   private readonly datePosition = new THREE.Vector3();
-  private serviceUntil = 0;
-  private serviceRoom = '';
-  private lastServiceCues: string[] = [];
   private presentation: RestaurantPresentation = 'gameplay';
   private readonly roomLights = new THREE.Group();
   private readonly farewellLight = new THREE.PointLight('#ffdcbb', 0, 4, 2);
@@ -139,19 +138,27 @@ export class RestaurantRenderer {
   }
 
   /** three restores its own state first (its listener was added at construction), then this rebakes the cast probe. */
-  private readonly restoreCharacterEnvironment = () => {
+  private readonly rebuildCharacterEnvironment = () => {
     if (this.disposed) return;
     try {
       // The old target's GL objects died with the lost context; let it be collected rather than
       // deleting stale handles on the new context.
       this.characterEnvironment = this.quality.tier === 'high' ? createCharacterEnvironment(this.renderer) : null;
-      for (const actor of [this.date, this.waiter, this.diner, this.otherDate, this.friend]) {
+      for (const actor of [this.date, this.otherDate, this.friend]) {
         if (actor) prepareCharacterLighting(actor.root, this.characterEnvironment?.texture ?? null, this.quality);
       }
     } catch (error) {
       console.warn('Cast reflections could not be rebuilt after the WebGL context returned.', error);
     }
   };
+  private readonly restoreCharacterEnvironment = () => this.activity.run(this.rebuildCharacterEnvironment);
+
+  setActive(active: boolean) {
+    if (this.disposed) return;
+    this.lighting.setActive(active);
+    this.activity.setActive(active);
+    if (active && !this.compiled && !this.warmupTask) this.requestWarmup();
+  }
 
   /** Coalesce cast changes and wait for scene assets before using compiled programs. */
   private requestWarmup() {
@@ -166,6 +173,7 @@ export class RestaurantRenderer {
       await new Promise<void>(resolve => setTimeout(resolve, 0));
       await Promise.race([Promise.all([waitForEnvironmentAssets(), waitForRestaurantProps()]), this.warmupCancelled]);
       while (!this.disposed) {
+        if (!this.activity.isActive) break;
         const revision = this.warmupRevision;
         await Promise.race([this.renderer.compileAsync(this.scene, this.camera), this.warmupCancelled]);
         if (this.disposed) break;
@@ -178,11 +186,12 @@ export class RestaurantRenderer {
       if (!this.disposed) { console.warn('Restaurant shader warmup failed; continuing with normal rendering.', error); this.compiled = true; }
     }).finally(() => {
       this.warmupTask = null;
-      if (!this.disposed && !this.compiled) this.requestWarmup();
+      if (!this.disposed && !this.compiled && this.activity.isActive) this.requestWarmup();
     });
   }
 
   private renderScene() {
+    if (!this.activity.isActive) return;
     if (this.ready && this.quality.tier === 'low' && !this.drawCadence.shouldDraw(performance.now())) return;
     this.faceFill.position.copy(this.faceFillOffset).applyQuaternion(this.camera.quaternion).add(this.camera.position);
     this.renderer.render(this.scene, this.camera);
@@ -295,13 +304,7 @@ export class RestaurantRenderer {
     this.date.setSeated(true);
     this.scene.add(this.date.root);
     this.dateTarget = this.createDateTarget();
-    this.waiter.root.position.set(...RESTAURANT.waiter);
-    this.waiter.root.rotation.y = -.4;
-    this.scene.add(this.waiter.root);
-    this.diner.root.position.set(-3.5, 0, -4.6);
-    this.diner.setSeated(true);
-    this.scene.add(this.diner.root);
-    for (const actor of [this.date, this.waiter, this.diner]) prepareCharacterLighting(actor.root, this.characterEnvironment?.texture ?? null, this.quality);
+    prepareCharacterLighting(this.date.root, this.characterEnvironment?.texture ?? null, this.quality);
     this.lighting = createRestaurantLighting({ renderer: this.renderer, scene: this.scene, camera: this.camera, roomLights: this.roomLights, set: this.set, quality: this.quality,
       setResolutionScale: scale => { this.resolutionScale = scale; this.resize(); } });
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -321,7 +324,6 @@ export class RestaurantRenderer {
       this.lastDiningOffset = 0;
       this.set.diningRoot.position.z = 0; this.table.root.position.z = 0; this.placeSettingShadows.mesh.position.z = 0;
     }
-    this.waiter.root.visible = !selection;
     this.table.root.visible = !selection;
     this.set.menu.visible = true;
     this.camera.fov = selection ? 41 : 61;
@@ -346,7 +348,6 @@ export class RestaurantRenderer {
       this.date.update(this.time, dt, localDate?.emotion ?? 'neutral', false, 0, this.camera.position);
       this.updateDoubleActors(dt, state, { speaker: null, amplitude: 0, emotion: 'neutral', caption: '' }, true);
       this.table.update(state);
-      this.diner.update(this.time, dt, 'neutral', false, 0, this.date.root.position);
       this.renderScene();
       return;
     }
@@ -358,7 +359,6 @@ export class RestaurantRenderer {
     this.date.root.position.set(...RESTAURANT.dateSeat);
     this.date.root.rotation.y = .33;
     this.date.setSeated(true);
-    this.diner.update(this.time, dt, 'neutral', false, 0, this.date.root.position);
     this.selectionGaze.copy(this.camera.position);
     this.date.update(this.time, dt, this.dateId === 'jules' ? 'neutral' : this.dateId === 'dev' ? 'amused' : 'warm', false, 0, this.selectionGaze);
     this.date.head.rotation.z = (this.dateId === 'mira' ? -.025 : this.dateId === 'jules' ? .012 : -.008) + Math.sin(this.time * .7) * .008;
@@ -442,6 +442,7 @@ export class RestaurantRenderer {
       const speed = !seated && dt > 0 ? actor.root.position.distanceTo(previous) / dt : 0;
       const facing = seated ? 0 : speed > .12 ? Math.atan2(actor.root.position.x - previous.x, actor.root.position.z - previous.z) : Math.atan2(this.camera.position.x - actor.root.position.x, this.camera.position.z - actor.root.position.z);
       actor.root.rotation.y += Math.atan2(Math.sin(facing - actor.root.rotation.y), Math.cos(facing - actor.root.rotation.y)) * (preview ? 1 : 1 - Math.exp(-dt * 5));
+      alignSeatedDate(actor.root, position, seated, 0);
       if (this.otherDateTarget) this.otherDateTarget.position.y = seated ? 1.15 : 1.4;
       const speaking = playback.actorId === otherDate.id || (!playback.actorId && playback.speaker === 'other-date');
       const listening = this.listeningFor(otherDate.id, state, playback, otherDate.emotion, otherDate.stance, double.otherView ?? state);
@@ -539,13 +540,13 @@ export class RestaurantRenderer {
       this.lastRoom = state.id;
       this.camera.position.copy(this.cameraTarget);
       this.yaw = 0;
-      this.pitch = state.seated ? -.095 : -.025;
+      this.pitch = state.seated ? -.075 : -.025;
       if (companion) this.date.root.position.set(companion.position[0], 0, companion.position[2]);
     }
     if (state.seated !== this.lastSeated) {
       this.lastSeated = state.seated;
       this.yaw = 0;
-      this.pitch = state.seated ? -.095 : -.025;
+      this.pitch = state.seated ? -.075 : -.025;
     }
     // Keep the doorway two-shot when the player's farewell becomes a keepsake.
     const focus = state.phase === 'ended' ? 'farewell' : this.tableFocus;
@@ -557,14 +558,14 @@ export class RestaurantRenderer {
     }
     this.farewellLight.intensity = focus === 'farewell' ? 2 : 0;
     if (focus === 'farewell' && companion) this.farewellLight.position.set(companion.position[0] - .3, 2.05, companion.position[2] - 1.2);
-    const fov = inspecting ? 40 : state.doubleDate && state.seated ? 57 : state.seated || focus === 'farewell' ? 43 : 61;
+    const fov = inspecting ? 40 : state.seated ? seatedTableFieldOfView(this.camera.aspect, !!state.doubleDate) : focus === 'farewell' ? 43 : 61;
     if (Math.abs(this.camera.fov - fov) > .01) {
       this.camera.fov = THREE.MathUtils.lerp(this.camera.fov, fov, 1 - Math.exp(-dt * 12));
       this.camera.updateProjectionMatrix();
     }
     if (state.seated) {
       if (state.doubleDate) { this.cameraTarget.y += .075; this.cameraTarget.z -= .06; }
-      else { this.cameraTarget.x += .51; this.cameraTarget.y += .075; this.cameraTarget.z -= .28; }
+      else { this.cameraTarget.y += .075; this.cameraTarget.z -= .14; }
     }
     if (focus === 'farewell' && companion) {
       this.cameraTarget.set(companion.position[0] + .55, 1.56, companion.position[2] - 1.65);
@@ -576,7 +577,9 @@ export class RestaurantRenderer {
     }
     if (movedTables && state.seated) this.camera.position.copy(this.cameraTarget);
     this.camera.position.lerp(this.cameraTarget, this.reducedMotion.matches && (focus || inspecting) ? 1 : 1 - Math.exp(-dt * 14));
-    this.camera.rotation.set(this.pitch, -this.yaw + (state.seated && !state.doubleDate ? .245 : 0), 0, 'YXZ');
+    const sharedYaw = state.seated && state.doubleDate ? sharedTableCameraYaw(this.camera.position.x, this.camera.position.z + 2.5 - diningOffset) : 0;
+    const pitch = state.seated && !focus && !inspecting ? seatedTablePitch(this.camera.aspect, !!state.doubleDate) : this.pitch;
+    this.camera.rotation.set(pitch, -this.yaw + sharedYaw, 0, 'YXZ');
     if (focus === 'farewell' && companion) this.camera.lookAt(companion.position[0] + .47, 1.39, companion.position[2]);
     if (inspecting) this.camera.lookAt(this.inspectionAnchor);
     if (this.focusTransition > 0) {
@@ -597,13 +600,15 @@ export class RestaurantRenderer {
     const foreignIncident = state.doubleDate?.incidentOwner && state.doubleDate.incidentOwner !== state.doubleDate.localHumanId;
     const serviceEvening = state.doubleDate?.role === 'wingman' || foreignIncident ? state.doubleDate?.otherView?.evening ?? evening : evening;
     const localDoubleDate = state.doubleDate?.dates.find(date => date.humanId === state.doubleDate?.localHumanId);
-    const dateSeated = state.phase === 'ended' && evening.care.assistedExit || (localDoubleDate ? localDoubleDate.seated : !takingBreak && state.seated && evening.stance !== 'leaving' && !evening.farewell.ending && Math.hypot(this.date.root.position.x - RESTAURANT.dateSeat[0], this.date.root.position.z - RESTAURANT.dateSeat[2] - diningOffset) < .35);
+    const dateSeated = state.phase === 'ended' && evening.care.assistedExit || (localDoubleDate ? localDoubleDate.seated : !takingBreak && state.seated && evening.stance !== 'leaving' && !evening.farewell.ending && soloDateAtSeat(companion?.position, RESTAURANT.dateSeat[0], RESTAURANT.dateSeat[2] + diningOffset));
     this.date.setSeated(dateSeated);
     const motionX = this.date.root.position.x - previousDateX;
     const motionZ = this.date.root.position.z - previousDateZ;
     const walkingSpeed = dt > 0 && state.phase === 'playing' && !dateSeated ? Math.hypot(motionX, motionZ) / dt : 0;
     const dateSpeaking = playback.actorId ? playback.actorId === localDoubleDate?.id : playback.speaker === 'date';
-    const playerFacing = facingPlayerYaw(this.date.root.position.x, this.date.root.position.z, this.camera.position.x, this.camera.position.z);
+    const facingX = dateSeated && companion ? companion.position[0] : this.date.root.position.x;
+    const facingZ = dateSeated && companion ? companion.position[2] : this.date.root.position.z;
+    const playerFacing = facingPlayerYaw(facingX, facingZ, this.camera.position.x, this.camera.position.z);
     const faceDuringSeating = this.seatingSpeechFacing.update(state.id, state.seated, dateSeated, dateSpeaking,
       state.phase === 'playing' && !takingBreak && evening.stance !== 'leaving' && !evening.farewell.ending && this.date.root.visible && state.doubleDate?.role !== 'wingman');
     if (faceDuringSeating) this.date.root.rotation.y = playerFacing;
@@ -612,6 +617,7 @@ export class RestaurantRenderer {
       const delta = Math.atan2(Math.sin(facing - this.date.root.rotation.y), Math.cos(facing - this.date.root.rotation.y));
       this.date.root.rotation.y += delta * (1 - Math.exp(-dt * 5));
     }
+    if (companion) alignSeatedDate(this.date.root, companion.position, dateSeated, playerFacing);
     this.dateTarget.position.y = dateSeated ? 1.15 : 1.4;
     this.gaze.copy(this.camera.position);
     if (state.doubleDate) {
@@ -635,33 +641,6 @@ export class RestaurantRenderer {
     this.date.update(this.time, dt, dateSpeaking ? playback.emotion : firstImpression, dateSpeaking, dateSpeaking ? playback.amplitude : 0, this.gaze, walkingSpeed, { stance: evening.stance, shared: evening.sharedActivities.length > 0, attentive: override.listening ?? !!listening, reducedMotion: this.reducedMotion.matches, table: dateSeated ? table : undefined, deliveryId: dateSpeaking ? playback.deliveryId : null });
     this.applyDateProps(this.date, pairX, !!state.doubleDate);
     if (state.doubleDate) this.updateDoubleActors(dt, state, playback);
-    const scenarioService = (state.doubleDate?.scenario ?? evening.scenario)?.effects.service;
-    const serviceCues = [
-      serviceEvening.main.status === 'served' ? 'main' : '',
-      serviceEvening.dessert.status === 'served' ? 'dessert' : '',
-      serviceEvening.bill.requested ? 'bill' : '',
-      serviceEvening.incident?.event ?? '',
-      serviceEvening.care.water.status !== 'none' ? `water-${serviceEvening.care.water.status}` : '',
-      scenarioService && scenarioService !== 'none' ? `scenario-service-${scenarioService}` : '',
-    ].filter(Boolean);
-    if (state.id !== this.serviceRoom) {
-      this.serviceRoom = state.id;
-      this.serviceUntil = 0;
-    } else if (serviceCues.some(cue => !this.lastServiceCues.includes(cue))) {
-      this.serviceUntil = this.time + 7;
-    }
-    this.lastServiceCues = serviceCues;
-    const serving = this.time < this.serviceUntil || playback.speaker === 'waiter' || serviceEvening.scenarioCare?.presence === 'staff-care' || state.doubleDate?.otherView?.evening.scenarioCare?.presence === 'staff-care';
-    const waiterTarget = new THREE.Vector3(serving ? 1.14 : RESTAURANT.waiter[0], 0, serving ? -2.82 + diningOffset : RESTAURANT.waiter[2]);
-    const waiterDistance = this.waiter.root.position.distanceTo(waiterTarget), waiterStep = Math.min(waiterDistance, state.phase === 'playing' ? dt * 1.1 : 0);
-    const waiterDirection = waiterTarget.clone().sub(this.waiter.root.position).normalize();
-    this.waiter.root.position.addScaledVector(waiterDirection, waiterStep);
-    const waiterFacing = waiterDistance > .06 ? Math.atan2(waiterDirection.x, waiterDirection.z) : Math.atan2(this.gaze.x - this.waiter.root.position.x, this.gaze.z - this.waiter.root.position.z);
-    this.waiter.root.rotation.y += Math.atan2(Math.sin(waiterFacing - this.waiter.root.rotation.y), Math.cos(waiterFacing - this.waiter.root.rotation.y)) * (1 - Math.exp(-dt * 4));
-    const waiterEmotion = playback.speaker === 'waiter' ? playback.emotion : serviceEvening.incident?.event === 'spilled-drink' ? 'embarrassed' : 'neutral';
-    this.waiter.update(this.time, dt, waiterEmotion, playback.speaker === 'waiter', playback.amplitude, this.gaze, dt > 0 ? waiterStep / dt : 0, { shared: serving, reducedMotion: this.reducedMotion.matches, deliveryId: playback.speaker === 'waiter' ? playback.deliveryId : null });
-    const phoneActive = serviceEvening.incident?.event === 'disruptive-diner';
-    this.diner.update(this.time, dt, playback.speaker === 'diner' ? playback.emotion : phoneActive ? 'annoyed' : 'neutral', playback.speaker === 'diner', playback.amplitude, this.gaze, 0, { phoneActive, reducedMotion: this.reducedMotion.matches, deliveryId: playback.speaker === 'diner' ? playback.deliveryId : null });
     this.table.update(state);
     const windowTarget = this.table.targets.find(target => target.userData.target === 'window');
     if (windowTarget) windowTarget.position.z = -.8 - diningOffset;
@@ -794,6 +773,7 @@ export class RestaurantRenderer {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.activity.dispose();
     this.listeningPreview = null;
     this.cancelWarmup();
     this.resizeObserver.disconnect();
@@ -801,8 +781,6 @@ export class RestaurantRenderer {
     this.disposeTarget(this.otherDateTarget); this.disposeTarget(this.friendTarget);
     this.otherDate?.dispose(); this.friend?.dispose();
     this.date.dispose();
-    this.waiter.dispose();
-    this.diner.dispose();
     this.set.dispose();
     this.table.dispose();
     this.placeSettingShadows.dispose();

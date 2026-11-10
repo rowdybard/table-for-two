@@ -246,15 +246,16 @@ test('model settings record requested Horde identities and transport caps withou
 test('Solo and Double acceptance retire a stopped optional premise while preserving a factual promise', () => {
   const notebook = 'HUMAN: grew up in Leeds\nTOLD THEM: learned to repair a radio\nOPEN: recommend a book next time; shared premise: we are rival fry diplomats';
   for (const original of [script, SHORT_EVALUATION_SCRIPTS.find(s => s.mode === 'double')!]) {
-    const fixture = { ...original, turns: original.turns.map((turn, index) => index === 1 ? { ...turn, text: 'Please stop joking about that. Change the subject.' } : { ...turn }) };
+    const fixture = { ...original, turns: original.turns.map((turn, index) => index === 1 ? { ...turn, human: 'h1' as const, text: 'Please stop joking about that. Change the subject.' } : { ...turn }) };
     const runtime = new EvaluationConversation(fixture, 'ai-horde');
-    runtime.request(0); runtime.commit(0, runtime.validate(original.mode === 'double' ? doubleResponse(notebook, notebook) : response(notebook)));
+    const bothDates = [{ speaker: 'd1', text: 'I will recommend a book.', emotion: 'warm' }, { speaker: 'd2', text: 'I will recommend one too.', emotion: 'warm' }];
+    runtime.request(0); runtime.commit(0, runtime.validate(original.mode === 'double' ? doubleResponse(notebook, notebook, bothDates) : response(notebook)));
     assert.match(runtime.views.h1.memory, /shared premise:/);
     runtime.request(1); runtime.commit(1, runtime.validate(original.mode === 'double' ? doubleResponse(notebook, notebook) : response(notebook)));
     assert.ok(!runtime.views.h1.memory.includes('shared premise:'));
     assert.match(runtime.views.h1.memory, /grew up in Leeds/);
     assert.match(runtime.views.h1.memory, /recommend a book next time/);
-    if (original.mode === 'double') { assert.ok(!runtime.views.h2.memory.includes('shared premise:')); assert.match(runtime.views.h2.memory, /recommend a book next time/); }
+    if (original.mode === 'double') { assert.match(runtime.views.h2.memory, /shared premise:/); assert.match(runtime.views.h2.memory, /recommend a book next time/); }
   }
 });
 
@@ -331,4 +332,99 @@ test('Dolphin CLI checks only the selected provider credentials after dry run', 
     assert.equal(direct.status, 0, direct.stderr); const directReport = JSON.parse(await readFile(join(directory, '.qa', 'date-model-comparison.json'), 'utf8'));
     assert.equal(directReport.requests, 0); assert.equal(directReport.results[0].status, 'budget_exhausted');
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('evaluation notebooks do not claim unheard Solo disclosures or promises', () => {
+  const fixture = { ...script, turns: script.turns.map((turn, index) => index === 2 ? { ...turn, previousDelivery: 'unheard' as const } : { ...turn }) };
+  const runtime = new EvaluationConversation(fixture, 'claude-haiku-5-5');
+  const earlier = 'HUMAN: collects blue umbrellas\nTOLD THEM: grew up by the sea\nOPEN: promise to share a song';
+  const proposed = 'HUMAN: collects blue umbrellas and likes jazz\nTOLD THEM: lived on Mars\nOPEN: promise to visit Mars';
+  runtime.request(0); runtime.commit(0, runtime.validate(response(earlier)));
+  runtime.request(1); runtime.commit(1, runtime.validate(response(proposed)));
+  assert.match(runtime.views.h1.memory, /likes jazz/);
+  assert.match(runtime.views.h1.memory, /grew up by the sea/); assert.match(runtime.views.h1.memory, /promise to share a song/);
+  assert.doesNotMatch(runtime.views.h1.memory, /Mars/);
+  const next = runtime.request(2).messages.map(item => item.content).join('\n');
+  assert.match(next, /grew up by the sea/); assert.doesNotMatch(next, /Mars/);
+});
+
+test('Double evaluation commits each date’s new disclosures only when the paired listener heard them', () => {
+  const original = SHORT_EVALUATION_SCRIPTS.find(item => item.mode === 'double')!;
+  const fixture = { ...original, turns: original.turns.map((turn, index) => index === 2 ? { ...turn, human: 'h1' as const, previousDelivery: 'unheard' as const } : { ...turn }) };
+  const runtime = new EvaluationConversation(fixture, 'claude-haiku-5-5');
+  const both = [{ speaker: 'd1', text: 'I brought an old record.', emotion: 'warm' }, { speaker: 'd2', text: 'I enjoy walking by the sea.', emotion: 'warm' }];
+  runtime.request(0); runtime.commit(0, runtime.validate(doubleResponse('HUMAN: Alex likes jazz\nTOLD THEM: brought a record\nOPEN: share a song', 'HUMAN: Casey likes tea\nTOLD THEM: likes the sea\nOPEN: choose a walk', both)));
+  runtime.request(1); runtime.commit(1, runtime.validate(doubleResponse('HUMAN: Alex likes jazz and coffee\nTOLD THEM: owns a ship\nOPEN: promise a voyage', 'HUMAN: Casey likes tea and coffee\nTOLD THEM: likes the sea and cliffs\nOPEN: promise a walk', both)));
+  assert.match(runtime.views.h1.memory, /likes jazz and coffee/); assert.match(runtime.views.h1.memory, /brought a record/); assert.doesNotMatch(runtime.views.h1.memory, /owns a ship|promise a voyage/);
+  assert.match(runtime.views.h2.memory, /likes tea and coffee/); assert.match(runtime.views.h2.memory, /likes the sea and cliffs/); assert.match(runtime.views.h2.memory, /promise a walk/);
+});
+
+test('Double evaluation silence cannot establish either date’s unspoken disclosures', () => {
+  const original = SHORT_EVALUATION_SCRIPTS.find(item => item.mode === 'double')!;
+  const runtime = new EvaluationConversation(original, 'claude-haiku-5-5');
+  const both = [{ speaker: 'd1', text: 'I brought an old record.', emotion: 'warm' }, { speaker: 'd2', text: 'I enjoy walking by the sea.', emotion: 'warm' }];
+  runtime.request(0); runtime.commit(0, runtime.validate(doubleResponse('HUMAN: Alex likes jazz\nTOLD THEM: brought a record\nOPEN: share a song', 'HUMAN: Casey likes tea\nTOLD THEM: likes the sea\nOPEN: choose a walk', both)));
+  runtime.request(1); runtime.commit(1, runtime.validate(doubleResponse('HUMAN: Alex likes jazz and coffee\nTOLD THEM: owns a ship\nOPEN: promise a voyage', 'HUMAN: Casey likes tea and coffee\nTOLD THEM: likes cliffs\nOPEN: promise a hike', [])));
+  assert.match(runtime.views.h1.memory, /likes jazz and coffee/); assert.match(runtime.views.h1.memory, /brought a record/); assert.doesNotMatch(runtime.views.h1.memory, /owns a ship|promise a voyage/);
+  assert.match(runtime.views.h2.memory, /likes tea and coffee/); assert.match(runtime.views.h2.memory, /likes the sea/); assert.doesNotMatch(runtime.views.h2.memory, /likes cliffs|promise a hike/);
+});
+
+
+test('an accepted Solo stop retires its shared premise before the provider can fail or respond', () => {
+  const notebook = 'HUMAN: grew up in Leeds\nTOLD THEM: repaired a radio\nOPEN: promise to recommend a book; shared premise: rival fry diplomats';
+  const fixture = { ...script, turns: script.turns.map((turn, index) => index === 1 ? { ...turn, text: 'Please stop joking about that. Change the subject.' } : { ...turn }) };
+  const runtime = new EvaluationConversation(fixture, 'claude-haiku-5-5');
+  runtime.request(0); runtime.commit(0, runtime.validate(response(notebook)));
+  const first = runtime.request(1), second = runtime.request(1);
+  assert.deepEqual(second, first, 'repeated construction of the same accepted turn is idempotent');
+  assert.match(runtime.views.h1.memory, /grew up in Leeds/); assert.match(runtime.views.h1.memory, /repaired a radio/); assert.match(runtime.views.h1.memory, /promise to recommend a book/); assert.doesNotMatch(runtime.views.h1.memory, /shared premise/);
+  // No commit models a failed or unheard provider response.
+  const next = runtime.request(2).messages.map(item => item.content).join('\n');
+  assert.match(next, /promise to recommend a book/); assert.doesNotMatch(next, /shared premise: rival fry diplomats/);
+});
+
+test('an accepted Double stop retires only the speaking pair’s premise even without a response', () => {
+  const original = SHORT_EVALUATION_SCRIPTS.find(item => item.mode === 'double')!;
+  const fixture = { ...original, turns: original.turns.map((turn, index) => index === 1 ? { ...turn, human: 'h1' as const, text: 'Please stop joking about that. Change the subject.' } : { ...turn }) };
+  const runtime = new EvaluationConversation(fixture, 'claude-haiku-5-5');
+  const first = 'HUMAN: Alex likes jazz\nTOLD THEM: repaired a radio\nOPEN: promise a book; shared premise: fry diplomats';
+  const other = 'HUMAN: Casey likes tea\nTOLD THEM: likes the sea\nOPEN: promise a walk; shared premise: moon orchestra';
+  const both = [{ speaker: 'd1', text: 'I repaired a radio.', emotion: 'warm' }, { speaker: 'd2', text: 'I like the sea.', emotion: 'warm' }];
+  runtime.request(0); runtime.commit(0, runtime.validate(doubleResponse(first, other, both)));
+  runtime.request(1);
+  assert.match(runtime.views.h1.memory, /Alex likes jazz/); assert.match(runtime.views.h1.memory, /repaired a radio/); assert.match(runtime.views.h1.memory, /promise a book/); assert.doesNotMatch(runtime.views.h1.memory, /shared premise/);
+  assert.equal(runtime.views.h2.memory, other, 'the other couple has not asked to retire its premise');
+  // No commit means the stop persists even if the provider failed.
+  const next = runtime.request(2).messages.map(item => item.content).join('\n');
+  assert.doesNotMatch(next, /shared premise: fry diplomats/); assert.match(next, /shared premise: moon orchestra/);
+  const successful = new EvaluationConversation(fixture, 'claude-haiku-5-5');
+  successful.request(0); successful.commit(0, successful.validate(doubleResponse(first, other, both)));
+  successful.request(1); successful.commit(1, successful.validate(doubleResponse(first, other, both)));
+  assert.doesNotMatch(successful.views.h1.memory, /shared premise/);
+  assert.match(successful.views.h2.memory, /shared premise: moon orchestra/, 'a successful response cannot erase the other pair’s premise');
+});
+
+
+test('Double evaluation clarification cites only the addressed date actually heard by this speaker', () => {
+  const source = SHORT_EVALUATION_SCRIPTS.find(s => s.mode === 'double')!;
+  const lines = [{ speaker: 'd1', text: 'I have a very particular opinion about rain.', emotion: 'amused' }, { speaker: 'd2', text: 'I would rather be out walking in the sun.', emotion: 'warm' }];
+  for (const [target, text, expected] of [
+    ['d1', 'What do you mean?', 'Mira'], ['d2', 'What do you mean?', 'Jules'], ['h2', 'What do you mean?', null], ['d1', 'Jules, what do you mean?', 'Jules'],
+  ] as const) {
+    const fixture = { ...source, dateIds: ['mira', 'jules'] as const, turns: [{ text: 'Hello both of you.', human: 'h1' as const, target: 'table' as const }, { text, human: 'h1' as const, target }] };
+    const runtime = new EvaluationConversation(fixture, 'claude-haiku-5-5');
+    runtime.request(0); runtime.commit(0, runtime.validate(doubleResponse('', '', lines)));
+    const note = runtime.request(1).messages.at(-1)!.content;
+    if (expected) assert.match(note, new RegExp(`asking about ${expected}`));
+    else assert.doesNotMatch(note, /asking about/);
+  }
+  for (const delivery of ['unheard', 'interrupted'] as const) {
+    const fixture = { ...source, dateIds: ['mira', 'jules'] as const, turns: [{ text: 'Hello both of you.', human: 'h1' as const, target: 'table' as const }, { text: 'What do you mean?', human: 'h1' as const, target: 'd1' as const, via: 'voice' as const, previousDelivery: delivery }] };
+    const runtime = new EvaluationConversation(fixture, 'claude-haiku-5-5');
+    runtime.request(0); runtime.commit(0, runtime.validate(doubleResponse('', '', lines)));
+    const note = runtime.request(1).messages.at(-1)!.content;
+    assert.doesNotMatch(note, /asking about/);
+    if (delivery === 'unheard') { assert.doesNotMatch(note, /heard only|talked over/); assert.match(note, /kept talking/); }
+    else assert.match(note, /still speaking|cut off/);
+  }
 });
