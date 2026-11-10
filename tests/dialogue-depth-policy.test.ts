@@ -37,6 +37,20 @@ test('drop requests retire a shared bit while ordinary physical drops do not', (
   }
 });
 
+test('standalone stop and enough boundaries retire only the optional premise', () => {
+  const memory = 'HUMAN: sister is Nia, not Mia; works nights\nTOLD THEM: six prints\nOPEN: promised a film title; shared premise: the wedding joke';
+  const expected = 'HUMAN: sister is Nia, not Mia; works nights\nTOLD THEM: six prints\nOPEN: promised a film title';
+  for (const text of ['Stop it.', 'Please stop it.', 'Stop it, please!', 'Quit it.', 'Please quit it.', 'Enough.', 'Enough, please.', 'That is enough.', 'That’s enough.', 'I cannot get enough of your stories, but please stop joking about that.']) {
+    assert.equal(isTopicStopRequest(text), true, text);
+    assert.equal(retireSharedPremise(memory, text), expected, text);
+    assert.equal(clampMemory('', memory, text), expected, text);
+  }
+  for (const text of ["Don't stop it.", 'Please do not quit it.', "That isn't enough.", 'Not enough.', 'Enough food for two.', 'That is enough food.', 'Please stop it from spilling.', 'I cannot get enough of your stories.', 'I quit it last year.']) {
+    assert.equal(isTopicStopRequest(text), false, text);
+    assert.equal(retireSharedPremise(memory, text), memory, text);
+  }
+});
+
 test('OPEN retains one premise after real obligations and sacrifices it first under notebook pressure', () => {
   const compact = clampMemory('HUMAN: likes trains\nTOLD THEM: nothing\nOPEN: shared premise: both miss trains; promised a film title; shared premise: secret agents');
   assert.equal(compact, 'HUMAN: likes trains\nTOLD THEM: nothing\nOPEN: promised a film title; shared premise: both miss trains');

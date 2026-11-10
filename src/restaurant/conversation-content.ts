@@ -128,7 +128,13 @@ const hasPhrase = (text: string, phrase: string) => (` ${text} `).includes(` ${n
 const toldThem = (memory: string) => memory.match(/\bTOLD THEM:\s*([\s\S]*?)(?=\b(?:HUMAN|OPEN):|$)/i)?.[1] ?? '';
 const bounded = (value: number | undefined, maximum: number) => value === undefined ? maximum : Number.isFinite(value) ? Math.max(0, Math.min(maximum, Math.floor(value))) : 0;
 /** Explicitly retiring a topic is different from “don't you like music?” or a story about a bus stop. */
-export const isTopicStopRequest = (text: string): boolean => /(?<!\bdont )(?<!\bdo not )\b(?:stop|quit)\s+(?:talking|bringing|mentioning|repeating|joking|teasing|calling|with|that|this)\b|\b(?:(?:dont|do not)\s+(?:keep\s+)?(?:talk|bring|mention|repeat|joke|tease|call)|(?:dont want to|rather not)\s+(?:talk|discuss)|no more|enough (?:of|about|with)|change the (?:subject|topic)|move on|leave (?:it|that) (?:there|alone)|(?:isnt|not) funny|getting old)\b|(?<!\bdont )(?<!\bdo not )\bdrop (?:(?:the|this|that) (?:joke|bit|topic|subject)\b|(?:it|that|this)(?: please)?(?: and (?:move on|change the (?:topic|subject)))?$)|(?<!\bdont )(?<!\bdo not )\bstop$/i.test(normalized(text));
+export function isTopicStopRequest(text: string): boolean {
+  const human = normalized(text);
+  // Bare boundaries still retire a bit, without treating "enough food" or a
+  // negated request such as "don't stop it" as a change of subject.
+  if (/^(?:please )?(?:(?:stop|quit) it|(?:(?:that is|thats) )?enough)(?: please)?$/.test(human)) return true;
+  return /(?<!\bdont )(?<!\bdo not )\b(?:stop|quit)\s+(?:talking|bringing|mentioning|repeating|joking|teasing|calling|with|that|this)\b|\b(?:(?:dont|do not)\s+(?:keep\s+)?(?:talk|bring|mention|repeat|joke|tease|call)|(?:dont want to|rather not)\s+(?:talk|discuss)|no more|(?<!\bget )enough (?:of|about|with)|change the (?:subject|topic)|move on|leave (?:it|that) (?:there|alone)|(?:isnt|not) funny|getting old)\b|(?<!\bdont )(?<!\bdo not )\bdrop (?:(?:the|this|that) (?:joke|bit|topic|subject)\b|(?:it|that|this)(?: please)?(?: and (?:move on|change the (?:topic|subject)))?$)|(?<!\bdont )(?<!\bdo not )\bstop$/i.test(human);
+}
 
 /** Rank only actual topical matches. No random lore dump to rescue a greeting or an awkward gap. */
 export function selectConversationSeeds(input: ConversationContentInput): ConversationSeed[] {
