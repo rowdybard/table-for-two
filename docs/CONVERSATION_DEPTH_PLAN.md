@@ -84,16 +84,20 @@ Implement the user's approved “Make Table for Two's conversations worth sharin
 
 ## Remaining release gates
 
-The owner has confirmed the direct Dolphin key was filled in Cloudflare and authorized at most eight synthetic Mira requests, text only, with a $0.03 ceiling and no retries, voice or fallback. This is separate from the closed Horde allowance. `/model dolphin` now targets dolphinllm.com directly; removed Horde commands are handled locally, and reset preserves the evening. Provider-disabled verification of this final integration and deployment are still pending. Continue in the owner's normal mode; do not enable Fast mode.
+The final application revision `676826f46767bd5023f0f80aa07665e10ac972d7` passed remote run `42727692917`: 688 Node checks, all 31 browser cases, typecheck/build, Cloudflare packaging/dry-run/runtime smoke and the mandatory technical gate. Blind, seated and model-reset captures were reviewed. PR #10 merged as `d01971a1c79f7f54e8afb14b464fa44882fc16fb`, with an identical application tree. The complete update was deployed at 2026-11-10 00:31:56 UTC as Worker version `4588c729-170d-41ac-a2c7-394431bee6e3`. The existing secrets, namespace, ledger routing and basic container were retained. Seventeen public asset checks matched the frozen build; health, direct-provider status, isolation headers and private-path blocking passed. Four encoded aliases normalize through a same-origin 307 to the blocked 404 path.
 
-- [x] Remote provider-disabled CI passes the complete integrated suite, package checks and browser recovery flows after the completion-audit corrections at application revision `b2b8463`.
+The separately approved direct Dolphin pilot is closed at eight requests: all eight produced valid game responses with no errors, voice, retries or fallback. Median first usable utterance was 1,620 ms (p95 2,447); median full completion was 2,448 ms (p95 6,872). Reported usage at the configured rates totals an estimated $0.00629435, below $0.03. No replacement Unicode characters appeared in the captured speech. Evidence is under ignored `.qa/approved-dolphin-pilot/`, and no attempts remain under that allowance. This unattended, arrival-stage API smoke has unacknowledged delivery, no human scores and no matched baseline: it establishes protocol/latency behavior, not conversation quality. `/model dolphin` uses dolphinllm.com directly, removed Horde commands stay local, and reset preserves the evening. Continue in the owner's normal mode; do not enable Fast mode.
+
+- [x] Remote provider-disabled CI passes the complete integrated suite, package checks and browser recovery flows at final application revision `676826f`.
 - [x] CI screenshot artifacts reviewed for actual framing, captions and performance handoff, including the corrected seated delivery.
 - [x] Compatible baseline benchmark is prepared and verified offline.
 - [x] Separately authorized $0 pilot closed at eighteen total attempts; all failures and the missing baseline turn are retained. No requests remain under that authorization.
+- [x] Separately authorized direct Dolphin pilot closed at eight valid completions and estimated $0.00629435; no requests remain under that authorization.
 - [ ] Complete matched baseline/candidate corpus captures under a separately authorized cap; the partial one-script pilot does not satisfy coverage.
 - [ ] Two human reviewers complete the documented preference, relevance, cast-identification and memorable-beat gates.
-- [ ] Publish after the final integrated technical checks, as subsequently authorized by the owner; preserve current live provider configuration and secrets. Human quality review follows deployment and is not inferred from technical checks.
+- [x] Publish after the final integrated technical checks, as subsequently authorized by the owner; preserve current live provider configuration and secrets. Human quality review follows deployment and is not inferred from technical checks.
+- [ ] Owner and friend stress-test actual laptop responsiveness and conversation quality. The latest software-rendered seated sample was 1.2 draw/update FPS; reduced rendering cost is not proof of smooth physical hardware performance.
 
-No game/browser was launched on the user's computer during implementation. The closed Horde pilot is historical; the separately approved direct Dolphin pilot has not yet run, and the live game has not yet been replaced by this candidate.
+No game/browser was launched on the user's computer during implementation. The two separately capped pilots are closed. The integrated update is live under the owner's revised release authorization; human quality thresholds and real laptop performance remain unverified.
 
 Update this checklist with concrete tests and unresolved gates; never mark qualitative review passed from mock output.
