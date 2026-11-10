@@ -143,7 +143,7 @@ test('blind dates sound like their traits instead of three rigs with one narrato
 test('the output contract states the three-part 700-character memory, the cast rule and the length target', () => {
   const contract = outputContract({ emotions: EMOTIONS, actions: ACTIONS, signals: SOCIAL_SIGNALS });
   for (const label of ['"HUMAN:"', '"TOLD THEM:"', '"OPEN:"', 'at most 700 characters', 'rewrite "Your notes"']) assert.ok(contract.includes(label), label);
-  assert.match(contract, /about 25 words, under 260 characters/); assert.match(contract, /discards a reply over 420/);
+  assert.match(contract, /usually under 20 words and never more than two sentences/); assert.match(contract, /discards a reply over 420/);
   assert.match(contract, /Every utterance uses the exact speaker key "date"/); assert.match(contract, /never speak for the human or another person/);
   for (const word of [...EMOTIONS, ...SOCIAL_SIGNALS]) assert.ok(contract.includes(word), word);
   assert.match(contract, /Always set "action" to "none"/);

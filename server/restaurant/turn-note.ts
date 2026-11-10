@@ -285,7 +285,7 @@ export function turnNote(input: TurnNoteInput): string {
   if (flow.talkedOver) after.push(flow.talkedOver.heard ? `${overlap} while you were still speaking; you were cut off after ${quote(flow.talkedOver.heard)}.` : `${overlap} while you were still speaking, right at the start of your line.`);
   if (flow.keptTalking && input.via !== 'typed') after.push('They kept talking before your last reply reached them; treat this as the continuation of their previous message.');
   if (flow.quietSeconds) after.push(`It was quiet for ${flow.quietSeconds < 60 ? `about ${flow.quietSeconds} seconds` : flow.quietSeconds < 150 ? 'a minute or two' : 'a long while'} after your last line before they spoke.`);
-  if (flow.pendingQuestion) after.push(`You asked them ${quote(lastQuestion(flow.pendingQuestion))} a little while ago and have not had an answer. If what they say next is not an answer, just respond to what they said.`);
+  if (flow.pendingQuestion) after.push(`You asked them ${quote(lastQuestion(flow.pendingQuestion))} a little while ago. If what they say next answers it, take it as the answer. If it does not, they have moved on: respond to what they said, and do not ask it again or mention that it went unanswered.`);
   const nudge = clarificationNudge(input.humanText, flow.lastDateLine, [date]);
   if (nudge) after.push(nudge);
   const move = conversationMove({ dateId: scene.dateId, humanText: input.humanText, lastDateLine: flow.lastDateLine, recentDelivered: input.recentDelivered,

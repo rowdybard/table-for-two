@@ -9,7 +9,7 @@ test('policy permits grounded humor and character-specific interest while preser
   assert.match(DATE_DIALOGUE_INSTRUCTIONS, /this couple’s earned progress still apply/);
   assert.match(DATE_DIALOGUE_INSTRUCTIONS, /Retire a stopped topic immediately/);
   assert.match(DATE_DIALOGUE_INSTRUCTIONS, /never invent a shared nickname, past event/);
-  assert.match(SPOKEN_REGISTER, /You do not owe every turn a joke or a question/);
+  assert.match(SPOKEN_REGISTER, /flirt back or turn it down in so many words/); assert.match(SPOKEN_REGISTER, /Never repeat yourself/); assert.match(SPOKEN_REGISTER, /Never comment on the conversation itself/);
   assert.doesNotMatch(VOICE_REMINDER, /no closing quip/);
   assert.match(MEMORY_PARTS, /Corrections, disclosures and promises take priority/);
   assert.equal(MEMORY_TARGET, 700);

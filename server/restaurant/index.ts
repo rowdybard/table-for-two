@@ -18,7 +18,7 @@ import { ACTIONS, anthropicAdapter, DateApiError, elevenLabsAdapter, EMOTIONS, S
 import { edgeSpeechAdapter, edgeSettings, EDGE_MODEL, EDGE_VOICES } from './edge-speech';
 import { validAgendaAssessment } from './agendas';
 import { validBoundaryAssessment } from './boundaries';
-import { alternatingMessages, deferrableCue, dialogueLoopContext, tableNow } from './dialogue-policy';
+import { alternatingMessages, deferrableCue, dialogueLoopContext, tableNow, tidyOpening } from './dialogue-policy';
 import { openRouterAdapter, openRouterSchemaInstructions } from './openrouter';
 import { hordeAdapter } from './horde';
 import { dolphinLlmAdapter } from './dolphin-llm';
@@ -73,7 +73,7 @@ export function validateUtterance(value: unknown, index: number): SceneUtterance
   if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(value.text)) throw invalid('utterance_text_controls');
   if (!EMOTIONS.includes(value.emotion as any)) throw invalid('utterance_emotion');
   if (value.speaker !== 'date') throw invalid('utterance_speaker');
-  const text = value.text.trim();
+  const text = tidyOpening(value.text);
   const authored = AUTHORED_UTTERANCES.find(u => u.speaker === value.speaker && u.text === text && u.emotion === value.emotion);
   return { speaker: value.speaker as SceneUtterance['speaker'], text, emotion: value.emotion as SceneUtterance['emotion'], ...(authored ? { clipId: authored.clipId } : {}) };
 }

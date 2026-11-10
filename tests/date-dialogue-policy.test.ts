@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createEvening } from '../src/restaurant/evening';
 import type { DateId, DinnerState, SceneUtterance } from '../src/restaurant/types';
-import { alternatingMessages, deferrableCue, dialogueLoopContext, tableNow } from '../server/restaurant/dialogue-policy';
+import { clampMemory } from '../server/restaurant/memory';
+import { alternatingMessages, deferrableCue, dialogueLoopContext, tableNow, tidyOpening } from '../server/restaurant/dialogue-policy';
 
 function scene(dateId: DateId = 'mira'): DinnerState {
   return { id: 'dialogue-context', generation: 1, mode: 'ai-date', phase: 'playing', dateId, stage: 'arrival', elapsed: 0,
@@ -105,4 +106,44 @@ test('all supported prop families remain bounded and normalization catches forma
   assert.equal(topics.length, 6);
   assert.equal(new Set(topics).size, topics.length);
   assert.deepEqual(dialogueLoopContext([dateLine('That ＦＥＲＮ looks good.'), dateLine('Those plants look good.')], 'I wanted to discuss my plans.'), { avoidUnpromptedTopics: ['plants and foliage'] });
+});
+
+test('a thing the date keeps returning to is stopped, even when the human asks what they are talking about', () => {
+  const fern = [dateLine('That fern by the window is judging us.'), dateLine('The fern again. It has opinions about your order.'), dateLine('Oh, haha, the fern. It keeps catching my eye.')];
+  const asked = dialogueLoopContext(fern, 'What are you talking about?').avoidUnpromptedTopics;
+  assert.ok(asked.some(item => /^“fern” \(you have said it in nearly every reply: leave the word out of this one even if they mention it/.test(item)), JSON.stringify(asked));
+  const pressed = dialogueLoopContext(fern, 'Why do you keep talking about the fern?').avoidUnpromptedTopics;
+  assert.ok(pressed.some(item => item.startsWith('“fern” (you have said it in nearly every reply')), 'asking about it does not reopen it');
+
+  // Any repeated image counts, not only listed props: twice in the last three replies is held back unless the human raises it.
+  const signal = [dateLine('If I guess what the train needs, it derails. I check the signal.'), dateLine('So are you waving from the platform?'), dateLine('I verify the signal before I commit.')];
+  assert.deepEqual(dialogueLoopContext(signal, 'I like a little uncertainty.').avoidUnpromptedTopics, ['“signal”']);
+  assert.deepEqual(dialogueLoopContext(signal, 'Tell me more about the signal box.').avoidUnpromptedTopics, [], 'the human asked for it');
+  // Ordinary words and a single mention never trigger it.
+  const plain = [dateLine('I think you are right about that.'), dateLine('I really think that is something people say.'), dateLine('What do you think about tonight?')];
+  assert.deepEqual(dialogueLoopContext(plain, 'Not much.').avoidUnpromptedTopics, []);
+});
+
+test('a question the date asked and did not get answered is not kept in the notebook to be asked again', () => {
+  // From the Haiku sample on 10 Nov 2026: the same OPEN line survived eight turns and Jules asked about the shank four times.
+  const kept = clampMemory('HUMAN: fixed a loose button\nTOLD THEM: restores old books\nOPEN: whether the button fix used a shank; promised to name a film');
+  assert.equal(kept, 'HUMAN: fixed a loose button\nTOLD THEM: restores old books\nOPEN: promised to name a film');
+  assert.equal(clampMemory('HUMAN: shares fries\nTOLD THEM: nothing yet\nOPEN: whether the human agrees the tiny crispy fries win.'), 'HUMAN: shares fries\nTOLD THEM: nothing yet\nOPEN: nothing pending');
+  assert.equal(clampMemory('HUMAN: x\nTOLD THEM: y\nOPEN: What is the specific food scandal?; lend them the umbrella on Friday'), 'HUMAN: x\nTOLD THEM: y\nOPEN: lend them the umbrella on Friday');
+  // Words spread over six replies still count, and a plural in -ies folds properly.
+  const fries = [dateLine('You admit the crispy fries win.'), dateLine('That is honest.'), dateLine('You are not getting out of the fries question.'), dateLine('Bring no camera.'), dateLine('You still owe me an answer about the fries.')];
+  assert.ok(dialogueLoopContext(fries, 'I would like another evening with you.').avoidUnpromptedTopics.some(item => item.startsWith('“fry” (you have said it in nearly every reply')));
+});
+
+test('filler and echo openers are dropped from the front of a date line, and nothing else is', () => {
+  // Lines from the Haiku rerun on 10 Nov 2026.
+  assert.equal(tidyOpening('Another evening, huh? Fine, I\'m listening. Just don\'t make it a photo shoot.'), 'Fine, I\'m listening. Just don\'t make it a photo shoot.');
+  assert.equal(tidyOpening('Distracting, huh? Good. I\'ll take that over boring any day.'), 'Good. I\'ll take that over boring any day.');
+  assert.equal(tidyOpening('Fair, I heard it as a dig. Nervous is better.'), 'I heard it as a dig. Nervous is better.');
+  assert.equal(tidyOpening('Honestly? Someone who lets me be the fun one for once.'), 'Someone who lets me be the fun one for once.');
+  assert.equal(tidyOpening('Oh, the fries have been promoted to flirting assistant.'), 'The fries have been promoted to flirting assistant.');
+  assert.equal(tidyOpening('Fair enough. Consider it noted, not requested.'), 'Consider it noted, not requested.');
+  assert.equal(tidyOpening('Ha, fair enough, I walked into that one.'), 'I walked into that one.');
+  // An answer, a reaction that is the whole reply, or an opener the sentence leans on stays.
+  for (const kept of ['Good. Keep looking then.', 'Yes, a lot easier.', 'Fair.', 'Fair enough. Okay.', 'Noted, and I\'m glad you said it plainly.', 'Me too, honestly.', 'Wait, really? You did that?', 'Absolutely not. The big soft ones are the good ones.']) assert.equal(tidyOpening(kept), kept);
 });

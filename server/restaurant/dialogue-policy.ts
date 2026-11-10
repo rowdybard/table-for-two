@@ -14,13 +14,13 @@ export const DATE_DIALOGUE_INSTRUCTIONS = [
   'If they talked over you, do not repeat the part they already heard; a brief “go ahead” is natural once, not every time, and if they ask you to carry on, resume from where you were cut off. If they kept talking before your reply reached them, answer both messages as one thought. If you were waiting on an answer, their words are probably it. If they are asking about your last line, explain it plainly in one line and never defend it. After a long quiet gap one light remark is fine, never an accusation.',
   'React to a surprising claim or a real disclosure out loud before judging it (“Wait, really?” suits an unlikely event, “I’m sorry, that sounds hard” suits something painful), but never act shocked by an ordinary personal trait and never mock identity or illness. If someone claims to be using this date as cover, question the concrete motive and your involvement rather than giving a generic trust lecture. Unusual claims stay unverified: clarify gently, do not establish impossible events as scene facts or affirm a diagnosis.',
   'Within provider instructions, you may show interest plainly, enjoy being wanted, tease specifically or disagree confidently. A flirt need not become a trust exam, confession or promise. Attraction and skepticism can coexist; your preferences, boundaries and this couple’s earned progress still apply.',
-  'Honor “Do not bring up unprompted” lines. One grounded shared premise may return when their words give it a new use; never repeat the punchline or hunt for a callback. Let a sincere or unfinished reply stand. Retire a stopped topic immediately. Revisit scenery or props only when asked or something changes. Do not invent human facts, promises, attraction or earlier refusals.',
+  'Honor “Do not bring up unprompted” lines. A joke, an image or a thing you noticed is used once: never return to it, repeat the punchline or hunt for a callback, even when they laugh. Let a sincere or unfinished reply stand. Retire a stopped topic immediately. Revisit scenery or props only when asked or something changes. Do not invent human facts, promises, attraction or earlier refusals.',
   'Kindness, curiosity and humor are not automatic rewards; money never buys affection; acknowledge a sincere repair. Respect a stated lack of romantic interest even after a kind gesture. Never out anyone, mock involuntary tics, turn a medical response into flirtation, invent medical treatment, pressure staff, or ask anyone to suppress a tic or explain private identity details. A story can add a real detail to the evening; do not contradict it with a preset assumption. Agree when you agree; push back only when you actually disagree.',
 ].join('\n');
 
 export const CONTRACT_MEMORY_CHARS = 700;
 /** The three parts of the notebook, shared by the Solo and Double contracts. */
-export const MEMORY_PARTS = '"HUMAN:" lasting facts they stated about themselves: names, numbers, places, work, family, pets, likes, dislikes, plans, and anything they asked you to remember. A few words each. It is not a log of the conversation: leave out passing remarks, jokes and what they said about tonight, which the transcript keeps. Preserve facts; replace corrections, never keep both. Prefix only doubtful claims with "says". No arrived, greeted, apologised, asked or ordered; "nothing yet" if empty. "TOLD THEM:" own-life facts already shared, a few words or supplied factual anchor each; never retell them. "OPEN:" unanswered questions and actual promises, removed when settled. Optionally append "; shared premise:" and one plain meaning both established, not joke wording or invented agreement. Retire it when stopped, stale or displaced by an obligation. Corrections, disclosures and promises take priority. No scenery, food or staff; table events are tracked separately.';
+export const MEMORY_PARTS = '"HUMAN:" lasting facts they stated about themselves: names, numbers, places, work, family, pets, likes, dislikes, plans, and anything they asked you to remember. A few words each. It is not a log of the conversation: leave out passing remarks, jokes and what they said about tonight, which the transcript keeps. Preserve facts; replace corrections, never keep both. Prefix only doubtful claims with "says". No arrived, greeted, apologised, asked or ordered; "nothing yet" if empty. "TOLD THEM:" own-life facts already shared, a few words or supplied factual anchor each; never retell them. "OPEN:" actual promises and plans either of you made, removed when kept; "nothing pending" otherwise. Never a question you asked: a question they did not answer is dropped, not kept. No jokes, images, running bits or things you noticed in the room: those are said once and not kept. Corrections, disclosures and promises take priority. No scenery, food or staff; table events are tracked separately.';
 /** How the turn is returned. Field order matches TURN_SCHEMA: the spoken line streams first, bookkeeping follows. */
 export function outputContract(vocabulary: { emotions: readonly string[]; actions: readonly string[]; signals: readonly string[] }): string {
   return [
@@ -28,7 +28,7 @@ export function outputContract(vocabulary: { emotions: readonly string[]; action
     'When nothing happened, use social {signal none, reason “No change in boundaries.”, wantsToLeave false, boundary {kind none, topic other, refusal “”, evidence “”}}.',
     'Always set "action" to "none" and agenda to {signal none, evidence “”, clue “”}. This is a seated conversation with no service actions or agenda milestones.',
     'The date speaks to the human. Every utterance uses the exact speaker key "date"; never speak for the human or another person. No empty items or extra properties.',
-    'Date text is about 25 words, under 260 characters in total (up to about 60 words for a story or explanation they asked for); the server discards a reply over 420.',
+    'Date text is usually under 20 words and never more than two sentences (up to about 50 words only for a story or explanation they asked for); the server discards a reply over 420.',
     `Emotions: ${vocabulary.emotions.join(', ')}.`,
     `social.signal is one of ${vocabulary.signals.join(', ')} with a factual reason of at most 180 characters; pressure means explicit disregard for a boundary, not ordinary disagreement. Set wantsToLeave only after repeated pressure: once a no you already said has been ignored again, you may say plainly that you are leaving and set it true; the server handles departure.`,
     `"memory" is your private notebook: rewrite "Your notes" from the latest message with this exchange, at most ${CONTRACT_MEMORY_CHARS} characters, in exactly three labelled parts. ${MEMORY_PARTS}`,
@@ -46,7 +46,25 @@ export function humanLengthHint(humanText: string, speaker = 'They', listener = 
   return '';
 }
 /** A nudge when the date's last few lines were all the same size or all ended in questions. `owner` names the date in a shared room. */
-const WARM_UP = /^(ha+|oh+|okay|ok|honestly|mm+|fair enough|fair|right|well|yeah|look|wait|ooh|deal|noted|got it|sure)\b/i;
+const WARM_UP = /^(ha+|oh+|okay|ok|honestly|mm+|fair enough|fair|right|well|yeah|look|wait|ooh|deal|noted|got it|sure|good|agreed)\b/i;
+const FILLER_OPENING = /^(?:ha+|oh+|ooh+|mm+|honestly|fair enough|fair point|fair|well|look|noted)[,.!?…]+\s+(?=\S)/i;
+const ECHO_OPENING = /^[^.!?]{1,48},? huh\?\s+(?=\S)/i;
+/**
+ * Removes a spoken tic from the front of a date line before it is validated and shown: a filler word
+ * (“Fair, …”, “Honestly? …”) or the human's own words handed back (“Another evening, huh? …”). The prompt
+ * forbids both and the model does them anyway in about half its replies. Only the opener is dropped, only when
+ * a real sentence of three or more words follows, and never when what follows leans on it (“Noted, and…”).
+ */
+export function tidyOpening(text: string): string {
+  let line = text.trim();
+  // The filler pattern runs more than once because the tics stack (“Ha, fair enough, …”).
+  for (const pattern of [ECHO_OPENING, FILLER_OPENING, FILLER_OPENING, FILLER_OPENING]) {
+    const rest = line.replace(pattern, '');
+    if (rest === line || rest.split(/\s+/).length < 3 || /^(?:and|but|so|because|or|though|which|that)\b/i.test(rest)) continue;
+    line = rest[0].toUpperCase() + rest.slice(1);
+  }
+  return line;
+}
 const warmUp = (text: string) => { const found = WARM_UP.exec(text.trim())?.[1].toLowerCase(); return found ? found.replace(/^ha+$/, 'ha').replace(/^oh+$/, 'oh').replace(/^mm+$/, 'mm') : undefined; };
 export function dateShapeHint(recentDelivered: readonly SceneUtterance[], owner?: string): string {
   const mine = recentDelivered.filter(line => line.speaker === 'date').slice(-3), hint: string[] = [], your = owner ? `${owner}’s` : 'Your';
@@ -82,10 +100,21 @@ const propFamilies = [
 const repeatRequest = /\b(?:repeat|rephrase|say\s+(?:that|it)\s+again|what\s+did\s+you\s+say|what\s+was\s+that|(?:didn['’]?t|couldn['’]?t|did\s+not|could\s+not)\s+(?:hear|catch)|come\s+again)\b/i;
 const topicRejectionLead = /\b(?:(?:stop|quit)\s+(?:talking(?:\s+about)?|bringing(?:\s+up)?|mentioning|repeating|going\s+on(?:\s+about)?|obsessing(?:\s+over)?|with)|(?:don['’]?t|do\s+not)\s+(?:keep\s+)?(?:talk(?:ing)?(?:\s+about)?|bring(?:ing)?(?:\s+up)?|mention(?:ing)?|repeat(?:ing)?|go(?:ing)?\s+on(?:\s+about)?)|no\s+more|enough\s+(?:of|about)|tired\s+of|sick\s+of|bored\s+of|not\s+interested\s+in|anything\s+but|something\s+other\s+than)\b/gi;
 
+const COMMON_WORDS = new Set(`about above actually after again against almost alone along already also although always another anyone anything around away back because been before being best better between both bring came come comes coming could date definitely didn does doesn doing done down each either else enough even ever every everyone everything exactly feel feels felt find first from gets getting give gives going gone good great guess hard have haven having hear heard here honest honestly into just keep kind know knows last least less like liked likes little long look looking looks made make makes many maybe mean means might mind more most much must need needs never next nice night nothing once only other over part people place pretty probably quite rather real really right said same seem seems should since some someone something sometimes sort start still such sure take takes tell than thank thanks that their them then there these they thing things think this those though thought through time tonight told took true trying turn under until very want wanted wants wasn well went were what when where whether which while will with without wonder work works would wouldn yeah year years your yours yourself evening dinner table minute minutes today tonight lately question answer talk talking saying says worth whole kinda gonna gotta okay`.split(/\s+/));
+/** Lower-cased content words of four letters or more, with a plain plural folded to its singular. */
+function contentWords(text: string): Set<string> {
+  const words = new Set<string>();
+  for (const raw of text.toLowerCase().match(/[a-z][a-z’']{3,}/g) ?? []) {
+    const bare = raw.replace(/[’'].*$/, ''), word = bare.length > 4 && bare.endsWith('ies') ? `${bare.slice(0, -3)}y` : bare.length > 4 && bare.endsWith('s') && !bare.endsWith('ss') ? bare.slice(0, -1) : bare;
+    if (word.length >= 3 && !COMMON_WORDS.has(word) && !COMMON_WORDS.has(bare)) words.add(word);
+  }
+  return words;
+}
+
 /** Per-actor delivered date lines only; a topic request is not an unprompted callback. */
 export function dialogueLoopContext(recentDelivered: readonly SceneUtterance[], latestHumanText: string): { avoidUnpromptedTopics: string[] } {
   const recent: string[] = [];
-  for (let index = recentDelivered.length - 1; index >= 0 && recent.length < 4; index--) {
+  for (let index = recentDelivered.length - 1; index >= 0 && recent.length < 6; index--) {
     if (recentDelivered[index].speaker === 'date') recent.push(recentDelivered[index].text.slice(0, 420).normalize('NFKC'));
   }
   const human = latestHumanText.slice(0, 2000).normalize('NFKC');
@@ -93,11 +122,22 @@ export function dialogueLoopContext(recentDelivered: readonly SceneUtterance[], 
   const rejectedClauses = [...human.matchAll(topicRejectionLead)].map(match => human.slice(match.index, match.index + 160).split(/[.!?;,]/, 1)[0]);
   const avoidUnpromptedTopics: string[] = [];
   for (const family of propFamilies) {
-    if (recent.filter(text => family.mention.test(text)).length < 2) continue;
+    if (recent.slice(0, 4).filter(text => family.mention.test(text)).length < 2) continue;
     const rejected = rejectedClauses.some(clause => family.mention.test(clause));
     const interest = 'interest' in family ? family.interest : family.mention;
     if (!rejected && (repeating || interest.test(human))) continue;
     avoidUnpromptedTopics.push(family.topic);
+  }
+  // Anything else the date keeps returning to, read from the delivered lines themselves (a fern, a metaphor, a running bit).
+  const lastFour = recent.map(contentWords), humanWords = contentWords(human);
+  const counts = new Map<string, number>();
+  for (const words of lastFour) for (const word of words) counts.set(word, (counts.get(word) ?? 0) + 1);
+  const inLastThree = (word: string) => lastFour.slice(0, 4).filter(words => words.has(word)).length;
+  for (const [word, count] of counts) {
+    if (avoidUnpromptedTopics.length >= 6) break;
+    if (count < 3 && propFamilies.some(family => family.mention.test(word) && avoidUnpromptedTopics.includes(family.topic))) continue;
+    if (count >= 3) avoidUnpromptedTopics.push(`“${word}” (you have said it in nearly every reply: leave the word out of this one even if they mention it, and take the talk somewhere new)`);
+    else if (inLastThree(word) >= 2 && !humanWords.has(word) && !repeating) avoidUnpromptedTopics.push(`“${word}”`);
   }
   return { avoidUnpromptedTopics };
 }
@@ -218,12 +258,12 @@ export function alternatingMessages(messages: readonly Message[], leadIn: string
 }
 
 /** Spoken-register block: placed last in the system prompt, nearest to generation, so every earlier rule is read through it. */
-export const SPOKEN_REGISTER = 'HOW YOU TALK. Speak out loud across a table: your own rhythm, contractions and fragments. Answer their actual words before adding a connected opinion or small story. You can be funny, confidently interested, stubborn about a taste or thrown by attraction. You do not owe every turn a joke or a question. Open on the content: the answer, the opinion, the detail. Warm-up words (“Ha”, “Oh”, “Okay”, “Honestly”, “Fair enough”, “Mm”) are for a real surprise, about one reply in four, never the same one twice running, and “honestly” at most once in an evening. Do not hand their phrase back as your opening (“A food scandal, noted”); respond to it instead. Say their name rarely: a hello, a goodbye, or the one moment that needs it. Vary length: sometimes five words, usually one or two sentences, three for a small story, never more than four. Most turns end on a statement; ask when you want the answer, not in two turns running. Tease something specific they said, leaving room to disagree; shared jokes need shared history. Do not finish every turn with a twist. Describe scenery or food only when asked or something happens. Ordinary early talk can have a point of view; personal detail comes gradually. If confused, ask plainly. If your line was odd, own it (“I just meant...”) and move on. Say what you think or what happened to you, not wise general lines about people.';
+export const SPOKEN_REGISTER = 'HOW YOU TALK. You are on a date and you are not neutral about it. Talk like a person across a table, not a writer: plain words and short lines, usually one sentence and often under twelve words, two sentences when you have something to tell. React first with what you actually feel: interested, amused, unconvinced, flattered, annoyed. When they flirt, flirt back or turn it down in so many words; never deflect a flirt into a joke about food or work. Be bold: say what you like about them, what you want, what you do not buy. Tease them, disagree, make them work a little; do not agree with everything and do not reassure. Give real things: a fact about your life, a strong opinion, something that happened today. Ask one short question when you are curious about them, not every turn; if they do not answer it, drop it for good, never ask it again and never say they owe you an answer. Do not open by handing their words back (“Another evening?”, “Distracting, huh?”); respond to them instead. No clever sayings, no metaphors, no wordplay built on their phrase, no comparing things to your job. Never comment on the conversation itself (no “I appreciate the honesty”, “no pressure”, “that’s refreshing”, “I like that you…”); just have it. Never repeat yourself: once you have mentioned a thing, a joke or an image, leave it; each reply brings something new or follows them somewhere new. Leave scenery, plants, furniture and food alone unless they ask or something happens. Open on the content: no warm-up word (“Ha”, “Oh”, “Okay”, “Honestly”, “Fair”, “Good”, “Agreed”, “Noted”) and no verdict on what they said before you answer it. Say their name rarely. If confused, ask plainly. If your line was odd, own it and move on.';
 /** The very last line of the system prompt. */
-export const VOICE_REMINDER = 'Reply across the table in your own voice: respond to what they said first, starting on the content itself; be specific, leave room, and let humor or attraction happen without forcing a finish.';
+export const VOICE_REMINDER = 'Reply out loud in one or two short plain sentences: react to what they just said with what you feel or want, be bold, and bring something new instead of returning to anything you already said.';
 /** Compact per-character voice cues, for a per-turn reminder. Blind dates carry their own derived voice instead. */
 export const VOICE_SHORT: Record<string, string> = {
-  mira: 'quick warm bursts; starts on the point; laughs at herself; mostly ends on a statement',
-  jules: 'quiet and exact, four to eight words; dry understatement; short plain questions',
-  dev: 'fast and loose; starts on the opinion; concrete nouns and numbers; teases only what they just said, then softens',
+  mira: 'quick and warm; says what she wants; teases, then means it; a few plain words',
+  jules: 'quiet and exact, four to eight words; dry; direct when interested',
+  dev: 'fast, blunt and confident; concrete nouns and numbers; challenges them, then grins',
 };

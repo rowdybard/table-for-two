@@ -11,7 +11,7 @@ import { completeUtterances } from '../restaurant';
 import { DateApiError, EMOTIONS, SOCIAL_SIGNALS, isSilentDialogueLine } from '../restaurant/providers';
 import { AGENDA_SCHEMA, validAgendaAssessment } from '../restaurant/agendas';
 import { BOUNDARY_SCHEMA, validBoundaryAssessment } from '../restaurant/boundaries';
-import { deferrableCue, dialogueLoopContext } from '../restaurant/dialogue-policy';
+import { deferrableCue, dialogueLoopContext, tidyOpening } from '../restaurant/dialogue-policy';
 import { roleplayInstructions } from '../restaurant/roleplay';
 import type { DoubleTableScene } from './scene';
 import type { ConversationRoutingContext } from '../restaurant/conversation-routing';
@@ -343,7 +343,7 @@ export class DoubleConversation {
 
 function validateLine(line: unknown): { speaker: 'd1' | 'd2' | 'waiter' | 'diner'; text: string; emotion: Emotion } {
   if (!record(line) || !exact(line, ['speaker', 'text', 'emotion']) || !['d1', 'd2'].includes(line.speaker) || typeof line.text !== 'string' || !line.text.trim() || line.text.length > 420 || /[\u0000-\u001f]/.test(line.text) || !EMOTIONS.includes(line.emotion)) throw error('A character returned an invalid line.');
-  return line as ReturnType<typeof validateLine>;
+  return { ...line, text: ['d1', 'd2'].includes(line.speaker) ? tidyOpening(line.text) : line.text } as ReturnType<typeof validateLine>;
 }
 export function validateDoubleTurn(text: string, model?: string): { utterances: ReturnType<typeof validateLine>[]; dateUpdates: { actorId: DoubleDateActorId; emotion: Emotion; memory: string; social: SocialResponse; agenda?: AgendaAssessment }[] } {
   let value: unknown; try { value = JSON.parse(text); } catch { throw error('The table returned incomplete dialogue. Try another turn.'); }
@@ -352,10 +352,10 @@ export function validateDoubleTurn(text: string, model?: string): { utterances: 
   const utterances = value.utterances.filter((line: unknown) => !isSilentDialogueLine(line, ['d1', 'd2', 'waiter', 'diner']));
   if (utterances.filter((line: unknown) => record(line) && ['waiter', 'diner'].includes(line.speaker)).length > 1) throw error('Only one supporting character may speak per turn.');
   const seen = new Set<string>();
-  for (const line of utterances) validateLine(line);
+  const tidied = utterances.map(validateLine);
   for (const update of value.dateUpdates) {
     if (!record(update) || !exact(update, ['actorId', 'emotion', 'memory', 'social', 'agenda']) || !actors.includes(update.actorId) || seen.has(update.actorId) || !EMOTIONS.includes(update.emotion) || typeof update.memory !== 'string' || update.memory.length > MEMORY_REJECT || !record(update.social) || !exact(update.social, ['signal', 'reason', 'wantsToLeave', 'boundary']) || !SOCIAL_SIGNALS.includes(update.social.signal) || typeof update.social.reason !== 'string' || update.social.reason.length > 180 || typeof update.social.wantsToLeave !== 'boolean' || (update.social.boundary !== undefined && !validBoundaryAssessment(update.social.boundary)) || (update.agenda !== undefined && !validAgendaAssessment(update.agenda))) throw error('A character returned an invalid emotional update.');
     seen.add(update.actorId);
   }
-  return { ...value, utterances } as ReturnType<typeof validateDoubleTurn>;
+  return { ...value, utterances: tidied } as ReturnType<typeof validateDoubleTurn>;
 }

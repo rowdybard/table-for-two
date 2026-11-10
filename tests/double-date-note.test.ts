@@ -130,9 +130,9 @@ test('how the words arrived: out loud, over the date, before the reply landed, a
   assert.ok(!typed.includes('kept talking') && !typed.includes('automatic transcript'), 'typing is not talking over anyone');
   assert.match(note({ via: 'voice', flow: { keptTalking: true } }), /Alex kept talking before the last reply reached them/);
   const question = note({}, { pendingQuestion: 'Hi. I got here early and read the whole menu. How was your day?' });
-  assert.match(question, /Mira asked Alex “How was your day\?” a little while ago and has not had an answer\. If what Alex says next is not an answer, Mira should just respond to what was said\./);
-  assert.ok(!note({ speaker: 'h2' }, { pendingQuestion: 'How was your day?' }).includes('has not had an answer'), 'a friend’s words do not answer the other pair’s question');
-  assert.ok(!note({}, { pendingQuestion: 'How was your day?', available: false }).includes('has not had an answer'), 'a date who has left the conversation is not waiting on anything');
+  assert.match(question, /Mira asked Alex “How was your day\?” a little while ago\. If what Alex says next answers it, take it as the answer\. If it does not, Alex has moved on: Mira responds to what was said and does not ask it again or mention that it went unanswered\./);
+  assert.ok(!note({ speaker: 'h2' }, { pendingQuestion: 'How was your day?' }).includes('a little while ago'), 'a friend’s words do not answer the other pair’s question');
+  assert.ok(!note({}, { pendingQuestion: 'How was your day?', available: false }).includes('a little while ago'), 'a date who has left the conversation is not waiting on anything');
 });
 
 test('a clarification addressed to the date by name still points at that date’s line', () => {

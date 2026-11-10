@@ -308,13 +308,13 @@ async function seatBoth(api: Awaited<ReturnType<typeof boot>>, h1: DoubleRoomRes
 
 test('“what do you mean?” is about the line of the date they were talking to, not whoever spoke last', async t => {
   const requests: ClaudeRequest[] = [];
-  const lines = [[{ speaker: 'd1', text: 'Honestly, I am just here for the cake gossip.', emotion: 'amused' }, { speaker: 'd2', text: 'I only came for the bread basket.', emotion: 'amused' }], [], [], [], [], []];
+  const lines = [[{ speaker: 'd1', text: 'I am just here for the cake gossip.', emotion: 'amused' }, { speaker: 'd2', text: 'I only came for the bread basket.', emotion: 'amused' }], [], [], [], [], []];
   const api = await boot({ claude: claude(request => requests.push(request), () => response(lines.shift() ?? [])) }); t.after(() => api.close()); const { h1, h2 } = await api.pair();
   await seatBoth(api, h1, h2);
   assert.equal((await api.request(api.path(h1) + '/turn', h1.token, { turnId: 'first', text: 'My graduating class was under seventy people.', target: 'table' })).status, 202); await api.settle(h1);
-  await api.hear(h1, 'd1', 'Honestly, I am just here for the cake gossip.'); await api.hear(h1, 'd2', 'I only came for the bread basket.');
+  await api.hear(h1, 'd1', 'I am just here for the cake gossip.'); await api.hear(h1, 'd2', 'I only came for the bread basket.');
   assert.equal((await api.request(api.path(h1) + '/turn', h1.token, { turnId: 'second', text: 'what the heck is cake gossip', target: 'd1' })).status, 202); await api.settle(h1);
-  assert.match(doubleNote(requests[1]), /Alex seems to be asking about Mira’s last line \(“Honestly, I am just here for the cake gossip\.”\)/);
+  assert.match(doubleNote(requests[1]), /Alex seems to be asking about Mira’s last line \(“I am just here for the cake gossip\.”\)/);
   assert.equal((await api.request(api.path(h1) + '/turn', h1.token, { turnId: 'third', text: 'what do you mean', target: 'd1' })).status, 202); await api.settle(h1);
   assert.match(doubleNote(requests[2]), /asking about Mira’s last line/, 'it points at the date who was addressed (Mira), even though Jules spoke after her');
   assert.equal((await api.request(api.path(h1) + '/turn', h1.token, { turnId: 'fourth', text: 'what do you mean', target: 'h2' })).status, 202); await api.settle(h1);
