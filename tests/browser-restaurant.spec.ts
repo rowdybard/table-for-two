@@ -878,3 +878,27 @@ test('an expired solo session returns to mode selection and removes its stale re
   expect(calls.length).toBe(callsBefore);
   await expect(page.locator('#mode-solo')).toBeEnabled();
 });
+
+test('a voice budget failure falls back to readable captions for the generated reply', async ({ page }) => {
+  test.setTimeout(90000);
+  const receipts: { text?: string; completed?: boolean }[] = [];
+  await page.route('**/api/date/status', async route => {
+    const response = await route.fetch(), status = await response.json();
+    await route.fulfill({ response, json: { ...status, speech: true, speechProvider: 'none' } });
+  });
+  await page.route('**/api/date/sessions/*/speech', async route => {
+    await route.fulfill({ status: 402, contentType: 'application/json', body: JSON.stringify({ message: 'Voice budget reached.' }) });
+  });
+  page.on('request', request => {
+    if (/\/api\/date\/sessions\/[^/]+\/playback$/.test(new URL(request.url()).pathname)) receipts.push(request.postDataJSON());
+  });
+  await beginNewSolo(page);
+  await page.keyboard.press('t');
+  await page.locator('#conversation-input').fill('I like mushroom pasta.');
+  await page.locator('#send-turn').click();
+  const reply = 'Mushroom risotto is a strong choice. What do you like to cook?';
+  await expect(page.locator('#caption-text')).toHaveText(reply, { timeout: 15000 });
+  await expect(page.locator('#caption')).toBeVisible();
+  await expect.poll(() => receipts.some(item => item.text === reply && item.completed === true), { timeout: 15000 }).toBe(true);
+  await expect(page.locator('#turn-status')).not.toHaveText('Preparing voice…');
+});

@@ -174,9 +174,12 @@ test('landscape phone: two thumbs, talk return, neutral input, context action an
   // The prompt line is the seated guest's whole menu: one chip, phone-sized, inside the safe area.
   const menuChip = page.locator('#prompt-chips button', { hasText: 'Open the menu' });
   await expect(menuChip).toBeVisible();
+  await expect(page.locator('#restaurant-app')).toHaveAttribute('data-mobile-seated', 'true');
   await assertFits(page, ['#prompt-line', '#prompt-chips button']);
   expect((await menuChip.boundingBox())!.height).toBeGreaterThanOrEqual(44);
-  await menuChip.tap();
+  const chipPoint = await center(page, '#prompt-chips button');
+  expect(await page.evaluate(({ x, y }) => !!document.elementFromPoint(x, y)?.closest('#prompt-chips button'), chipPoint)).toBe(true);
+  await page.touchscreen.tap(chipPoint.x, chipPoint.y);
   await expect(page.locator('#menu-dialog')).toBeVisible();
   await page.locator('[data-order="Wild mushroom risotto"]').tap();
   await expect.poll(async () => (await readState(page)).order).toBe('Wild mushroom risotto');

@@ -294,15 +294,25 @@ function recordDelivery(generation: number, utterance: SceneUtterance, completed
     await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` }, body: JSON.stringify({ generation, speaker: utterance.speaker, text: utterance.text, completed, playedSeconds }), signal: timeoutSignal(RECEIPT_TIMEOUT_MS) });
   }).catch(() => {});
 }
+let displayedVoiceStatus = '';
+const clearVoiceStatus = () => {
+  const status = el('turn-status');
+  if (displayedVoiceStatus && status.textContent === displayedVoiceStatus) status.textContent = '';
+  displayedVoiceStatus = '';
+};
 const speech = new SpeechPlayer({
   onPlayback(next) {
     playback = next; recognition.setSpeaking(!!next.speaker, next.caption); ambience.setSpeaking(!!next.speaker);
     if (next.speaker) {
+      clearVoiceStatus();
       caption({ speaker: next.speaker, text: next.caption, emotion: next.emotion, actorId: next.actorId });
       if (turnStartedAt && firstAudioMs === null) { firstAudioMs = performance.now() - turnStartedAt; renderUsage(); }
     } else clearCaptionLater();
   },
-  onStatus(message) { if (message) el('turn-status').textContent = message; },
+  onStatus(message) {
+    if (message) { displayedVoiceStatus = message; el('turn-status').textContent = message; }
+    else clearVoiceStatus();
+  },
   onEnded(utterance, result) {
     if (joined) recordDelivery(currentSpeechGeneration, utterance, !result.interrupted, result.playedSeconds);
   },
@@ -420,7 +430,7 @@ function queueUtterance(utterance: SceneUtterance, generation: number, epoch: nu
     if (epoch !== generationEpoch || (error as Error).name === 'AbortError') return;
     toast((error as Error).message);
     const status = (error as { status?: number }).status;
-    if (status !== undefined && status >= 400 && status < 500 && status !== 429) return;
+    if (status === 409 || status === 499) return;
     await presentCaption(utterance, generation, epoch);
   }).finally(() => { if (epoch === generationEpoch) pendingSpeeches = Math.max(0, pendingSpeeches - 1); });
 }
