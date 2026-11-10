@@ -121,9 +121,17 @@ export class CampaignLedger {
   }
 }
 
+/** The campaigns the owner has authorised. Each has its own manifest, its own ledger file and its own environment variable. */
+export const CAMPAIGNS = {
+  haiku: { manifest: 'docs/HAIKU_SIMULATION_CAMPAIGN.json', ledgerEnv: 'HAIKU_CAMPAIGN_LEDGER' },
+  dolphin: { manifest: 'docs/DOLPHIN_SIMULATION_CAMPAIGN.json', ledgerEnv: 'DOLPHIN_CAMPAIGN_LEDGER' },
+} as const;
+export type CampaignName = keyof typeof CAMPAIGNS;
+export const isCampaignName = (value: string | undefined): value is CampaignName => !!value && Object.hasOwn(CAMPAIGNS, value);
+
 /** The ledger location for this machine: an explicit environment path wins over the manifest's recorded one. */
-export function campaignLedgerPath(env: NodeJS.ProcessEnv, manifest: { sharedLedgerPath?: string }): string {
-  const path = env.HAIKU_CAMPAIGN_LEDGER?.trim() || manifest.sharedLedgerPath?.trim();
-  if (!path) throw new CampaignBudgetError('ledger_missing', 'Set HAIKU_CAMPAIGN_LEDGER to the shared campaign ledger file; no request was sent.');
+export function campaignLedgerPath(env: NodeJS.ProcessEnv, manifest: { sharedLedgerPath?: string }, ledgerEnv: string = CAMPAIGNS.haiku.ledgerEnv): string {
+  const path = env[ledgerEnv]?.trim() || manifest.sharedLedgerPath?.trim();
+  if (!path) throw new CampaignBudgetError('ledger_missing', `Set ${ledgerEnv} to the shared campaign ledger file; no request was sent.`);
   return path;
 }

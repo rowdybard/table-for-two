@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "campaignId": "table-for-two-dolphin-check-2026-11-10",
+  "status": "prepared_not_started",
+  "authorization": "Owner asked on 10 Nov 2026 to include Dolphin in this testing with a $0.10 spend cap, and to make sure Dolphin sees the same notebook, memories and context as Haiku.",
+  "totalLimitUSD": 0.1,
+  "allowedModels": [
+    "dolphinllm/uncensored"
+  ],
+  "provider": "dolphinllm",
+  "textOnly": true,
+  "fallbackModelsAllowed": false,
+  "automaticProviderRetriesAllowed": false,
+  "voiceCallsAllowed": false,
+  "automatedAiJudgeAllowed": false,
+  "ledgerEnvironmentVariable": "DOLPHIN_CAMPAIGN_LEDGER",
+  "perRequestGate": "Dolphin only; reserve a conservative maximum before dispatch; settle reported usage; keep the whole reservation when usage is unknown; stop before an unaffordable request. Costs use the repository's recorded Dolphin rates, not a provider invoice.",
+  "scope": "Format, continuity, routing after unlock, declined advances and age rules on the corpus flirting scripts. Not tuned toward graphic content. Separate from the Haiku campaign; the two ledgers are never combined."
+}

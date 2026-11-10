@@ -4,7 +4,8 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { CampaignBudgetError, CampaignLedger, campaignLedgerPath, readCampaignManifest, type CampaignLedgerFile, type CampaignManifest } from '../scripts/lib/campaign-ledger';
+import { DOLPHIN_LLM_MODEL } from '../src/restaurant/types';
+import { CAMPAIGNS, CampaignBudgetError, CampaignLedger, campaignLedgerPath, readCampaignManifest, type CampaignLedgerFile, type CampaignManifest } from '../scripts/lib/campaign-ledger';
 import { runConversationEvaluation, parseEvaluationOptions } from '../scripts/lib/conversation-evaluation';
 import { SHORT_EVALUATION_SCRIPTS } from '../src/restaurant/evaluation';
 import type { ClaudeAdapter } from '../server/restaurant/providers';
@@ -131,4 +132,40 @@ test('the campaign flag is parsed, and the command refuses other models and a mi
   const tool = (command: string) => spawnSync(process.execPath, ['--import', 'tsx', resolve('scripts/haiku-campaign-ledger.ts'), command], { cwd: resolve('.'), env, encoding: 'utf8' });
   assert.equal(tool('init').status, 0); assert.notEqual(tool('init').status, 0, 'a second init is refused');
   assert.match(tool('status').stdout, /"remainingUSD": 10/);
+});
+
+test('the Dolphin campaign has its own ten cent manifest and ledger, and refuses Haiku and overspend', async () => {
+  const real = readCampaignManifest(resolve(CAMPAIGNS.dolphin.manifest));
+  assert.equal(real.totalLimitUSD, .1); assert.deepEqual(real.allowedModels, [DOLPHIN_LLM_MODEL]);
+  assert.equal(real.fallbackModelsAllowed, false); assert.equal(real.automaticProviderRetriesAllowed, false); assert.equal(real.automatedAiJudgeAllowed, false);
+  assert.deepEqual(parseEvaluationOptions(['--campaign', 'dolphin', '--models', 'dolphin']).campaignName, 'dolphin');
+  assert.equal(parseEvaluationOptions(['--campaign', '--models', 'haiku']).campaignName, 'haiku');
+  assert.throws(() => parseEvaluationOptions(['--campaign', 'sonnet']), /haiku or dolphin/);
+  // The Haiku ledger variable never stands in for the Dolphin one.
+  assert.equal(code(() => campaignLedgerPath({ HAIKU_CAMPAIGN_LEDGER: '/x/haiku.json' }, {}, CAMPAIGNS.dolphin.ledgerEnv)), 'ledger_missing');
+  assert.equal(campaignLedgerPath({ DOLPHIN_CAMPAIGN_LEDGER: '/x/dolphin.json' }, {}, CAMPAIGNS.dolphin.ledgerEnv), '/x/dolphin.json');
+
+  const path = join(mkdtempSync(join(tmpdir(), 'ledger-dolphin-')), 'budget.json');
+  CampaignLedger.init({ path, manifest: real });
+  const ledger = new CampaignLedger({ path, manifest: real, lockWaitMs: 5000 });
+  assert.equal(code(() => ledger.reserve('claude-haiku-5-5', .01, 'x')), 'model_not_allowed');
+  assert.equal(code(() => ledger.reserve(DOLPHIN_LLM_MODEL, .11, 'x')), 'ceiling');
+  // A Haiku-campaign ledger cannot be opened with the Dolphin manifest, and the reverse.
+  const haiku = fresh();
+  assert.equal(code(() => new CampaignLedger({ path: haiku.path, manifest: real }).reserve(DOLPHIN_LLM_MODEL, .001, 'x')), 'ledger_mismatch');
+
+  // The runner stops at ten cents: each request reports far more usage than the reservation guessed.
+  const calls = { n: 0 };
+  const greedy: ClaudeAdapter = { async *stream() { calls.n++; yield { type: 'text', text: reply }; yield { type: 'usage', usage: { inputTokens: 300_000, outputTokens: 10_000, cacheReadTokens: 0, cacheWriteTokens: 0 } }; } } as unknown as ClaudeAdapter;
+  const report = await runConversationEvaluation({ scripts: [script], models: [DOLPHIN_LLM_MODEL], budgetUSD: 1, adapters: { [DOLPHIN_LLM_MODEL]: greedy }, campaign: ledger });
+  assert.equal(calls.n, 2, 'the third request would pass the ceiling and is never sent');
+  assert.match(report.campaignLedger!.stoppedBy!, /^ceiling:/); assert.ok(ledger.totals().committedUSD <= .1);
+
+  const env = { ...process.env, DOLPHIN_LLM_API_KEY: '', DOLPHIN_CAMPAIGN_LEDGER: join(mkdtempSync(join(tmpdir(), 'ledger-dolphin-cli-')), 'budget.json'), HAIKU_CAMPAIGN_LEDGER: haiku.path };
+  const run = (...args: string[]) => spawnSync(process.execPath, ['--import', 'tsx', resolve('scripts/compare-date-models.ts'), ...args], { cwd: resolve('.'), env, encoding: 'utf8' });
+  const wrongModel = run('--campaign', 'dolphin', '--run', '--budget', '1', '--models', 'haiku', '--scripts', script.id);
+  assert.notEqual(wrongModel.status, 0); assert.match(wrongModel.stderr, /allows only dolphinllm\/uncensored; no requests were sent/);
+  const noLedger = run('--campaign', 'dolphin', '--run', '--budget', '1', '--models', 'dolphin', '--scripts', script.id);
+  assert.notEqual(noLedger.status, 0); assert.match(noLedger.stderr, /ledger does not exist; no request was sent/);
+  assert.equal(read(haiku.path).entries.length, 0, 'the Haiku ledger is untouched');
 });

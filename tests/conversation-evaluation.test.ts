@@ -500,3 +500,24 @@ test('Double evaluation does not attribute a friend’s unanswered line to an ea
   runtime.request(1); runtime.commit(1, runtime.validate(doubleResponse('', '', [])));
   assert.doesNotMatch(runtime.request(2).messages.at(-1)!.content, /asking about Mira|asking about Jules/);
 });
+
+test('direct Dolphin reads exactly the system prompt, turn note, transcript and notebook that Haiku reads', () => {
+  const notebook = 'HUMAN: grew up in Leeds; repairs radios\nTOLD THEM: prefers honesty\nOPEN: recommend a book next time';
+  for (const original of [script, SHORT_EVALUATION_SCRIPTS.find(s => s.mode === 'double')!]) {
+    const haiku = new EvaluationConversation(original, 'claude-haiku-5-5'), dolphin = new EvaluationConversation(original, DOLPHIN_LLM_MODEL);
+    const bothDates = [{ speaker: 'd1', text: 'I will recommend a book.', emotion: 'warm' }, { speaker: 'd2', text: 'I will recommend one too.', emotion: 'warm' }];
+    for (let turn = 0; turn < 3; turn++) {
+      const a = haiku.request(turn), b = dolphin.request(turn);
+      assert.equal(a.model, 'claude-haiku-5-5'); assert.equal(b.model, DOLPHIN_LLM_MODEL);
+      // The one intended difference: the roleplay paragraph ends with a provider sentence on the Anthropic route only.
+      const haikuLines = a.system.split('\n'), dolphinLines = b.system.split('\n'), differing = haikuLines.map((line, index) => index).filter(index => haikuLines[index] !== dolphinLines[index]);
+      assert.equal(dolphinLines.length, haikuLines.length); assert.equal(differing.length, 1, 'same system prompt apart from the provider sentence');
+      assert.equal(haikuLines[differing[0]], `${dolphinLines[differing[0]]} On the Anthropic route, keep romance and flirting non-graphic. Sexual acts or explicit erotic detail should move to a brief fade-out or ordinary conversation within provider limits. Do not try to bypass a provider refusal.`);
+      assert.deepEqual(b.messages, a.messages, 'same transcript, turn note and notebook');
+      assert.deepEqual(b.outputSchema, a.outputSchema); assert.equal(b.maxTokens, a.maxTokens);
+      if (turn > 0) assert.match(JSON.stringify(b.messages) + b.system, /grew up in Leeds/, 'the notebook written last turn reaches Dolphin');
+      const text = original.mode === 'double' ? doubleResponse(notebook, notebook, bothDates) : response(notebook);
+      haiku.commit(turn, haiku.validate(text)); dolphin.commit(turn, dolphin.validate(text));
+    }
+  }
+});
