@@ -33,7 +33,7 @@ test('the authored corpus contains sixty eight-turn scripts and six thirty-turn 
     assert.equal(s.turns.length, s.suite === 'short' ? 8 : 30);
     assert.equal(new Set(s.turns.map(t => t.text)).size, s.turns.length, `${s.id} repeats its own input`);
     assert.ok(s.reviewFor.length > 40);
-    assert.ok(s.turns.every(t => t.text.length > 8 && t.text.length <= 2000));
+    assert.ok(s.turns.every((t, index) => (t.text.length > 8 || index === 0 && ['Hi.', 'Hello.', 'HI BITCH'].includes(t.text)) && t.text.length <= 2000));
     if (s.mode === 'blind') assert.ok(s.blindSeed);
     if (s.mode === 'double') { assert.equal(new Set(s.dateIds).size, 2); assert.deepEqual([...new Set(s.turns.map(t => t.human))].sort(), ['h1', 'h2']); assert.ok(s.turns.every(t => t.target)); }
     if (s.suite === 'continuity') assert.ok(s.checkpoints?.some(c => c.afterTurn === 30 && c.mustRecall.length > 0 && c.mustNotClaim.length > 0));

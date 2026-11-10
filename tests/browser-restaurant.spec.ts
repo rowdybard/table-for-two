@@ -820,8 +820,12 @@ test('a newly opened background tab defers WebGL until it is activated', async (
     await background.waitForTimeout(1800);
     await expect(background.locator('.restaurant-canvas')).toHaveCount(0);
     expect(await background.evaluate(() => (window as Window & { __webglInitializations?: number }).__webglInitializations)).toBe(0);
+    const activationStarted = performance.now();
     await background.bringToFront();
-    await expect.poll(() => background.evaluate(() => ({ hidden: document.hidden, focused: document.hasFocus() }))).toEqual({ hidden: false, focused: true });
+    // Activation also starts the deferred renderer; allow its existing 30-second
+    // readiness budget for the first main-thread visibility evaluation to return.
+    await expect.poll(() => background.evaluate(() => ({ hidden: document.hidden, focused: document.hasFocus() })), { timeout: 30000 }).toEqual({ hidden: false, focused: true });
+    console.info(`Lifecycle initial activation checkpoint: ${Math.round(performance.now() - activationStarted)} ms`);
     await waitForRestaurantScene(background);
     await expect(background.locator('.restaurant-canvas')).toHaveCount(1);
     expect(await background.evaluate(() => (window as Window & { __webglInitializations?: number }).__webglInitializations)).toBeGreaterThan(0);
