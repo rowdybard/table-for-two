@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "campaignId": "table-for-two-haiku-tuning-2026-11-10",
+  "status": "prepared_not_started",
+  "authorization": "Owner requested repeated human-to-AI simulations, input/output logic checks, prompt/memory/context tuning and post-unlock normal/sexy routing polish, using only Haiku with a $10 spend limit.",
+  "totalLimitUSD": 10,
+  "allowedModels": [
+    "claude-haiku-5-5"
+  ],
+  "provider": "anthropic",
+  "textOnly": true,
+  "scopeIncludes": [
+    "baseline runs",
+    "candidate runs",
+    "repeated and adaptive simulations",
+    "simulated human generation if used",
+    "format/provider failures",
+    "retests",
+    "all concurrent agents and worktrees"
+  ],
+  "fallbackModelsAllowed": false,
+  "automaticProviderRetriesAllowed": false,
+  "voiceCallsAllowed": false,
+  "automatedAiJudgeAllowed": false,
+  "sharedLedgerPath": "C:/Users/maxpu/.codex/worktrees/table-for-two-conversation-depth/.qa/haiku-tuning-campaign/budget.json",
+  "executionGate": "Before any live request, connect and test a persistent atomic shared ledger. The existing per-run --budget flag alone does not enforce this campaign ceiling.",
+  "perRequestGate": "Allowlisted Haiku only; reserve conservative maximum cost before dispatch; reconcile reported usage; keep reservation when usage is unknown; stop before an unaffordable request.",
+  "routingTests": "Log intended normal/sexy provider selection, but all actual simulated inference must remain Haiku. Do not alter production routing merely to run this campaign.",
+  "corpusVersion": 2,
+  "corpusSha256": "fa8cef06ffb5ade464fc57e8ca1568e2f9674b39333f43e19443e4f2056cacc9",
+  "preserve": [
+    "700-character memory limit",
+    "public conversation JSON contract",
+    "per-listener delivery truth",
+    "independent Double progress",
+    "earned chemistry and consent",
+    "600-token additional-context estimate",
+    "no local game/browser/WebGL launch"
+  ]
+}
