@@ -85,6 +85,7 @@ async function assertCenterHit(page: Page, selector: string) {
 test('landscape phone: two thumbs, talk return, neutral input, context action and pause remain usable', async ({ page, browserName }) => {
   test.skip(browserName !== 'chromium', 'Native multi-touch dispatch uses Chromium CDP; menu and viewport checks also run in WebKit.');
   page.setDefaultTimeout(8000);
+  if (process.env.LFS_SOFTWARE_GPU === '1') test.setTimeout(240_000);
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   let pauseRequests = 0;
   page.on('request', request => { if (request.url().includes('/command') && request.postDataJSON()?.type === 'pause' && request.postDataJSON()?.paused === true) pauseRequests++; });
@@ -187,7 +188,7 @@ test('landscape phone: two thumbs, talk return, neutral input, context action an
   await expect(page.locator('#mobile-interact')).toContainText(/seat/i);
   await page.locator('#mobile-interact').tap();
   await expect.poll(async () => (await readState(page)).seated).toBe(true);
-  await page.screenshot({ path: '.qa/restaurant-mobile-seated.png' });
+  await page.screenshot({ timeout: 30_000, path: '.qa/restaurant-mobile-seated.png' });
   await expect(page.locator('#mobile-move')).toBeHidden();
   // The prompt line is the seated guest's whole menu: one chip, phone-sized, inside the safe area.
   const menuChip = page.locator('#prompt-chips button', { hasText: 'Open the menu' });
@@ -204,7 +205,7 @@ test('landscape phone: two thumbs, talk return, neutral input, context action an
   await expect.poll(async () => (await readState(page)).order).toBe('Wild mushroom risotto');
   await expect(menuChip).toBeHidden();
   await expect(page.locator('#mobile-pause')).toBeVisible();
-  await settleFrame(page); await page.screenshot({ path: '.qa/restaurant-mobile-seated-prompt.png' });
+  await settleFrame(page); await page.screenshot({ timeout: 30_000, path: '.qa/restaurant-mobile-seated-prompt.png' });
   // Typing covers the prompt so no chip can be tapped under the keyboard, and it returns afterwards.
   await page.locator('#mobile-talk').tap();
   await expect(page.locator('#conversation-input')).toBeFocused();
@@ -237,7 +238,7 @@ test('landscape phone: two thumbs, talk return, neutral input, context action an
   await expect(page.locator('#prompt-line')).toBeHidden();
   expect(await page.evaluate(() => document.pointerLockElement)).toBeNull();
   expect(errors).toEqual([]);
-  if (process.env.RESTAURANT_CAPTURE_SCREENSHOTS === '1') await page.screenshot({ path: '.qa/restaurant-mobile-landscape.png' });
+  if (process.env.RESTAURANT_CAPTURE_SCREENSHOTS === '1') await page.screenshot({ timeout: 30_000, path: '.qa/restaurant-mobile-landscape.png' });
   await cdp.detach();
 });
 
@@ -264,7 +265,7 @@ test('small landscape menus, portrait browsing, Home Screen fallback and PWA met
     await page.locator(`[data-date="${id}"]`).tap();
     await expect(page.locator(`[data-date="${id}"]`)).toHaveAttribute('aria-pressed', 'true');
   }
-  await settleFrame(page); await page.screenshot({ path: '.qa/restaurant-mobile-small-roster.png' });
+  await settleFrame(page); await page.screenshot({ timeout: 30_000, path: '.qa/restaurant-mobile-small-roster.png' });
   await page.locator('#select-back').tap();
   await page.locator('#mode-double').tap();
   await page.locator('#double-name').fill('Alex');
@@ -277,7 +278,7 @@ test('small landscape menus, portrait browsing, Home Screen fallback and PWA met
   await assertFits(page, ['#title-start', '#settings-open']);
   await page.locator('#settings-open').tap();
   await expect(page.locator('#settings-dialog')).toBeVisible();
-  await settleFrame(page); await page.screenshot({ path: '.qa/restaurant-mobile-portrait-settings.png' });
+  await settleFrame(page); await page.screenshot({ timeout: 30_000, path: '.qa/restaurant-mobile-portrait-settings.png' });
   await page.locator('#mobile-display-settings').tap();
   await expect(page.locator('#mobile-display-help')).toBeVisible();
   await page.locator('#mobile-display-close').tap();
@@ -316,7 +317,7 @@ test('WebKit phone: live dinner, compact typing viewport, Back and portrait Paus
   };
   await begin(page);
   await sample('gameplay');
-  await settleFrame(page); await page.screenshot({ path: '.qa/restaurant-mobile-webkit-gameplay.png' });
+  await settleFrame(page); await page.screenshot({ timeout: 30_000, path: '.qa/restaurant-mobile-webkit-gameplay.png' });
   await page.locator('#mobile-talk').tap();
   await expect(page.locator('#conversation-input')).toBeFocused();
   await page.locator('#conversation-input').fill('A hello from my phone.');
@@ -329,11 +330,11 @@ test('WebKit phone: live dinner, compact typing viewport, Back and portrait Paus
     const canvas = document.querySelector<HTMLCanvasElement>('.restaurant-canvas')!, app = document.querySelector<HTMLElement>('#restaurant-app')!;
     return { viewport: { width: innerWidth, height: innerHeight, visualWidth: visualViewport?.width, visualHeight: visualViewport?.height, offsetTop: visualViewport?.offsetTop }, app: app.getBoundingClientRect().toJSON(), canvas: { rect: canvas.getBoundingClientRect().toJSON(), width: canvas.width, height: canvas.height, visibility: getComputedStyle(canvas).visibility, display: getComputedStyle(canvas).display }, state: app.dataset };
   })));
-  await page.screenshot({ path: '.qa/restaurant-mobile-webkit-typing.png' });
+  await page.screenshot({ timeout: 30_000, path: '.qa/restaurant-mobile-webkit-typing.png' });
   await page.locator('#mobile-talk-close').tap();
   await page.setViewportSize({ width: 844, height: 390 });
   await expect(page.locator('#mobile-controls')).toBeVisible();
-  await page.waitForTimeout(500); await settleFrame(page); await page.screenshot({ path: '.qa/restaurant-mobile-webkit-restored.png' });
+  await page.waitForTimeout(500); await settleFrame(page); await page.screenshot({ timeout: 30_000, path: '.qa/restaurant-mobile-webkit-restored.png' });
   await sample('restored');
   if (diagnoseGL) await writeFile('.qa/mobile-webkit-gl-diagnostics.json', JSON.stringify({ ...(await readMobileGLDiagnostics(page)), warnings }, null, 2));
   await page.locator('#mobile-talk').tap();
@@ -344,6 +345,6 @@ test('WebKit phone: live dinner, compact typing viewport, Back and portrait Paus
   await page.locator('#mobile-rotate button').tap();
   await expect(page.locator('#pause-dialog')).toBeVisible();
   await settleFrame(page);
-  await page.screenshot({ path: '.qa/restaurant-mobile-webkit-portrait-pause.png' });
+  await page.screenshot({ timeout: 30_000, path: '.qa/restaurant-mobile-webkit-portrait-pause.png' });
   expect(errors).toEqual([]);
 });
