@@ -86,6 +86,9 @@ jobs:
           - id: restaurant
             file: tests/browser-restaurant.spec.ts
             grep: ''
+          - id: lifecycle
+            file: tests/browser-restaurant.spec.ts
+            grep: 'background tab'
           - id: mobile
             file: tests/browser-mobile.spec.ts
             grep: ''
@@ -125,11 +128,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - name: Install the headless Chromium pinned by Playwright
-        if: matrix.id != 'restaurant'
+        if: matrix.id != 'lifecycle'
         timeout-minutes: 8
         run: pnpm exec playwright install --with-deps --only-shell chromium
       - name: Install full Chromium for real tab visibility
-        if: matrix.id == 'restaurant'
+        if: matrix.id == 'lifecycle'
         timeout-minutes: 8
         run: pnpm exec playwright install --with-deps --no-shell chromium
       - name: Run the isolated browser group
@@ -153,8 +156,11 @@ jobs:
           if [[ -n "$TEST_GREP" ]]; then
             args+=(--grep "$TEST_GREP")
           fi
-          command=(pnpm exec playwright test)
           if [[ "$BROWSER_GROUP" == restaurant ]]; then
+            args+=(--grep-invert 'background tab')
+          fi
+          command=(pnpm exec playwright test)
+          if [[ "$BROWSER_GROUP" == lifecycle ]]; then
             # Headed Chromium has real foreground tabs; headless-shell marks every page visible.
             command=(xvfb-run -a pnpm exec playwright test)
             args+=(--headed)
