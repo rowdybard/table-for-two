@@ -5,12 +5,13 @@ import { DEFAULT_HORDE_MODEL, HORDE_BRIDGE_CONTEXT_FIT, HORDE_BRIDGE_RESPONSE_FO
 import { DATE_EVALUATION_RUBRIC, EVALUATION_REVIEW_GUIDE, EVALUATION_MODELS, EVALUATION_SCRIPTS, EvaluationConversation, type EvaluationScript } from '../../src/restaurant/evaluation';
 import { DOLPHIN_LLM_MODEL, DOLPHIN_MODEL, type ClaudeModel } from '../../src/restaurant/types';
 import { completeUtterances } from '../../server/restaurant';
+import { CampaignBudgetError, type CampaignLedger } from './campaign-ledger';
 import { DateApiError, TURN_SCHEMA, type ClaudeAdapter, type ClaudeRequest, type TokenUsage } from '../../server/restaurant/providers';
 
-export interface EvaluationOptions { run: boolean; budgetUSD?: number; models: ClaudeModel[]; scripts: EvaluationScript[]; help: boolean }
+export interface EvaluationOptions { campaign: boolean; run: boolean; budgetUSD?: number; models: ClaudeModel[]; scripts: EvaluationScript[]; help: boolean }
 const aliases: Record<string, ClaudeModel> = { haiku: 'claude-haiku-5-5', sonnet: 'claude-sonnet-5-5', horde: 'ai-horde', dolphin: DOLPHIN_LLM_MODEL, venice: DOLPHIN_MODEL };
 export function parseEvaluationOptions(args: readonly string[]): EvaluationOptions {
-  let run = false, help = false, budgetUSD: number | undefined, suite = 'all', ids: string[] | undefined;
+  let run = false, help = false, campaign = false, budgetUSD: number | undefined, suite = 'all', ids: string[] | undefined;
   let models: ClaudeModel[] = ['claude-haiku-5-5', 'claude-sonnet-5-5'];
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
@@ -19,6 +20,7 @@ export function parseEvaluationOptions(args: readonly string[]): EvaluationOptio
     seen.add(flag);
     if (flag === '--run') { run = true; continue; }
     if (flag === '--help') { help = true; continue; }
+    if (flag === '--campaign') { campaign = true; continue; }
     if (!['--budget', '--models', '--scripts', '--suite'].includes(flag)) throw new Error(`Unknown evaluation argument: ${flag}`);
     const value = args[++i];
     if (!value || value.startsWith('--')) throw new Error(`Missing value for ${flag}.`);
@@ -34,7 +36,7 @@ export function parseEvaluationOptions(args: readonly string[]): EvaluationOptio
   if (ids && (new Set(ids).size !== ids.length || ids.some(id => !EVALUATION_SCRIPTS.some(script => script.id === id)))) throw new Error('Every selected script ID must exist and appear once.');
   const scripts = EVALUATION_SCRIPTS.filter(script => (suite === 'all' || script.suite === suite) && (!ids || ids.includes(script.id)));
   if (!scripts.length) throw new Error('The selection contains no scripts.');
-  return { run: run && !help, budgetUSD, models, scripts, help };
+  return { campaign, run: run && !help, budgetUSD, models, scripts, help };
 }
 
 const zeroUsage = (): TokenUsage => ({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 });
@@ -77,6 +79,8 @@ export interface EvaluationRunOptions {
   evaluatedSourceRevision?: string; harnessRevision?: string; instrumentationSha256?: string | null;
   /** Only public route settings are copied into the report; credentials are never serialized. */
   providerEnvironment?: NodeJS.ProcessEnv;
+  /** The shared campaign ledger. When given, every request reserves from it before dispatch and settles after. */
+  campaign?: Pick<CampaignLedger, 'reserve' | 'settle'>;
   onProgress?(message: { scriptId: string; model: ClaudeModel; turn: number; valid: boolean; accountedCostUSD: number }): void;
 }
 
@@ -112,7 +116,7 @@ export async function runConversationEvaluation(options: EvaluationRunOptions) {
   if (options.budgetUSD === 0 && options.models.some(model => model !== 'ai-horde')) throw new Error('A zero budget cannot authorize paid models.');
   if (!options.models.length || new Set(options.models).size !== options.models.length || options.models.some(model => !EVALUATION_MODELS.includes(model) || !options.adapters[model])) throw new Error('Provide one adapter for every selected supported model.');
   const now = options.now ?? (() => performance.now());
-  let accounted = 0, requests = 0, stopped = false;
+  let accounted = 0, requests = 0, stopped = false, campaignStop: string | null = null;
   const results: { scriptId: string; title: string; mode: EvaluationScript['mode']; model: ClaudeModel; plannedTurns: number; status: 'complete' | 'budget_exhausted' | 'failed' | 'cancelled'; turns: EvaluationTurnReport[];
     reviewFor: string; review: { status: 'unrated'; ratings: typeof DATE_EVALUATION_RUBRIC; reviewerNotes: string; quotedLines: string[]; hardFailures: string[] | null };
     checkpoints: { afterTurn: number; mustRecall: string[]; mustNotClaim: string[]; status: 'unrated'; notebook: ReturnType<EvaluationConversation['reviewSnapshot']> | null }[] }[] = [];
@@ -126,6 +130,12 @@ export async function runConversationEvaluation(options: EvaluationRunOptions) {
       if (options.signal?.aborted) { result.status = 'cancelled'; stopped = true; break; }
       const request = conversation.request(index), reservation = evaluationReservation(request);
       if (stopped || accounted + reservation > options.budgetUSD) { result.status = 'budget_exhausted'; stopped = true; break; }
+      let reservationId: string | undefined;
+      if (options.campaign) {
+        // The shared ledger is written before dispatch; a refusal (ceiling, model, lock, missing file) sends nothing.
+        try { reservationId = options.campaign.reserve(model, reservation, `${script.id}#${index + 1}`); }
+        catch (refused) { if (!(refused instanceof CampaignBudgetError)) throw refused; campaignStop = `${refused.code}: ${refused.message}`; result.status = 'budget_exhausted'; stopped = true; break; }
+      }
       const usage = zeroUsage(), started = now(), controller = new AbortController();
       let timedOut = false, malformedStream = false, text = '', firstText: number | null = null, firstUtterance: number | null = null, streamCompleted = false, inputReported = false, outputReported = false, error: EvaluationTurnReport['error'] = null, valid = false, utteranceCount = 0;
       const cancel = () => controller.abort(); options.signal?.addEventListener('abort', cancel, { once: true });
@@ -163,6 +173,7 @@ export async function runConversationEvaluation(options: EvaluationRunOptions) {
       const usageComplete = streamCompleted && inputReported && outputReported;
       const reportedCostUSD = evaluationCost(model, usage), accountedCostUSD = usageComplete ? reportedCostUSD : reservation;
       accounted += accountedCostUSD;
+      if (reservationId) options.campaign!.settle(reservationId, usageComplete ? reportedCostUSD : null);
       const input = script.turns[index];
       rows.push({ turn: index + 1, human: input.human ?? 'h1', target: input.target ?? (script.mode === 'double' ? 'table' : 'date'), input: input.text, via: input.via ?? 'typed', request,
         rawResponse: text, firstTextMs: firstText === null ? null : Math.round(firstText), firstUtteranceMs: firstUtterance === null ? null : Math.round(firstUtterance), totalResponseMs: Math.round(now() - started),
@@ -190,6 +201,6 @@ export async function runConversationEvaluation(options: EvaluationRunOptions) {
     corpusSha256: createHash('sha256').update(JSON.stringify(options.scripts)).digest('hex'),
     selectedScripts: structuredClone(options.scripts),
     modelSettings: evaluationModelSettings(options.models, options.providerEnvironment, options.timeoutMs),
-    budgetUSD: options.budgetUSD, accountedCostUSD: accounted, requests, plannedRequests: options.models.length * options.scripts.reduce((sum, script) => sum + script.turns.length, 0), modelSummaries,
+    budgetUSD: options.budgetUSD, campaignLedger: options.campaign ? { enforced: true, stoppedBy: campaignStop } : null, accountedCostUSD: accounted, requests, plannedRequests: options.models.length * options.scripts.reduce((sum, script) => sum + script.turns.length, 0), modelSummaries,
     providerCallsPerHumanTurn: 1, automaticRetries: 0, speechMeasured: false, ratesUSDPerMillionTokens: MODEL_RATES, reviewGuide: structuredClone(EVALUATION_REVIEW_GUIDE), results };
 }
