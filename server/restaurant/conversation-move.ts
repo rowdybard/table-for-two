@@ -30,10 +30,14 @@ const BOUNCE = new RegExp(String.raw`^${LEAD}(?:(?:and|so|what|how) about (?:you
 /** A whole message that only reacts to the date's last line ("really?", "no way", "what"): not a question to answer from scratch. */
 const REACTION = new RegExp(String.raw`^${LEAD}(?:what|wait what|really|seriously|for real|no way|is that (?:right|so|true)|are you (?:serious|kidding|joking)|you(?:'re| are) (?:kidding|joking)|you (?:did|do|are|were|have)|(?:did|do|are|were|have) you|huh|wow|shut up|get out|since when)[\s,.!?…]*$`, 'i');
 /** An invitation to keep going with what the date was just saying. */
-const INVITE = /\b(?:tell me more|go on|keep going|carry on|say more|and then(?: what)?|then what|what happened(?: next| then)?|more about that|i want to hear (?:it|this|more))\b/i;
+const INVITE = /\b(?:tell me more|go on|keep going|carry on|say more|and then(?: what)?[\s?.!…]*$|then what|what happened(?: next| then)?|more about that|i want to hear (?:it|this|more))(?:\b|$)/i;
 /** A short plain fact about themselves ("I'm a nurse", "my brother lives there"). */
 const SHARE = new RegExp(String.raw`^${LEAD}(?:i'm|i am|i was|i work|i do|i have|i've|i live|i grew|i used to|i just|my|mine|me too|same)\b`, 'i');
 const FLIRT = /\b(?:you(?:'re| are| look| seem)\s+(?:so\s+|really\s+|very\s+|kinda\s+|kind of\s+|pretty\s+|quite\s+)?(?:cute|pretty|beautiful|gorgeous|handsome|hot|sexy|attractive|stunning|adorable|charming|lovely|sweet|amazing|fun|funny|interesting|cool|nice|great|good)|your\s+(?:eyes|smile|laugh|voice|hair|outfit|dress)|(?:i\s+)?(?:like|fancy|adore)\s+you|into you|crush on you|kiss(?:ing)? you|flirt\w*|cutie|second date|see you again)\b/i;
+/** "You have a very distracting grin": a compliment on how the date looks or sounds. */
+const FEATURE_COMPLIMENT = /\byou(?:'ve| have)(?: got)? (?:a |an |such a |such an |the |really |very |quite )?(?:[\w-]+ ){0,3}(?:smile|grin|laugh|eyes|voice|face|hands)\b/i;
+/** An apology for a line is not a new advance. */
+const TAKES_BACK = /\b(?:sorry|apologi[sz]e|my bad|that was (?:a )?(?:rude|terrible|bad|awful)|came out wrong)\b/i;
 const JOKE = /(?:\b(?:lol|lmao|lmfao|rofl|haha+|hehe+|jk|just kidding|kidding|joking)\b|😂|🤣|😜|😉)/i;
 const DISCLOSURE = /\b(?:i\s+(?:feel|felt)\b|i(?:'m| am)\s+(?:so\s+|really\s+|kind of\s+|a bit\s+)?(?:sad|stressed|nervous|anxious|lonely|scared|worried|overwhelmed|exhausted|burnt out|burned out|heartbroken|grieving)|passed away|died|lost my|got fired|laid off|broke up|divorc\w*|depress\w*|therapy|diagnos\w*|miss (?:her|him|them|my)|hard (?:time|year|week))\b/i;
 const OPINION = /\b(?:i think|i reckon|i feel like|i (?:love|hate|can't stand|cannot stand|prefer|refuse)|overrated|underrated|the best|the worst|(?:is|are) (?:better|worse) than|hot take|unpopular opinion)\b/i;
@@ -57,12 +61,12 @@ export function readHumanTurn(humanText: string, lastDateLine?: string): HumanRe
   if (bounced !== undefined) moves.push('bounce');
   if (reaction) moves.push('reaction');
   if (invite) moves.push('invite');
-  if (FLIRT.test(text)) moves.push('flirt');
+  if ((FLIRT.test(text) || FEATURE_COMPLIMENT.test(text)) && !TAKES_BACK.test(text)) moves.push('flirt');
   if (JOKE.test(text)) moves.push('joke');
   if (DISCLOSURE.test(text) || (words >= 30 && !questions.length)) moves.push('disclosure');
   if (!questions.length && OPINION.test(text)) moves.push('opinion');
   const plain = !questions.length && bounced === undefined && !moves.length;
-  if (plain && words <= 12 && SHARE.test(text)) moves.push('share');
+  if (plain && words <= 12 && SHARE.test(text) && !/\byou(?:r|rs|'re)?\b/i.test(text)) moves.push('share');
   else if (plain && words <= 4) moves.push('short');
   return { moves, questions, ...(bounced !== undefined ? { bounced } : {}), words };
 }
@@ -108,8 +112,10 @@ export const PLAIN_FACTS: Record<DateId, Partial<Record<Topic, string>>> = {
   },
 };
 
+/** The human wants the date's view or permission ("should I", "do you think I", "am I"), which is not a memory question. */
+const SEEKS_VIEW = /\b(?:(?:should|could|can|may|shall|would) i\b|am i\b|do you (?:think|mind|want|like|feel)\b|would you\b|are you\b)/i;
 /** A question about the human's own life ("do you remember what I do?", "what's my dog's name?"), not about the date. */
-export const asksAboutThemselves = (question: string) => /\b(?:i|i'm|i've|i'd|my|mine|me|myself)\b/i.test(normalize(question)) && !/\b(?:your|yours|yourself)\b/i.test(question);
+export const asksAboutThemselves = (question: string) => { const text = normalize(question); return /\b(?:i|i'm|i've|i'd|my|mine|myself)\b/i.test(text) && !/\b(?:your|yours|yourself)\b/i.test(text) && !SEEKS_VIEW.test(text); };
 
 /** The plain facts a question touches, at most two, for a preset date or a blind date's own occupation. */
 export function answerFacts(dateId: DateId, questions: readonly string[], blind?: { occupation: string }): string[] {

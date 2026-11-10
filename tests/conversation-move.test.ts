@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { answerFacts, conversationMove, readHumanTurn } from '../server/restaurant/conversation-move';
+import { answerFacts, asksAboutThemselves, conversationMove, readHumanTurn } from '../server/restaurant/conversation-move';
 import { turnNote } from '../server/restaurant/turn-note';
 import { DATE_DIALOGUE_INSTRUCTIONS } from '../server/restaurant/dialogue-policy';
 import { soloSystem } from '../server/restaurant/conversation-prompt';
@@ -117,4 +117,23 @@ test('ending the date gives a verdict from what the pair earned, without a scrip
   });
   assert.equal(sparks.evening.farewell.ending?.kind, 'another-evening');
   assert.match(sparks.evening.farewell.ending!.title, /Another evening/);
+});
+
+test('turn reading does not mistake requests, compliments and apologies for something else', () => {
+  // "Tell me about something you..." asks the date; "me" alone does not make it a memory question.
+  assert.equal(asksAboutThemselves('Tell me about something you have been trying to learn.'), false);
+  assert.equal(asksAboutThemselves('Do you remember what I do?'), true);
+  assert.equal(asksAboutThemselves('Where did I say I grew up?'), true);
+  assert.equal(asksAboutThemselves('What do you think I should order?'), false);
+  assert.equal(asksAboutThemselves('Am I boring you?'), false);
+  // "and then" in the middle of the human's own sentence is not an invitation to keep going.
+  assert.deepEqual(readHumanTurn('I get excited when a detail reminds me of a story, and then my story tries to steal the room.').moves, []);
+  assert.deepEqual(readHumanTurn('And then?').moves, ['invite']);
+  assert.deepEqual(readHumanTurn('Please carry on. I do want your answer.').moves, ['invite']);
+  // A remark about the date is not a fact about the human.
+  assert.deepEqual(readHumanTurn('I am enjoying how quickly you say what you think.').moves, []);
+  assert.deepEqual(readHumanTurn("I'm a nurse.").moves, ['share']);
+  // An apology that mentions flirting is not a new advance; a compliment on a grin is one.
+  assert.deepEqual(readHumanTurn('I was trying to flirt. That was a terrible way to start with someone I have just met.').moves, []);
+  assert.deepEqual(readHumanTurn('You have a very distracting grin.').moves, ['flirt']);
 });
