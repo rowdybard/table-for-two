@@ -10,7 +10,7 @@ import { DATE_DIALOGUE_INSTRUCTIONS, MEMORY_PARTS, CONTRACT_MEMORY_CHARS, SPOKEN
 import { SKEPTICISM_INSTRUCTIONS } from '../restaurant/skepticism';
 import { AGENDA_INSTRUCTIONS } from '../restaurant/agendas';
 import { BOUNDARY_INSTRUCTIONS } from '../restaurant/boundaries';
-import { NOTES_EMPTY, agendaLine, asksAboutLine, boundaryLines, clean, heardPrefix, hintTurn, lastQuestion, quote, serviceFacts } from '../restaurant/turn-note';
+import { QUIET_GAP_SECONDS, NOTES_EMPTY, agendaLine, asksAboutLine, boundaryLines, clean, heardPrefix, hintTurn, lastQuestion, quote, serviceFacts } from '../restaurant/turn-note';
 import type { AgendaPrompt, BoundaryPrompt } from '../restaurant/turn-note';
 import { conversationContentNote } from '../../src/restaurant/conversation-content';
 
@@ -157,6 +157,45 @@ export interface DoubleFlow {
   quietSeconds?: number;
   lastDateLine?: { by: string; text: string };
 }
+/** Production and evaluation use the same listener-aware continuity cues. */
+export function doubleConversationFlow(input: {
+  history: readonly (HistoryEntry & { authored?: boolean })[];
+  lines: readonly { id: string; speaker: string; text: string }[];
+  human: DoubleHumanId; target: ConversationTarget; text: string; quietSeconds: number;
+  dateNames: Record<DoubleDateActorId, string>;
+  available(actor: DoubleDateActorId): boolean;
+  heard(lineId: string, human: DoubleHumanId): Playback;
+}): DoubleFlow {
+  type FlowLine = NonNullable<HistoryEntry['lines']>[number];
+  const actors: DoubleDateActorId[] = ['d1', 'd2'];
+  const humans: DoubleHumanId[] = ['h1', 'h2'];
+  const dateNames = input.dateNames;
+  const turn = { human: input.human, request: { target: input.target, text: input.text }, quiet: input.quietSeconds };
+  const heardBy = (line: FlowLine) => input.heard(line.id, turn.human);
+  const lastIndex = (test: (entry: HistoryEntry) => boolean) => { for (let index = input.history.length - 1; index >= 0; index--) if (test(input.history[index])) return index; return -1; };
+  const lastHumanAt = lastIndex(entry => !!entry.human);
+  const flow: DoubleFlow = {};
+  // Everything the table said since the previous human turn; only the model's own reply to this same friend can be "kept talking past".
+  const since = input.history.slice(lastHumanAt + 1), replyToThem = lastHumanAt >= 0 && input.history[lastHumanAt].human === turn.human;
+  const said = since.flatMap(entry => entry.lines ?? []).filter(line => !humans.includes(line.speaker as DoubleHumanId));
+  const reply = replyToThem ? since.filter(entry => !entry.authored).flatMap(entry => entry.lines ?? []).filter(line => !humans.includes(line.speaker as DoubleHumanId)) : [];
+  const name = (line: FlowLine) => actors.includes(line.speaker as DoubleDateActorId) ? dateNames[line.speaker as DoubleDateActorId] : line.speaker === 'waiter' ? 'Eli' : 'the neighbouring diner';
+  const cutOff = said.filter(line => { const p = heardBy(line); return !!p && !p.completed && p.playedSeconds > 0; }).at(-1);
+  if (cutOff) flow.talkedOver = { by: name(cutOff), heard: heardPrefix(cutOff.text, heardBy(cutOff)!.playedSeconds) };
+  else if (reply.length && reply.every(line => !heardBy(line)?.completed && !heardBy(line)?.playedSeconds)) flow.keptTalking = true;
+  // A quiet table is one where nobody was speaking: talking over a line or past a reply that never played is the opposite.
+  if (turn.quiet >= QUIET_GAP_SECONDS && !flow.talkedOver && !flow.keptTalking) flow.quietSeconds = turn.quiet;
+  // "What do you mean?" is about the line of the date they named, else the one they were talking to, else (said to the table)
+  // whoever last spoke among the dates still in the conversation. Said to the other friend, it is about nothing a date said.
+  const heardDates = [...input.lines].reverse().filter(line => actors.includes(line.speaker as DoubleDateActorId) && input.available(line.speaker as DoubleDateActorId) && heardBy(line)?.completed);
+  const lineOf = (id: string) => heardDates.find(line => line.speaker === id);
+  const target = turn.request.target as string, spoken = turn.request.text.toLowerCase();
+  const named = actors.find(id => new RegExp(`(?:^|[^\\p{L}])${dateNames[id].toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}])`, 'u').test(spoken));
+  const last = named ? lineOf(named) : humans.includes(target as DoubleHumanId) ? undefined : actors.includes(target as DoubleDateActorId) ? lineOf(target) : heardDates[0];
+  if (last) flow.lastDateLine = { by: dateNames[last.speaker as DoubleDateActorId], text: last.text };
+  return flow;
+}
+
 export interface DoubleNoteInput {
   /** d1 first, d2 second. */
   couples: readonly Couple[];

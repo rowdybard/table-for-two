@@ -13,7 +13,7 @@ import { roleplayInstructions } from '../../server/restaurant/roleplay';
 import { EMOTIONS, SOCIAL_SIGNALS, TURN_SCHEMA, type ClaudeRequest } from '../../server/restaurant/providers';
 import { validateTurn } from '../../server/restaurant';
 import { DOUBLE_TURN_SCHEMA, validateDoubleTurn } from '../../server/double-date/conversation';
-import { doubleMessages, doubleSystem, doubleTurnNote, friendNames, presetDateSheet, renderDoubleHistory, type Couple, type DateSheet, type HistoryEntry, type Playback } from '../../server/double-date/table-note';
+import { doubleConversationFlow, doubleMessages, doubleSystem, doubleTurnNote, friendNames, presetDateSheet, renderDoubleHistory, type Couple, type DateSheet, type HistoryEntry, type Playback } from '../../server/double-date/table-note';
 import type { EvaluationScript, EvaluationTurn } from './evaluation-fixtures';
 
 type Entry = { role: 'user' | 'assistant'; content: string };
@@ -103,10 +103,9 @@ export class EvaluationConversation {
         agenda: null, boundaries: director.boundaries.promptContext(), avoid: dialogueLoopContext(recentOwn, turn.text).avoidUnpromptedTopics,
         friendOnlyTurns: this.excluded[actorId], recentOwn, pendingQuestion: director.pendingQuestion };
     });
-    const last = this.lines.at(-1), interrupted = last && !this.heard.get(last.id)?.[speaker]?.completed;
-    const note = doubleTurnNote({ couples, speaker, target, humanText: turn.text, via: turn.via ?? 'typed', elapsedMinutes: Math.floor(this.views.h1.elapsed / 60),
-      flow: { ...(interrupted && last ? { talkedOver: { by: this.dateNames[last.speaker as DoubleDateActorId] ?? last.speaker, heard: heardPrefix(last.text, 1) } } : {}),
-        ...(turn.quietSeconds ? { quietSeconds: turn.quietSeconds } : {}), ...(last ? { lastDateLine: { by: this.dateNames[last.speaker as DoubleDateActorId] ?? last.speaker, text: last.text } } : {}) } });
+    const flow = doubleConversationFlow({ history: this.doubleHistory, lines: this.lines, human: speaker, target, text: turn.text,
+      quietSeconds: turn.quietSeconds ?? 0, dateNames: this.dateNames, available: id => this.views[owner(id)].phase !== 'ended', heard: (id, human) => this.heard.get(id)?.[human] });
+    const note = doubleTurnNote({ couples, speaker, target, humanText: turn.text, via: turn.via ?? 'typed', elapsedMinutes: Math.floor(this.views.h1.elapsed / 60), flow });
     const schema = structuredClone(DOUBLE_TURN_SCHEMA);
     schema.properties.utterances.items.properties.speaker.enum = actors.filter(actor => this.views[owner(actor)].phase !== 'ended');
     return { model: this.model, system: doubleSystem(this.sheets, roleplayInstructions(this.model), { emotions: EMOTIONS, signals: SOCIAL_SIGNALS }),

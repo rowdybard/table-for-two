@@ -255,3 +255,49 @@ test('a late response from a pre-suspension turn cannot replace the reconnected 
     assert.equal(client.state?.revision, 5); assert.ok(!seen.includes('late-old')); assert.equal(posts, 1);
   } finally { client.dispose(); env.restore(); }
 });
+
+for (const method of ['create', 'join'] as const) test(`hiding during pending Double ${method} rejects the late seat and never starts polling`, async () => {
+  let release!: (response: Response) => void, signal!: AbortSignal, posts = 0, gets = 0, states = 0;
+  const env = environment(async (_input, init) => {
+    if (init?.method === 'POST') {
+      posts++;
+      if (posts === 1) { signal = init.signal!; return new Promise<Response>(resolve => { release = resolve; }); }
+      return json(membership, 201);
+    }
+    gets++; return json({ state: room, signals: [] });
+  });
+  const client = new DoubleDateClient(callbacks({ onState() { states++; } }));
+  try {
+    const pending = method === 'create' ? client.create('Alex', 'claude-haiku-5-5', 2) : client.join('ABC123', 'Alex');
+    client.suspend(); assert.equal(signal.aborted, true);
+    await client.resume();
+    release(json(membership, 201)); await assert.rejects(pending, { name: 'AbortError' });
+    assert.equal(client.active, false); assert.equal(client.state, undefined); assert.equal(states, 0); assert.equal(gets, 0);
+    assert.equal(env.stored.has(storageKey), false);
+    await client.create('Alex', 'claude-haiku-5-5', 2);
+    await until(() => gets > 0);
+    await client.command({ type: 'reset-model' });
+    assert.equal(client.active, true, 'a new foreground seat is usable after resuming with no membership');
+  } finally { client.dispose(); env.restore(); }
+});
+
+test('a late restore response cannot overwrite the fresh foreground snapshot', async () => {
+  let releaseRestore!: (response: Response) => void, restoreSignal!: AbortSignal, gets = 0, states = 0, leaves = 0;
+  const fresh = { ...room, revision: 5 }, stale = { ...room, revision: 99 };
+  const env = environment(async (input, init) => {
+    if (String(input).endsWith('/leave')) { leaves++; return json({}); }
+    gets++;
+    if (gets === 1) { restoreSignal = init!.signal!; return new Promise<Response>(resolve => { releaseRestore = resolve; }); }
+    return json({ state: fresh, signals: [] });
+  });
+  env.stored.set(storageKey, JSON.stringify(membership));
+  const client = new DoubleDateClient(callbacks({ onState() { states++; } }));
+  try {
+    const restoring = client.restore();
+    client.suspend(); assert.equal(restoreSignal.aborted, true); assert.equal(leaves, 1);
+    await client.resume(); assert.equal(client.state?.revision, 5);
+    const before = states;
+    releaseRestore(json({ state: stale, signals: [] })); assert.equal(await restoring, false);
+    assert.equal(client.state?.revision, 5); assert.equal(states, before);
+  } finally { client.dispose(); env.restore(); }
+});

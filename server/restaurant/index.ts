@@ -145,8 +145,9 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
   const directDolphinConfigured = !!env.DOLPHIN_LLM_API_KEY?.trim() || !!opts.dolphinLlm;
   const earnedModel = directDolphinConfigured ? DOLPHIN_LLM_MODEL : hordeEarned || (!dolphinConfigured && hordeConfigured) ? HORDE_MODEL : DOLPHIN_MODEL;
   const claude: ClaudeAdapter = { stream(request, signal) { return (request.model === DOLPHIN_LLM_MODEL ? directDolphin : request.model === HORDE_MODEL ? horde : request.model === DOLPHIN_MODEL ? dolphin : anthropic).stream(request, signal); } };
-  // Look up worker availability early without sending dialogue or queuing inference.
-  if (hordeConfigured) void horde.prepare?.().catch(() => {});
+  // Only an explicitly configured legacy Horde route prewarms its worker list.
+  // Enabling private model commands alone must not contact an unused provider.
+  if (hordeDefault || hordeEarned) void horde.prepare?.().catch(() => {});
   // Injected adapters keep the legacy paid-accounting test contract unless the
   // caller explicitly asks to exercise free Edge accounting. Production always
   // defaults to Edge, even when an unused ElevenLabs key is still configured.

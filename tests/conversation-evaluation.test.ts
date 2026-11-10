@@ -383,7 +383,7 @@ test('an accepted Solo stop retires its shared premise before the provider can f
   assert.match(next, /promise to recommend a book/); assert.doesNotMatch(next, /shared premise: rival fry diplomats/);
 });
 
-test('an accepted Double stop retires only the speaking pair’s premise even without a response', () => {
+test('an accepted Double stop retires only the speaking pairâ€™s premise even without a response', () => {
   const original = SHORT_EVALUATION_SCRIPTS.find(item => item.mode === 'double')!;
   const fixture = { ...original, turns: original.turns.map((turn, index) => index === 1 ? { ...turn, human: 'h1' as const, text: 'Please stop joking about that. Change the subject.' } : { ...turn }) };
   const runtime = new EvaluationConversation(fixture, 'claude-haiku-5-5');
@@ -401,5 +401,30 @@ test('an accepted Double stop retires only the speaking pair’s premise even with
   successful.request(0); successful.commit(0, successful.validate(doubleResponse(first, other, both)));
   successful.request(1); successful.commit(1, successful.validate(doubleResponse(first, other, both)));
   assert.doesNotMatch(successful.views.h1.memory, /shared premise/);
-  assert.match(successful.views.h2.memory, /shared premise: moon orchestra/, 'a successful response cannot erase the other pair’s premise');
+  assert.match(successful.views.h2.memory, /shared premise: moon orchestra/, 'a successful response cannot erase the other pairâ€™s premise');
+});
+
+
+test('Double evaluation clarification cites only the addressed date actually heard by this speaker', () => {
+  const source = SHORT_EVALUATION_SCRIPTS.find(s => s.mode === 'double')!;
+  const lines = [{ speaker: 'd1', text: 'I have a very particular opinion about rain.', emotion: 'amused' }, { speaker: 'd2', text: 'I would rather be out walking in the sun.', emotion: 'warm' }];
+  for (const [target, text, expected] of [
+    ['d1', 'What do you mean?', 'Mira'], ['d2', 'What do you mean?', 'Jules'], ['h2', 'What do you mean?', null], ['d1', 'Jules, what do you mean?', 'Jules'],
+  ] as const) {
+    const fixture = { ...source, dateIds: ['mira', 'jules'] as const, turns: [{ text: 'Hello both of you.', human: 'h1' as const, target: 'table' as const }, { text, human: 'h1' as const, target }] };
+    const runtime = new EvaluationConversation(fixture, 'claude-haiku-5-5');
+    runtime.request(0); runtime.commit(0, runtime.validate(doubleResponse('', '', lines)));
+    const note = runtime.request(1).messages.at(-1)!.content;
+    if (expected) assert.match(note, new RegExp(`asking about ${expected}`));
+    else assert.doesNotMatch(note, /asking about/);
+  }
+  for (const delivery of ['unheard', 'interrupted'] as const) {
+    const fixture = { ...source, dateIds: ['mira', 'jules'] as const, turns: [{ text: 'Hello both of you.', human: 'h1' as const, target: 'table' as const }, { text: 'What do you mean?', human: 'h1' as const, target: 'd1' as const, via: 'voice' as const, previousDelivery: delivery }] };
+    const runtime = new EvaluationConversation(fixture, 'claude-haiku-5-5');
+    runtime.request(0); runtime.commit(0, runtime.validate(doubleResponse('', '', lines)));
+    const note = runtime.request(1).messages.at(-1)!.content;
+    assert.doesNotMatch(note, /asking about/);
+    if (delivery === 'unheard') { assert.doesNotMatch(note, /heard only|talked over/); assert.match(note, /kept talking/); }
+    else assert.match(note, /still speaking|cut off/);
+  }
 });

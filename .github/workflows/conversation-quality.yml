@@ -125,8 +125,13 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - name: Install the headless Chromium pinned by Playwright
+        if: matrix.id != 'restaurant'
         timeout-minutes: 8
         run: pnpm exec playwright install --with-deps --only-shell chromium
+      - name: Install full Chromium for real tab visibility
+        if: matrix.id == 'restaurant'
+        timeout-minutes: 8
+        run: pnpm exec playwright install --with-deps --no-shell chromium
       - name: Run the isolated browser group
         timeout-minutes: 22
         shell: bash
@@ -134,6 +139,7 @@ jobs:
           NODE_OPTIONS: --import=${{ github.workspace }}/tests/fixtures/evaluation-network-guard.mjs
           TEST_FILE: ${{ matrix.file }}
           TEST_GREP: ${{ matrix.grep }}
+          BROWSER_GROUP: ${{ matrix.id }}
         run: |
           elapsed=$(( $(date +%s) - BROWSER_JOB_STARTED_AT ))
           remaining=$(( 26 * 60 - elapsed ))
@@ -147,8 +153,14 @@ jobs:
           if [[ -n "$TEST_GREP" ]]; then
             args+=(--grep "$TEST_GREP")
           fi
+          command=(pnpm exec playwright test)
+          if [[ "$BROWSER_GROUP" == restaurant ]]; then
+            # Headed Chromium has real foreground tabs; headless-shell marks every page visible.
+            command=(xvfb-run -a pnpm exec playwright test)
+            args+=(--headed)
+          fi
           # Bound cleanup too if a browser ignores Playwright's own global deadline.
-          timeout --signal=TERM --kill-after=30s "$(( seconds + 30 ))s" pnpm exec playwright test "${args[@]}"
+          timeout --signal=TERM --kill-after=30s "$(( seconds + 30 ))s" "${command[@]}" "${args[@]}"
       - uses: actions/upload-artifact@v4
         if: always()
         timeout-minutes: 2

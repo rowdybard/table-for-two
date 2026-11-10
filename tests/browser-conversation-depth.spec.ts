@@ -49,7 +49,7 @@ test.beforeAll(async () => {
       res.end(bytes);
     }).catch(() => res.writeHead(404).end());
   });
-  app = await attachRestaurantServer(http, { env: { DATE_SPEECH_PROVIDER: 'none' }, claude: adapter, horde: adapter, development: true, ledgerPath: false, autoTick: false });
+  app = await attachRestaurantServer(http, { env: { DATE_SPEECH_PROVIDER: 'none' }, claude: adapter, horde: adapter, development: true, ledgerPath: false, autoTick: true });
   await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${(http.address() as { port: number }).port}`;
   await mkdir('.qa', { recursive: true });

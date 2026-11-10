@@ -17,7 +17,7 @@ import type { ConversationRoutingContext } from '../restaurant/conversation-rout
 import { MEMORY_REJECT, mergeMemoryForDelivery, retireSharedPremise } from '../restaurant/memory';
 import { tableFacts } from '../restaurant/table-facts';
 import { QUIET_GAP_SECONDS, heardPrefix } from '../restaurant/turn-note';
-import { doubleMessages, doubleSystem, doubleTurnNote, friendNames, presetDateSheet, renderDoubleHistory } from './table-note';
+import { doubleConversationFlow, doubleMessages, doubleSystem, doubleTurnNote, friendNames, presetDateSheet, renderDoubleHistory } from './table-note';
 import type { Couple, DateSheet, DoubleFlow } from './table-note';
 
 const humans: DoubleHumanId[] = ['h1', 'h2'];
@@ -180,29 +180,8 @@ export class DoubleConversation {
 
   /** How this turn's words arrived: over the date, before the last reply landed, or after a long quiet. */
   private flowFor(turn: QueuedTurn, dateNames: Record<DoubleDateActorId, string>): DoubleFlow {
-    const heardBy = (line: DoubleDialogueLine) => this.heard.get(line.id)?.[turn.human];
-    const lastIndex = (test: (entry: History) => boolean) => { for (let index = this.history.length - 1; index >= 0; index--) if (test(this.history[index])) return index; return -1; };
-    const lastHumanAt = lastIndex(entry => !!entry.human);
-    const flow: DoubleFlow = {};
-    // Everything the table said since the previous human turn; only the model's own reply to this same friend can be "kept talking past".
-    const since = this.history.slice(lastHumanAt + 1), replyToThem = lastHumanAt >= 0 && this.history[lastHumanAt].human === turn.human;
-    const said = since.flatMap(entry => entry.lines ?? []).filter(line => !humans.includes(line.speaker as DoubleHumanId));
-    const reply = replyToThem ? since.filter(entry => !entry.authored).flatMap(entry => entry.lines ?? []).filter(line => !humans.includes(line.speaker as DoubleHumanId)) : [];
-    const name = (line: DoubleDialogueLine) => actors.includes(line.speaker as DoubleDateActorId) ? dateNames[line.speaker as DoubleDateActorId] : line.speaker === 'waiter' ? 'Eli' : 'the neighbouring diner';
-    const cutOff = said.filter(line => { const p = heardBy(line); return !!p && !p.completed && p.playedSeconds > 0; }).at(-1);
-    if (cutOff) flow.talkedOver = { by: name(cutOff), heard: heardPrefix(cutOff.text, heardBy(cutOff)!.playedSeconds) };
-    else if (reply.length && reply.every(line => !heardBy(line)?.completed && !heardBy(line)?.playedSeconds)) flow.keptTalking = true;
-    // A quiet table is one where nobody was speaking: talking over a line or past a reply that never played is the opposite.
-    if (turn.quiet >= QUIET_GAP_SECONDS && !flow.talkedOver && !flow.keptTalking) flow.quietSeconds = turn.quiet;
-    // "What do you mean?" is about the line of the date they named, else the one they were talking to, else (said to the table)
-    // whoever last spoke among the dates still in the conversation. Said to the other friend, it is about nothing a date said.
-    const heardDates = [...this.state.lines].reverse().filter(line => actors.includes(line.speaker as DoubleDateActorId) && this.availableForDialogue(line.speaker as DoubleDateActorId) && heardBy(line)?.completed);
-    const lineOf = (id: string) => heardDates.find(line => line.speaker === id);
-    const target = turn.request.target as string, spoken = turn.request.text.toLowerCase();
-    const named = actors.find(id => new RegExp(`(?:^|[^\\p{L}])${dateNames[id].toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}])`, 'u').test(spoken));
-    const last = named ? lineOf(named) : humans.includes(target as DoubleHumanId) ? undefined : actors.includes(target as DoubleDateActorId) ? lineOf(target) : heardDates[0];
-    if (last) flow.lastDateLine = { by: dateNames[last.speaker as DoubleDateActorId], text: last.text };
-    return flow;
+    return doubleConversationFlow({ history: this.history, lines: this.state.lines, human: turn.human, target: turn.request.target,
+      text: turn.request.text, quietSeconds: turn.quiet, dateNames, available: id => this.availableForDialogue(id), heard: (id, human) => this.heard.get(id)?.[human] });
   }
 
   private async drain() {

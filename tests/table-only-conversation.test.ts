@@ -68,3 +68,14 @@ test('ordinary kindness does not auto-award comfort; reciprocal delivered chemis
     scene.acknowledge(second); assert.equal(scene.state.evening.chemistry?.unlocked, true); assert.equal(scene.state.evening.stance, 'comfortable');
   } finally { scene.free(); }
 });
+
+
+test('private model commands do not prewarm an unused Horde provider', async t => {
+  let prepares = 0, generations = 0;
+  const adapter: ClaudeAdapter = { async prepare() { prepares++; }, async *stream() { generations++; throw new Error('No model call was requested.'); } };
+  const http = createServer();
+  const app = await attachRestaurantServer(http, { env: { DATE_ALLOW_MODEL_SELECTION: '1', DATE_SPEECH_PROVIDER: 'none' }, horde: adapter, autoTick: false, ledgerPath: false });
+  t.after(() => app.close());
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(prepares, 0); assert.equal(generations, 0);
+});

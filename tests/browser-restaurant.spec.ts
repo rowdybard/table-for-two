@@ -785,6 +785,7 @@ test('background tab stops work and resumes the same paused date without replayi
     await expect(page.locator('#dinner-hud')).toBeVisible(); await waitForRestaurantScene(page);
     const sessionId = (await state(page)).id, beforeCalls = calls.length;
     await expect.poll(() => page.evaluate(() => window.__mobileGLDiagnostics?.drawCalls ?? 0)).toBeGreaterThan(0);
+    await expect(page.locator('#mic-toggle')).toBeEnabled();
     await page.locator('#mic-toggle').click();
     await expect(page.locator('#mic-toggle')).toHaveAttribute('aria-pressed', 'true');
     await expect.poll(() => page.evaluate(() => (window as Window & { __lifecycleTrack?: MediaStreamTrack }).__lifecycleTrack?.readyState)).toBe('live');

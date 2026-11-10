@@ -27,6 +27,7 @@ import { createFrameCap } from './FrameCap';
 import { consumeTurnResponse, replyDeadlineMs } from './conversation-stream';
 import { captionReadingMs, waitForCaptionPaint, waitForCaptionReading } from './caption-delivery';
 import { PageActivity } from './PageActivity';
+import { dateArrival } from './DateArrival';
 
 document.title = 'Table for Two';
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = markup;
@@ -215,6 +216,7 @@ function applyState(next: DinnerState) {
   if (state.phase === 'paused' && el('settings-dialog').hidden && !eveningUI.isDialogOpen) el('pause-dialog').hidden = false;
   if (state.phase === 'ended') showEnding();
   renderUsage();
+  updateTypedSubmit();
 }
 async function request<T>(path: string, body?: unknown, options: { signal?: AbortSignal; method?: string } = {}): Promise<T> {
   const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 15000);
@@ -285,6 +287,7 @@ function recordDelivery(generation: number, utterance: SceneUtterance, completed
   }).catch(() => {});
 }
 let displayedVoiceStatus = '';
+let displayedArrivalStatus = '';
 const clearVoiceStatus = () => {
   const status = el('turn-status');
   if (displayedVoiceStatus && status.textContent === displayedVoiceStatus) status.textContent = '';
@@ -358,8 +361,17 @@ function cancelLocalPlayback() {
   el('caption').hidden = true; updateTypedSubmit();
 }
 function updateTypedSubmit() {
-  const reset = parseModelChatCommand(input('conversation-input').value)?.type === 'reset';
-  btn('send-turn').disabled = modelResetPending || ((busy || typedSubmissionPending) && !reset);
+  const modelCommand = parseModelChatCommand(input('conversation-input').value), reset = modelCommand?.type === 'reset';
+  const target = state.mode === 'double-date' ? (el<HTMLSelectElement>('conversation-target').value || 'table') as ConversationTarget : 'table';
+  const arrival = dateArrival(state, doubleRoom, target), micArrival = dateArrival(state, doubleRoom, 'table');
+  btn('send-turn').disabled = modelResetPending || ((busy || typedSubmissionPending) && !reset) || (!modelCommand && !arrival.ready);
+  if (joined && micEnabled && !micArrival.ready && !pageSuspended) { microphoneAttempt++; recognition.stop(); friendVoice.disable(); micEnabled = false; updateMic(); }
+  btn('mic-toggle').disabled = joined && !micEnabled && !micArrival.ready;
+  const status = el('turn-status');
+  const waiting = joined && state.phase === 'playing' && !arrival.ready ? `${arrival.waiting.join(' and ')} ${arrival.waiting.length > 1 ? 'are' : 'is'} joining you` : '';
+  if (displayedArrivalStatus && status.textContent === displayedArrivalStatus && !waiting) status.textContent = '';
+  if (waiting && (!status.textContent || status.textContent === displayedArrivalStatus)) status.textContent = waiting;
+  displayedArrivalStatus = waiting;
 }
 async function interrupt() {
   cancelLocalPlayback();
@@ -414,6 +426,10 @@ async function sendTurn(raw: string, explicitTarget?: ConversationTarget, via: T
   const text = raw.trim();
   const resetEpoch = modelResetEpoch;
   if (!text || !joined || pageSuspended || document.hidden || state.phase !== 'playing' || visibleModal() || modelResetPending) return false;
+  let target: ConversationTarget = state.mode === 'double-date' ? explicitTarget ?? renderer.getConversationTarget(state) : 'table';
+  const aimed = doubleRoom?.dates.find(date => date.id === target);
+  if (aimed && (aimed.stance === 'leaving' || doubleRoom?.views[aimed.humanId].phase === 'ended')) target = 'table';
+  if (!dateArrival(state, doubleRoom, target).ready) { updateTypedSubmit(); return false; }
   if (!doubleClient.active && !scenePresenceAvailable(state)) { toast('Give your date a moment. They’ll be back at the table shortly.'); return false; }
   if (text.length > 2000) { toast('Keep each turn under 2,000 characters.'); return false; }
   // Each wait is bounded so a slow unlock, interrupt or receipt cannot leave the mic feeling dead.
@@ -422,15 +438,12 @@ async function sendTurn(raw: string, explicitTarget?: ConversationTarget, via: T
   const bounded = async (pending: Promise<unknown>) => { if (!(await settled(pending, TURN_WAIT_MS))) stalled = true; };
   await bounded(unlockAudio());
   await bounded(interruption);
-  if (!joined || pageSuspended || document.hidden || state.phase !== 'playing' || visibleModal() || modelResetPending || resetEpoch !== modelResetEpoch) return false;
+  if (!joined || pageSuspended || document.hidden || state.phase !== 'playing' || visibleModal() || modelResetPending || resetEpoch !== modelResetEpoch || !dateArrival(state, doubleRoom, target).ready) return false;
   if (busy || pendingSpeeches || playback.speaker) await bounded(interrupt());
   const submissionEpoch = generationEpoch;
   await bounded(playbackReceipts);
-  if (!joined || pageSuspended || document.hidden || state.phase !== 'playing' || visibleModal() || submissionEpoch !== generationEpoch || (interruptPending && !stalled) || modelResetPending || resetEpoch !== modelResetEpoch) return false;
+  if (!joined || pageSuspended || document.hidden || state.phase !== 'playing' || visibleModal() || submissionEpoch !== generationEpoch || (interruptPending && !stalled) || modelResetPending || resetEpoch !== modelResetEpoch || !dateArrival(state, doubleRoom, target).ready) return false;
   if (doubleClient.active) {
-    let target = explicitTarget ?? renderer.getConversationTarget(state);
-    const aimedDate = doubleRoom?.dates.find(date => date.id === target);
-    if (aimedDate && (aimedDate.stance === 'leaving' || doubleRoom?.views[aimedDate.humanId].phase === 'ended')) target = 'table';
     turnStartedAt = performance.now(); firstAudioMs = null;
     const submitted = doubleClient.turn(text, target, via);
     doubleTurnSubmissions.add(submitted);
@@ -592,6 +605,7 @@ function showTypedInput() {
   btn('type-toggle').setAttribute('aria-expanded', 'true');
   const target = el<HTMLSelectElement>('conversation-target');
   if (doubleClient.active && target) { const aimed = renderer.getConversationTarget(state); target.value = [...target.options].some(option => option.value === aimed) ? aimed : 'table'; }
+  updateTypedSubmit();
   input('conversation-input').focus();
 }
 async function pauseDinner() {
@@ -828,6 +842,8 @@ el<HTMLFormElement>('conversation-form').addEventListener('submit', event => {
   const modelCommand = parseModelChatCommand(text);
   if (!text || !joined || state.phase !== 'playing' || visibleModal() || modelResetPending || (typedSubmissionPending && modelCommand?.type !== 'reset')) return;
   if (text.length > 2000) { toast('Keep each turn under 2,000 characters.'); return; }
+  const target = doubleClient.active ? el<HTMLSelectElement>('conversation-target').value as ConversationTarget : undefined;
+  if (!modelCommand && !dateArrival(state, doubleRoom, target).ready) { updateTypedSubmit(); return; }
   const submission = ++typedSubmissionEpoch;
   const complete = () => { if (submission === typedSubmissionEpoch) { typedSubmissionPending = false; modelResetPending = false; updateTypedSubmit(); } };
   if (modelCommand) {
@@ -839,7 +855,6 @@ el<HTMLFormElement>('conversation-form').addEventListener('submit', event => {
     void modelControlQueue.finally(complete);
     return;
   }
-  const target = doubleClient.active ? el<HTMLSelectElement>('conversation-target').value as ConversationTarget : undefined;
   typedSubmissionPending = true; input('conversation-input').value = ''; closeTypedInput(); updateTypedSubmit();
   void sendTurn(text, target, 'typed').then(sent => {
     if (submission === typedSubmissionEpoch && !sent && !input('conversation-input').value.trim()) {
@@ -850,13 +865,14 @@ el<HTMLFormElement>('conversation-form').addEventListener('submit', event => {
     .finally(complete);
 });
 input('conversation-input').addEventListener('input', updateTypedSubmit);
+el<HTMLSelectElement>('conversation-target').addEventListener('change', updateTypedSubmit);
 btn('type-toggle').addEventListener('click', () => { if (el('conversation-form').hidden) showTypedInput(); else closeTypedInput(true); });
 btn('mic-toggle').addEventListener('click', async () => {
   const attempt = ++microphoneAttempt;
   if (micEnabled) { recognition.stop(); friendVoice.disable(); micEnabled = false; updateMic(); return; }
-  if (visibleModal() || state.phase !== 'playing' || document.hidden) return;
+  if (visibleModal() || state.phase !== 'playing' || document.hidden || !dateArrival(state, doubleRoom, 'table').ready) return;
   await unlockAudio();
-  if (attempt !== microphoneAttempt || document.hidden || visibleModal() || state.phase !== 'playing') return;
+  if (attempt !== microphoneAttempt || document.hidden || visibleModal() || state.phase !== 'playing' || !dateArrival(state, doubleRoom, 'table').ready) return;
   micEnabled = true; updateMic();
   try { await Promise.all([recognition.start(), doubleClient.active ? friendVoice.enable() : Promise.resolve()]); if (attempt === microphoneAttempt && !micEnabled) { recognition.stop(); friendVoice.disable(); } }
   catch (error) { if (attempt !== microphoneAttempt) return; recognition.stop(); friendVoice.disable(); micEnabled = false; updateMic(); toast((error as Error).message, 10000); }
@@ -958,7 +974,7 @@ document.addEventListener('keydown', event => {
 });
 function suspendPage() {
   if (disposed) return;
-  if (pageSuspended) { pageEpoch++; if (doubleClient.active) doubleClient.suspend(); return; }
+  if (pageSuspended) { pageEpoch++; doubleClient.suspend(); return; }
   pageSuspended = true; pageEpoch++; commandEpoch++;
   renderer?.setActive(false);
   if (!joined && !userEnteredMenu) restoreAttempted = false;
@@ -967,7 +983,9 @@ function suspendPage() {
   releasePointer(); cancelLocalPlayback(); microphoneAttempt++;
   recognition.stop(); friendVoice.disconnect(); sharedMicrophone.suspend(); speech.suspend(); ambience.suspend();
   micEnabled = false; updateMic();
-  if (doubleClient.active) { doubleClient.suspend(); return; }
+  const double = doubleClient.active;
+  doubleClient.suspend();
+  if (double) return;
   if (!joined || state.phase === 'ended') return;
   const path = sessionPath() + '/command', sessionToken = token;
   const pause = () => fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` }, body: JSON.stringify({ type: 'pause', paused: true }), keepalive: true, signal: AbortSignal.timeout(5000) }).catch(() => {});
@@ -977,7 +995,7 @@ async function resumePage() {
   if (!pageSuspended || disposed) return;
   const epoch = ++pageEpoch;
   const double = doubleClient.active;
-  if (double) await doubleClient.resume(); else await backgroundPause;
+  await Promise.all([doubleClient.resume(), backgroundPause]);
   if (disposed || document.hidden || epoch !== pageEpoch) return;
   pageSuspended = false; pageRequests = new AbortController(); backgroundPause = undefined;
   if (!renderer) rebuildRenderer(); else { renderer.setActive(true); renderer.resize(); }
@@ -1023,6 +1041,7 @@ function frame(now: number) {
   }
   renderer.setDateThinking(busy && !playback.speaker);
   renderer.update(dt, state, playback);
+  updateTypedSubmit();
   el('scene-loading').hidden = renderer.isReady;
   const controlsBlocked = menuInputOpen() || !el('conversation-form').hidden || pageSuspended || document.hidden;
   mobile?.update({ joined, playing: state.phase === 'playing' && renderer.isReady && !pageSuspended, blocked: controlsBlocked, modal: visibleModal(), typing: !el('conversation-form').hidden, seated: true, micEnabled, interactionLabel: null });

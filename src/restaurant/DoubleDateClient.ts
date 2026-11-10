@@ -50,11 +50,15 @@ export class DoubleDateClient {
   }
 
   async create(name: string, model: ClaudeModel, sessionLimit: number) {
+    const epoch = this.activityEpoch;
     const response = await this.json<DoubleRoomResponse>('/api/double-date/rooms', { name, model, sessionLimit });
+    if (this.disposed || this.suspended || epoch !== this.activityEpoch) throw new DOMException('Table connection suspended.', 'AbortError');
     this.enter(response); return response.state;
   }
   async join(code: string, name: string) {
+    const epoch = this.activityEpoch;
     const response = await this.json<DoubleRoomResponse>('/api/double-date/rooms/join', { code, name });
+    if (this.disposed || this.suspended || epoch !== this.activityEpoch) throw new DOMException('Table connection suspended.', 'AbortError');
     this.enter(response); return response.state;
   }
   async restore() {
@@ -67,6 +71,7 @@ export class DoubleDateClient {
     for (const id of saved.seen ?? []) this.seen.add(id);
     try {
       const result = await this.json<DoubleRoomPoll>(this.path);
+      if (this.disposed || this.suspended || epoch !== this.activityEpoch) return false;
       this.accept(result.state); this.acceptSignals(result.signals ?? []); this.startPolling();
       return true;
     } catch (error) {
@@ -136,11 +141,11 @@ export class DoubleDateClient {
   }
   async resume() {
     if (!this.suspended || this.disposed) return;
-    const epoch = ++this.activityEpoch; this.suspended = false;
+    const epoch = ++this.activityEpoch; this.resyncing = !!this.membership; this.suspended = false;
     await this.suspending;
     if (this.disposed || this.suspended || epoch !== this.activityEpoch) return;
-    this.resyncing = true;
-    if (!this.polling && this.membership) { this.polling = true; await this.poll(); }
+    if (!this.membership) { this.resyncing = false; return; }
+    if (!this.polling) { this.polling = true; await this.poll(); }
   }
   dispose() { this.disposed = true; this.activityEpoch++; this.stopPolling(); for (const controller of this.requests) controller.abort(); }
 
@@ -198,6 +203,7 @@ export class DoubleDateClient {
   }
   private async json<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
     if (this.suspended || this.disposed) throw new DOMException('Table connection suspended.', 'AbortError');
+    const epoch = this.activityEpoch;
     const controller = new AbortController(); this.requests.add(controller);
     const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
     const cancel = () => controller.abort(signal?.reason);
@@ -210,7 +216,7 @@ export class DoubleDateClient {
       if (!response.ok) throw new RoomRequestError(typeof data.error === 'string' ? data.error : data.error?.message ?? data.message ?? `Table request failed (${response.status}).`, response.status);
       return data as T;
     } catch (error) {
-      if (controller.signal.aborted && this.suspended) throw new DOMException('Table connection suspended.', 'AbortError');
+      if (controller.signal.aborted && (this.suspended || this.disposed || epoch !== this.activityEpoch)) throw new DOMException('Table connection suspended.', 'AbortError');
       if (controller.signal.aborted && !signal?.aborted) throw new Error('The table took too long to respond. You can try again.');
       throw error;
     } finally { clearTimeout(timeout); this.requests.delete(controller); signal?.removeEventListener('abort', cancel); }

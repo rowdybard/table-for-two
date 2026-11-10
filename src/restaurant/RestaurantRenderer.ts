@@ -20,7 +20,8 @@ import { diningOffsetZ } from './dining-space';
 import { scenePresenceAvailable } from './scenario-care';
 import { createDrawCadence } from './FrameCap';
 import { SeatingSpeechFacing, facingPlayerYaw } from './render/SeatingSpeechFacing';
-import { seatedTableFieldOfView, sharedTableCameraYaw } from './render/TableDateCamera';
+import { seatedTableFieldOfView, seatedTablePitch, sharedTableCameraYaw } from './render/TableDateCamera';
+import { alignSeatedDate, soloDateAtSeat } from './render/SeatedDatePose';
 
 type InteractionTarget = Extract<DinnerCommand, { type: 'interact' }>['target'];
 export interface RestaurantInteraction { target: InteractionTarget; label: string; actorId?: ConversationTarget }
@@ -441,6 +442,7 @@ export class RestaurantRenderer {
       const speed = !seated && dt > 0 ? actor.root.position.distanceTo(previous) / dt : 0;
       const facing = seated ? 0 : speed > .12 ? Math.atan2(actor.root.position.x - previous.x, actor.root.position.z - previous.z) : Math.atan2(this.camera.position.x - actor.root.position.x, this.camera.position.z - actor.root.position.z);
       actor.root.rotation.y += Math.atan2(Math.sin(facing - actor.root.rotation.y), Math.cos(facing - actor.root.rotation.y)) * (preview ? 1 : 1 - Math.exp(-dt * 5));
+      alignSeatedDate(actor.root, position, seated, 0);
       if (this.otherDateTarget) this.otherDateTarget.position.y = seated ? 1.15 : 1.4;
       const speaking = playback.actorId === otherDate.id || (!playback.actorId && playback.speaker === 'other-date');
       const listening = this.listeningFor(otherDate.id, state, playback, otherDate.emotion, otherDate.stance, double.otherView ?? state);
@@ -576,7 +578,8 @@ export class RestaurantRenderer {
     if (movedTables && state.seated) this.camera.position.copy(this.cameraTarget);
     this.camera.position.lerp(this.cameraTarget, this.reducedMotion.matches && (focus || inspecting) ? 1 : 1 - Math.exp(-dt * 14));
     const sharedYaw = state.seated && state.doubleDate ? sharedTableCameraYaw(this.camera.position.x, this.camera.position.z + 2.5 - diningOffset) : 0;
-    this.camera.rotation.set(this.pitch, -this.yaw + sharedYaw, 0, 'YXZ');
+    const pitch = state.seated && !focus && !inspecting ? seatedTablePitch(this.camera.aspect, !!state.doubleDate) : this.pitch;
+    this.camera.rotation.set(pitch, -this.yaw + sharedYaw, 0, 'YXZ');
     if (focus === 'farewell' && companion) this.camera.lookAt(companion.position[0] + .47, 1.39, companion.position[2]);
     if (inspecting) this.camera.lookAt(this.inspectionAnchor);
     if (this.focusTransition > 0) {
@@ -597,13 +600,15 @@ export class RestaurantRenderer {
     const foreignIncident = state.doubleDate?.incidentOwner && state.doubleDate.incidentOwner !== state.doubleDate.localHumanId;
     const serviceEvening = state.doubleDate?.role === 'wingman' || foreignIncident ? state.doubleDate?.otherView?.evening ?? evening : evening;
     const localDoubleDate = state.doubleDate?.dates.find(date => date.humanId === state.doubleDate?.localHumanId);
-    const dateSeated = state.phase === 'ended' && evening.care.assistedExit || (localDoubleDate ? localDoubleDate.seated : !takingBreak && state.seated && evening.stance !== 'leaving' && !evening.farewell.ending && Math.hypot(this.date.root.position.x - RESTAURANT.dateSeat[0], this.date.root.position.z - RESTAURANT.dateSeat[2] - diningOffset) < .35);
+    const dateSeated = state.phase === 'ended' && evening.care.assistedExit || (localDoubleDate ? localDoubleDate.seated : !takingBreak && state.seated && evening.stance !== 'leaving' && !evening.farewell.ending && soloDateAtSeat(companion?.position, RESTAURANT.dateSeat[0], RESTAURANT.dateSeat[2] + diningOffset));
     this.date.setSeated(dateSeated);
     const motionX = this.date.root.position.x - previousDateX;
     const motionZ = this.date.root.position.z - previousDateZ;
     const walkingSpeed = dt > 0 && state.phase === 'playing' && !dateSeated ? Math.hypot(motionX, motionZ) / dt : 0;
     const dateSpeaking = playback.actorId ? playback.actorId === localDoubleDate?.id : playback.speaker === 'date';
-    const playerFacing = facingPlayerYaw(this.date.root.position.x, this.date.root.position.z, this.camera.position.x, this.camera.position.z);
+    const facingX = dateSeated && companion ? companion.position[0] : this.date.root.position.x;
+    const facingZ = dateSeated && companion ? companion.position[2] : this.date.root.position.z;
+    const playerFacing = facingPlayerYaw(facingX, facingZ, this.camera.position.x, this.camera.position.z);
     const faceDuringSeating = this.seatingSpeechFacing.update(state.id, state.seated, dateSeated, dateSpeaking,
       state.phase === 'playing' && !takingBreak && evening.stance !== 'leaving' && !evening.farewell.ending && this.date.root.visible && state.doubleDate?.role !== 'wingman');
     if (faceDuringSeating) this.date.root.rotation.y = playerFacing;
@@ -612,6 +617,7 @@ export class RestaurantRenderer {
       const delta = Math.atan2(Math.sin(facing - this.date.root.rotation.y), Math.cos(facing - this.date.root.rotation.y));
       this.date.root.rotation.y += delta * (1 - Math.exp(-dt * 5));
     }
+    if (companion) alignSeatedDate(this.date.root, companion.position, dateSeated, playerFacing);
     this.dateTarget.position.y = dateSeated ? 1.15 : 1.4;
     this.gaze.copy(this.camera.position);
     if (state.doubleDate) {

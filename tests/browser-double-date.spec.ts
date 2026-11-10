@@ -487,6 +487,9 @@ test('friend voice uses one opted-in microphone per browser and exchanges native
 });
 
 async function pauseFromRestaurant(page: Page) {
+  await page.bringToFront();
+  await expect.poll(async () => (await state(page)).phase).toBe('playing');
+  await expect(page.locator('#pause-dialog')).toBeHidden();
   await prompt(page);
   await page.keyboard.press('Escape'); await expect(page.locator('#pause-dialog')).toBeVisible();
   await expect(page.locator('#finish-date')).toBeEnabled();
