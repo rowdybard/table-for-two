@@ -345,7 +345,7 @@ test('a long quiet is mentioned coarsely, and a question the date left hanging i
   assert.match(after(turnNote(input({ flow: { quietSeconds: 90 } }))), /It was quiet for a minute or two after/);
   assert.match(after(turnNote(input({ flow: { quietSeconds: 400 } }))), /It was quiet for a long while after/);
   assert.equal(after(turnNote(input({ flow: {} }))), '');
-  assert.equal(after(turnNote(input({ flow: { pendingQuestion: 'Eli just left. So, what do you do for work?' } }))), 'You asked them “So, what do you do for work?” a little while ago and have not had an answer. If what they say next is not an answer, just respond to what they said.');
+  assert.equal(after(turnNote(input({ flow: { pendingQuestion: 'Eli just left. So, what do you do for work?' } }))), 'You asked them “So, what do you do for work?” a little while ago. If what they say next answers it, take it as the answer. If it does not, they have moved on: respond to what they said, and do not ask it again or mention that it went unanswered.');
   assert.match(after(turnNote(input({ flow: { pendingQuestion: 'Say anything at all.' } }))), /You asked them “Say anything at all\.” a little while ago/, 'a scripted aside with no question mark is quoted whole');
   assert.equal(after(turnNote(input({ flow: { pendingQuestion: null } }))), '');
 });
@@ -577,7 +577,7 @@ test('a question left hanging by a scripted aside is carried into the note', asy
   const { claude, requests } = recorder();
   const server = await boot(claude); t.after(() => server.close()); const api = await server.start();
   await api.turn('Sure, why not.', { via: 'voice' });
-  assert.match(after(noteOf(requests[0])), /You asked them “Shall we share the lemon posset\?” a little while ago and have not had an answer\./);
+  assert.match(after(noteOf(requests[0])), /You asked them “Shall we share the lemon posset\?” a little while ago\. If what they say next answers it/);
 });
 test('the director is told when the human spoke and when the date’s reply ended, and not for a reply that was replaced', async t => {
   const proto = EveningDirector.prototype, spoken: string[] = []; let ended = 0;

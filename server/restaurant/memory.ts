@@ -25,18 +25,24 @@ export function retireSharedPremise(memory: string, latestHumanText: string): st
   });
 }
 
+/** An OPEN clause that is a pending question (“whether they…”, “what the scandal is”, “…?”) rather than a promise. */
+const unansweredQuestion = (clause: string) => !/\bpromis(?:e[ds]?|ing)\b/i.test(clause)
+  && (/\?/.test(clause) || /^(?:whether|if|what|why|how|who|whom|whose|when|where|which|did|do|does|is|are|was|were|will|would|can|could|have|has)\b/i.test(clause.trim()) || /\b(?:answer|reaction|response|reply)\b/i.test(clause));
+
 /** Keep one optional premise behind the obligations in OPEN, even when the model lists it first. */
 function prioritizeOpen(text: string): string {
   let retainedPremise = false;
   return text.replace(/(\bOPEN:\s*)([\s\S]*?)(?=\b(?:HUMAN|TOLD THEM|OPEN):|$)/gi, (_match, label: string, body: string) => {
     const clauses = body.split(/;\s*|\n/).map(part => part.trim()).filter(Boolean);
-    const ordinary = clauses.filter(part => !/^shared premise\s*:/i.test(part));
+    // A question the date asked and did not get answered is not an obligation. Kept in the notebook it is re-read every
+    // turn and re-asked (“did you use a shank?” four times in one evening), so only promises and plans stay in OPEN.
+    const ordinary = clauses.filter(part => !/^shared premise\s*:/i.test(part) && !unansweredQuestion(part));
     const promises = ordinary.filter(part => /\bpromis(?:e[ds]?|ing)\b/i.test(part));
     const other = ordinary.filter(part => !/\bpromis(?:e[ds]?|ing)\b/i.test(part));
     const premise = retainedPremise ? undefined : clauses.find(part => /^shared premise\s*:/i.test(part));
     retainedPremise ||= !!premise;
     // The marker makes the optional bit distinguishable without a fourth notebook section.
-    return label + [...promises, ...other, ...(premise ? [cut(premise, 100)] : [])].join('; ') + (/\n\s*$/.test(body) ? '\n' : '');
+    return label + ([...promises, ...other, ...(premise ? [cut(premise, 100)] : [])].join('; ') || 'nothing pending') + (/\n\s*$/.test(body) ? '\n' : '');
   });
 }
 
