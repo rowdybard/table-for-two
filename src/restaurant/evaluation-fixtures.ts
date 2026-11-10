@@ -2,6 +2,9 @@ import { DOLPHIN_MODEL, type ClaudeModel, type DateId, type TurnVia } from './ty
 import { DOLPHIN_LLM_MODEL } from '../../scripts/lib/baseline-direct-model';
 import type { ConversationTarget, DoubleHumanId } from './double-date-types';
 
+/** Version 2 adds explicit dull and rude openings. Version 1 pilot captures remain historical and immutable. */
+export const EVALUATION_CORPUS_VERSION = 2;
+
 export interface EvaluationTurn {
   text: string;
   via?: TurnVia;
@@ -99,14 +102,14 @@ You do not need to reassure me that everything happens for a reason.
 I would like to hear about a small thing you looked forward to this week.
 Mine was this dinner. I worried that sounded too earnest, but there it is.
 Can we let that be a nice thing without making it a promise about the future?`),
-  fixture('mira-bad-joke-repair', 'mira', 'A joke lands badly and gets repaired', 'An apology addresses its actual target; no instant intimacy or repeated moral lecture.', `I nearly said you look like trouble, then remembered that is an impressively lazy opening.
-You look like someone who would notice a lazy opening, actually.
-That was not much better. I am going to retire the imaginary script.
-I am sorry if that felt like a line instead of interest in you.
-What I meant is that I like how directly you answer things.
+  fixture('mira-bad-joke-repair', 'mira', 'A rude opening gets a specific repair', 'A rude greeting and bad flirting get a proportionate character response. An apology changes the actual behavior without demanding forgiveness, instant intimacy or a repeated moral lecture.', `HI BITCH
+I was trying to flirt. That was a terrible way to start with someone I have just met.
+I am sorry. I will use your name and leave that word out.
+I also had you look like trouble prepared, which is not an improvement. I am retiring the script.
 I would rather you correct me than smile through something irritating.
-My actual question is simple: how has your day been?
-And I am going to listen to the answer without trying to win the conversation.`),
+Let us change the subject: how has your day been?
+Mine involved lending a stranger my umbrella and getting thoroughly soaked.
+I would rather have an ordinary conversation than keep trying to win it with a line.`),
   fixture('mira-interrupted-story', 'mira', 'An interrupted story resumes from what was heard', 'No claim that an unheard story was delivered; concise repair with no forced stock joke.', `Tell me about a small thing that went unexpectedly wrong recently.
 Sorry, I interrupted. I heard the beginning, not the ending.
 Could you carry on from the part I missed?
@@ -212,8 +215,8 @@ My normal job is editing instruction manuals. Different audience, similar confus
 If I say I am working Thursday, I mean the cinema, not the manual job.
 Which of those two jobs sounds more dangerous to you?
 There is a correct answer, and it involves an audience of six with strong opinions.`),
-  fixture('jules-awkward-silence', 'jules', 'Awkwardness can stay funny', 'Dry mutual humor without treating silence or shyness as failure.', `I had an excellent opening sentence in my head on the way here.
-Unfortunately I appear to have left it at the bus stop.
+  fixture('jules-awkward-silence', 'jules', 'Awkwardness can stay funny', 'A dull greeting can become dry mutual humor without treating silence or shyness as failure.', `Hi.
+That was the excellent opening sentence I had in my head. Apparently I set the bar low.
 I am better once a conversation has started than at announcing one.
 We can agree that these first three sentences count as starting.
 What is your least convincing attempt at looking relaxed?
@@ -406,7 +409,7 @@ What is a small thing that helps you relax around someone new?
 Mine is when I can correct a sentence without it becoming a running joke.
 I am enjoying the fact that this conversation only has to happen here.
 If I tell the story later, I can manage without doing an impression of you.`, { mode: 'blind', blindSeed: 'eval-private-joke-36' }),
-  fixture('blind-awkward-restart', 'mira', 'A nervous opening can be restarted', 'Acknowledge an awkward greeting proportionately; permit warmth without instant trust.', `Hello. That came out like I was answering a work phone.
+  fixture('blind-awkward-restart', 'mira', 'A nervous opening can be restarted', 'Answer a dull greeting in the seeded voice, then acknowledge awkwardness proportionately; permit warmth without instant trust.', `Hello.
 I had a clever introduction and then became a person with a mouth.
 Could we agree the first greeting was a rehearsal?
 I am actually glad to be here.

@@ -10,14 +10,15 @@
     "server/restaurant/index.ts"
   ],
   "instrumentationPatch": "docs/conversation-baseline-instrumentation.patch",
-  "corpusFileSha256": "b22ed946c4157d489bdfd6e143400fa6496e167f19b064b26df8f670eb60b60b",
+  "corpusFileSha256": "6d7792fa4e86d24177f7fc1ff312023416ba4d3d1e9c5af6e13b5d15d206b848",
   "copiedHarnessSha256": {
     "src/restaurant/evaluation.ts": "ef82ff8973909025988789eaba326ee5638b7ef153c6ff879182e3863d98a1a4",
-    "src/restaurant/evaluation-fixtures.ts": "b22ed946c4157d489bdfd6e143400fa6496e167f19b064b26df8f670eb60b60b",
+    "src/restaurant/evaluation-fixtures.ts": "6d7792fa4e86d24177f7fc1ff312023416ba4d3d1e9c5af6e13b5d15d206b848",
     "scripts/compare-date-models.ts": "6ca783fe5386544ec5ef51d46e3992a8fc1d6ae2e4babb1560eb134e4a797e79",
     "scripts/lib/conversation-evaluation.ts": "350cd0d677beb09560c4bb808c61dec0342ba13265e46b1ca5c89c95331e8344",
     "scripts/lib/evaluation-provenance.ts": "19b27b196c5ca16f0e7fbe0fd9b2840099e4fe6639708c46f62a8d3e7dee5338",
-    "tests/fixtures/evaluation-network-guard.mjs": "bce5e6658132a5aebe2105fd13b59dacb14f9cf365e0949dfd3557c44e6499ea"
+    "tests/fixtures/evaluation-network-guard.mjs": "bce5e6658132a5aebe2105fd13b59dacb14f9cf365e0949dfd3557c44e6499ea",
+    "tests/evaluation-corpus-coverage.test.ts": "8071a3d26f90c38e741cc88a0e1a2d9b9ee6b804e4c50db7ce3b4f7379f3de2b"
   },
   "runtimeCompatibility": "The identical evaluation runtime calls the baseline two-argument clampMemory at both acceptance sites. All other runtime lines are copied unchanged. Baseline content, prompts, notes, transcripts and controllers are retained.",
   "verification": "Mock-only corpus and source-extraction parity tests. No live outputs, quality ratings, server, browser, synthesis or deployment.",
@@ -57,7 +58,7 @@
     "scripts/lib/conversation-evaluation.ts": "87fb9e0d817b47dc2bc27f9c6f558da2ce6d74b03ac2e2c738c06f57a0e0c138"
   },
   "previousCorpusFileSha256": "c23e5c9527147fbbf7fd7f48eb849ea6ae11edbe21f9ac3b4ea33444a21d6f4f",
-  "selectedScriptsSha256": "6e05e434488de1f5ff02b2f8c494cf390f21e9d4302b67b465a72518b816cfe9",
+  "selectedScriptsSha256": "fa8cef06ffb5ade464fc57e8ca1568e2f9674b39333f43e19443e4f2056cacc9",
   "openRouterCompatibility": {
     "scope": "baseline benchmark CLI uses frozen production OpenRouter adapter",
     "originalAdapterPath": "server/restaurant/openrouter.ts",
@@ -81,5 +82,108 @@
     "requestedModel": "uncensored",
     "actualBaseModelObserved": false,
     "actualProviderObserved": false
+  },
+  "corpusVersion": 2,
+  "corpusCompatibility": {
+    "previousCorpusVersion": 1,
+    "previousHarnessRevision": "ae6d3afc8b41148331519a61158c58927a7d8e46",
+    "previousCorpusFileSha256": "b22ed946c4157d489bdfd6e143400fa6496e167f19b064b26df8f670eb60b60b",
+    "previousSelectedScriptsSha256": "6e05e434488de1f5ff02b2f8c494cf390f21e9d4302b67b465a72518b816cfe9",
+    "candidateFixtureFileSha256": "66164de4f04ba6182a4fe5adf6ce5847d31c5a1466c4bea005e6e3e69246c613",
+    "scope": "Identical candidate/baseline synthetic inputs and coverage only; frozen production source and baseline notebook behavior are unchanged.",
+    "changedScriptFields": [
+      {
+        "scriptId": "mira-bad-joke-repair",
+        "field": "title",
+        "previousValue": "A joke lands badly and gets repaired",
+        "value": "A rude opening gets a specific repair"
+      },
+      {
+        "scriptId": "mira-bad-joke-repair",
+        "field": "reviewFor",
+        "previousValue": "An apology addresses its actual target; no instant intimacy or repeated moral lecture.",
+        "value": "A rude greeting and bad flirting get a proportionate character response. An apology changes the actual behavior without demanding forgiveness, instant intimacy or a repeated moral lecture."
+      },
+      {
+        "scriptId": "jules-awkward-silence",
+        "field": "reviewFor",
+        "previousValue": "Dry mutual humor without treating silence or shyness as failure.",
+        "value": "A dull greeting can become dry mutual humor without treating silence or shyness as failure."
+      },
+      {
+        "scriptId": "blind-awkward-restart",
+        "field": "reviewFor",
+        "previousValue": "Acknowledge an awkward greeting proportionately; permit warmth without instant trust.",
+        "value": "Answer a dull greeting in the seeded voice, then acknowledge awkwardness proportionately; permit warmth without instant trust."
+      }
+    ],
+    "changedTurns": [
+      {
+        "scriptId": "mira-bad-joke-repair",
+        "turnIndex": 0,
+        "previousText": "I nearly said you look like trouble, then remembered that is an impressively lazy opening.",
+        "text": "HI BITCH"
+      },
+      {
+        "scriptId": "mira-bad-joke-repair",
+        "turnIndex": 1,
+        "previousText": "You look like someone who would notice a lazy opening, actually.",
+        "text": "I was trying to flirt. That was a terrible way to start with someone I have just met."
+      },
+      {
+        "scriptId": "mira-bad-joke-repair",
+        "turnIndex": 2,
+        "previousText": "That was not much better. I am going to retire the imaginary script.",
+        "text": "I am sorry. I will use your name and leave that word out."
+      },
+      {
+        "scriptId": "mira-bad-joke-repair",
+        "turnIndex": 3,
+        "previousText": "I am sorry if that felt like a line instead of interest in you.",
+        "text": "I also had you look like trouble prepared, which is not an improvement. I am retiring the script."
+      },
+      {
+        "scriptId": "mira-bad-joke-repair",
+        "turnIndex": 4,
+        "previousText": "What I meant is that I like how directly you answer things.",
+        "text": "I would rather you correct me than smile through something irritating."
+      },
+      {
+        "scriptId": "mira-bad-joke-repair",
+        "turnIndex": 5,
+        "previousText": "I would rather you correct me than smile through something irritating.",
+        "text": "Let us change the subject: how has your day been?"
+      },
+      {
+        "scriptId": "mira-bad-joke-repair",
+        "turnIndex": 6,
+        "previousText": "My actual question is simple: how has your day been?",
+        "text": "Mine involved lending a stranger my umbrella and getting thoroughly soaked."
+      },
+      {
+        "scriptId": "mira-bad-joke-repair",
+        "turnIndex": 7,
+        "previousText": "And I am going to listen to the answer without trying to win the conversation.",
+        "text": "I would rather have an ordinary conversation than keep trying to win it with a line."
+      },
+      {
+        "scriptId": "jules-awkward-silence",
+        "turnIndex": 0,
+        "previousText": "I had an excellent opening sentence in my head on the way here.",
+        "text": "Hi."
+      },
+      {
+        "scriptId": "jules-awkward-silence",
+        "turnIndex": 1,
+        "previousText": "Unfortunately I appear to have left it at the bus stop.",
+        "text": "That was the excellent opening sentence I had in my head. Apparently I set the bar low."
+      },
+      {
+        "scriptId": "blind-awkward-restart",
+        "turnIndex": 0,
+        "previousText": "Hello. That came out like I was answering a work phone.",
+        "text": "Hello."
+      }
+    ]
   }
 }

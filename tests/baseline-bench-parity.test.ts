@@ -25,6 +25,8 @@ import { DOLPHIN_MODEL } from '../src/restaurant/types';
 import { DOLPHIN_LLM_MODEL } from '../scripts/lib/baseline-direct-model';
 
 const BASE = '05ff06a5e5727fc99d78fe64469460ab286a4d0a';
+const CORPUS_V1_HARNESS = 'ae6d3afc8b41148331519a61158c58927a7d8e46';
+const CORPUS_V1_SCRIPTS_SHA256 = '6e05e434488de1f5ff02b2f8c494cf390f21e9d4302b67b465a72518b816cfe9';
 const normalize = (text: string) => text.replace(/\r\n/g, '\n');
 const git = (...args: string[]) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
 const original = (path: string) => normalize(git('show', `${BASE}:${path}`));
@@ -100,15 +102,48 @@ test('baseline report provenance resolves the frozen evaluated code independentl
     .replace("from './baseline-direct-model'", "from '../../src/restaurant/types'");
   assert.equal(hash(directSource), manifest.directCompatibility.candidateAdapterSha256, 'the bench adapter changes only import paths');
   assert.equal(hash(current('src/restaurant/evaluation-fixtures.ts')), manifest.corpusFileSha256);
-  assert.equal(hash(JSON.stringify(EVALUATION_SCRIPTS)), manifest.selectedScriptsSha256, 'all 66 scripts remain unchanged');
-  const fixture = current('src/restaurant/evaluation-fixtures.ts')
+  assert.equal(hash(JSON.stringify(EVALUATION_SCRIPTS)), manifest.selectedScriptsSha256, 'all 66 current scripts match the reviewed corpus manifest');
+  const fixture = normalize(git('show', `${CORPUS_V1_HARNESS}:src/restaurant/evaluation-fixtures.ts`))
     .replace("import { DOLPHIN_MODEL, type ClaudeModel, type DateId, type TurnVia } from './types';\nimport { DOLPHIN_LLM_MODEL } from '../../scripts/lib/baseline-direct-model';", "import type { ClaudeModel, DateId, TurnVia } from './types';")
     .replace("'claude-sonnet-5-5', 'ai-horde', DOLPHIN_MODEL, DOLPHIN_LLM_MODEL]", "'claude-sonnet-5-5', 'ai-horde']");
-  assert.equal(fixture, normalize(git('show', `${manifest.previousDolphinHarnessRevision}:src/restaurant/evaluation-fixtures.ts`)), 'only the evaluation model selection changed');
+  assert.equal(fixture, normalize(git('show', `${manifest.previousDolphinHarnessRevision}:src/restaurant/evaluation-fixtures.ts`)), 'historical corpus v1 changed only evaluation model selection between 124f and ae6d');
   const runtime = current('src/restaurant/evaluation-runtime.ts');
   assert.equal((runtime.match(/clampMemory\(turn\.memory, view\.memory\)/g) ?? []).length, 2);
   const restored = runtime.replaceAll('clampMemory(turn.memory, view.memory)', 'clampMemory(turn.memory, view.memory, input.text)');
   assert.equal(hash(restored), manifest.candidateRuntimeSha256, 'The compatibility adaptation must change only the two baseline memory calls.');
+});
+
+test('corpus v2 changes only the documented synthetic inputs and preserves the v1 benchmark source', () => {
+  const manifest = JSON.parse(current('docs/conversation-baseline-bench.json'));
+  const compat = manifest.corpusCompatibility;
+  const hash = (text: string) => createHash('sha256').update(text).digest('hex');
+  assert.equal(manifest.corpusVersion, 2);
+  assert.equal(compat.previousCorpusVersion, 1);
+  assert.equal(compat.previousHarnessRevision, CORPUS_V1_HARNESS);
+  assert.equal(compat.previousSelectedScriptsSha256, CORPUS_V1_SCRIPTS_SHA256);
+  assert.equal(hash(normalize(git('show', `${CORPUS_V1_HARNESS}:src/restaurant/evaluation-fixtures.ts`))), compat.previousCorpusFileSha256);
+  const restored = structuredClone(EVALUATION_SCRIPTS);
+  for (const change of compat.changedScriptFields) {
+    assert.ok(change.field === 'title' || change.field === 'reviewFor', change.field);
+    const script = restored.find(item => item.id === change.scriptId);
+    assert.ok(script, change.scriptId);
+    const field = change.field as 'title' | 'reviewFor';
+    assert.equal(script[field], change.value, `${change.scriptId}.${field}`);
+    script[field] = change.previousValue;
+  }
+  const seen = new Set<string>();
+  for (const change of compat.changedTurns) {
+    const key = `${change.scriptId}:${change.turnIndex}`;
+    assert.ok(!seen.has(key), `duplicate input change: ${key}`); seen.add(key);
+    const script = restored.find(item => item.id === change.scriptId);
+    assert.ok(script, key);
+    assert.equal(script.turns[change.turnIndex]?.text, change.text, key);
+    script.turns[change.turnIndex].text = change.previousText;
+  }
+  assert.equal(hash(JSON.stringify(restored)), CORPUS_V1_SCRIPTS_SHA256, 'reversing exactly the documented v2 turns and review labels restores every v1 script input byte');
+  const candidateFixture = current('src/restaurant/evaluation-fixtures.ts')
+    .replace("import { DOLPHIN_MODEL, type ClaudeModel, type DateId, type TurnVia } from './types';\nimport { DOLPHIN_LLM_MODEL } from '../../scripts/lib/baseline-direct-model';", "import { DOLPHIN_LLM_MODEL, DOLPHIN_MODEL, type ClaudeModel, type DateId, type TurnVia } from './types';");
+  assert.equal(hash(candidateFixture), compat.candidateFixtureFileSha256, 'baseline fixture differs from the reviewed candidate v2 file only in the frozen direct-model import');
 });
 
 test('direct baseline capture uses the frozen earned prompt and changes only outgoing model identity', async () => {
