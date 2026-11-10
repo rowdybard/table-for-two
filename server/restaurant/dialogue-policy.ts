@@ -46,13 +46,20 @@ export function humanLengthHint(humanText: string, speaker = 'They', listener = 
   return '';
 }
 /** A nudge when the date's last few lines were all the same size or all ended in questions. `owner` names the date in a shared room. */
+const WARM_UP = /^(ha+|oh+|okay|ok|honestly|mm+|fair enough|fair|right|well|yeah|look|wait|ooh|deal|noted|got it|sure)\b/i;
+const warmUp = (text: string) => { const found = WARM_UP.exec(text.trim())?.[1].toLowerCase(); return found ? found.replace(/^ha+$/, 'ha').replace(/^oh+$/, 'oh').replace(/^mm+$/, 'mm') : undefined; };
 export function dateShapeHint(recentDelivered: readonly SceneUtterance[], owner?: string): string {
   const mine = recentDelivered.filter(line => line.speaker === 'date').slice(-3), hint: string[] = [], your = owner ? `${owner}’s` : 'Your';
-  if (mine.length === 3 && mine.every(line => sentenceCount(line.text) === sentenceCount(mine[0].text))) {
+  if (mine.length === 3 && mine.every(line => sentenceCount(line.text) >= 3)) hint.push(`${your} last three replies all ran three sentences or more: make this one a single sentence, two at most.`);
+  else if (mine.length === 3 && mine.every(line => sentenceCount(line.text) === sentenceCount(mine[0].text))) {
     const n = sentenceCount(mine[0].text);
     hint.push(`${your} last three replies were all ${n} sentence${n === 1 ? '' : 's'} long: change the shape.`);
   }
   if (mine.filter(line => /\?["”’']*\s*$/.test(line.text.trim())).length >= 2) hint.push(`${your} last replies ended in questions: end this one on a statement.`);
+  // Verbal tics, read from the lines themselves: a warm-up word opening most recent replies, or "honestly" on repeat.
+  const openers = [...new Set(mine.map(line => warmUp(line.text)).filter((word): word is string => !!word))];
+  if (mine.filter(line => warmUp(line.text)).length >= 2) hint.push(`${your} recent replies opened with ${openers.map(word => `“${word[0].toUpperCase()}${word.slice(1)}”`).join(' and ')}: start this one straight on what ${owner ? 'they have' : 'you have'} to say.`);
+  if (mine.filter(line => /\bhonestly\b/i.test(line.text)).length >= 2) hint.push(`${owner ?? 'You'} ${owner ? 'keeps' : 'keep'} saying “honestly”: leave it out.`);
   return hint.join(' ');
 }
 /**
@@ -211,12 +218,12 @@ export function alternatingMessages(messages: readonly Message[], leadIn: string
 }
 
 /** Spoken-register block: placed last in the system prompt, nearest to generation, so every earlier rule is read through it. */
-export const SPOKEN_REGISTER = 'HOW YOU TALK. Speak out loud across a table: your own rhythm, contractions and fragments. Answer their actual words before adding a connected opinion or small story. You can be funny, confidently interested, stubborn about a taste or thrown by attraction. You do not owe every turn a joke or a question. Reuse their words naturally, without turning them into a slogan. Vary length: sometimes five words, usually one or two sentences, three for a small story, never more than four. Most turns end on a statement; ask when you want the answer, not in two turns running. Tease something specific they said, leaving room to disagree; shared jokes need shared history. Do not finish every turn with a twist. Describe scenery or food only when asked or something happens. Ordinary early talk can have a point of view; personal detail comes gradually. If confused, ask plainly. If your line was odd, own it (“I just meant...”) and move on. Say what you think or what happened to you, not wise general lines about people.';
+export const SPOKEN_REGISTER = 'HOW YOU TALK. Speak out loud across a table: your own rhythm, contractions and fragments. Answer their actual words before adding a connected opinion or small story. You can be funny, confidently interested, stubborn about a taste or thrown by attraction. You do not owe every turn a joke or a question. Open on the content: the answer, the opinion, the detail. Warm-up words (“Ha”, “Oh”, “Okay”, “Honestly”, “Fair enough”, “Mm”) are for a real surprise, about one reply in four, never the same one twice running, and “honestly” at most once in an evening. Do not hand their phrase back as your opening (“A food scandal, noted”); respond to it instead. Vary length: sometimes five words, usually one or two sentences, three for a small story, never more than four. Most turns end on a statement; ask when you want the answer, not in two turns running. Tease something specific they said, leaving room to disagree; shared jokes need shared history. Do not finish every turn with a twist. Describe scenery or food only when asked or something happens. Ordinary early talk can have a point of view; personal detail comes gradually. If confused, ask plainly. If your line was odd, own it (“I just meant...”) and move on. Say what you think or what happened to you, not wise general lines about people.';
 /** The very last line of the system prompt. */
-export const VOICE_REMINDER = 'Reply across the table in your own voice: their words first; be specific, leave room, and let humor or attraction happen without forcing a finish.';
+export const VOICE_REMINDER = 'Reply across the table in your own voice: respond to what they said first, starting on the content itself; be specific, leave room, and let humor or attraction happen without forcing a finish.';
 /** Compact per-character voice cues, for a per-turn reminder. Blind dates carry their own derived voice instead. */
 export const VOICE_SHORT: Record<string, string> = {
-  mira: 'quick warm bursts; okay/oh/wait; laughs at herself; mostly ends on a statement',
+  mira: 'quick warm bursts; starts on the point; laughs at herself; mostly ends on a statement',
   jules: 'quiet and exact, four to eight words; dry understatement; short plain questions',
-  dev: 'fast and loose; okay so/honestly/look; concrete nouns and numbers; teases only what they just said, then softens',
+  dev: 'fast and loose; starts on the opinion; concrete nouns and numbers; teases only what they just said, then softens',
 };
