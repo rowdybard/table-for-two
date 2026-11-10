@@ -33,7 +33,7 @@ Implement the user's approved “Make Table for Two's conversations worth sharin
 - [x] Preserve HUMAN / TOLD THEM / OPEN memory. Keep at most one grounded shared premise; corrections, disclosures and promises take priority. Retire stopped or stale bits.
 - [x] Three alternatives per character for twelve frequent authored cue slots: 108 versions total. Preserve suppression and aside limits.
 - [x] Existing scenario choices get branch-specific immediate context and appropriate later factual callbacks; no new branches or interruptions.
-- [x] Blind: thirty-six grounded seeds, twelve vulnerability motives, twelve opening templates; deterministic seeds and no preset biography leakage.
+- [x] Blind: thirty-six grounded anecdotes/opinions plus eighteen retained contradictions/desires, twelve vulnerability motives, twelve opening templates; deterministic seeds and no preset biography leakage.
 - [x] Double cast voice, knowledge, agenda and romantic progress stay independent.
 - [x] Refresh restrained reaction envelopes for distinct delivered utterances, including repeated emotion values. Important speech/listening wins over incidental gestures.
 - [x] Bound voice preparation/playback, retain existing fallbacks and truthful receipts, and reject late audio.
