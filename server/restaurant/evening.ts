@@ -112,6 +112,8 @@ export class EveningDirector {
   private pressure = 0;
   private repaired = false;
   private wasHurt = false;
+  /** Apologies the date accepted when no boundary was in play (a rude remark that was owned). */
+  private amends = 0;
   private leavingAt: number | null = null;
   /** The verdict the date was given before its last line, and when the clock-ended evening finishes after that line is heard. */
   private closingPromise: ClosingVerdict | null = null;
@@ -374,7 +376,7 @@ export class EveningDirector {
       if (boundary.kind === 'disregard') { this.pressure = boundary.count; this.wasHurt = true; e.stance = boundary.count > 1 ? 'hurt' : 'guarded'; e.stanceReason = reason; }
       // The reply the model just gave is already the acknowledgment, so no canned repair line follows it.
       else if (boundary.kind === 'repair') { this.pressure = boundary.count + 1; this.repair(reason, true); }
-      else if (signal === 'repair' && !this.pressure) this.repair(reason, true);
+      else if (signal === 'repair' && !this.pressure) { this.amends++; this.repair(reason, true); }
       if (wantsToLeave && boundary.canLeave) { e.stance = 'leaving'; e.stanceReason = reason; this.beginEnding('walked-away', paired ? undefined : context.name ?? 'your friend'); }
     }
     this.promoteDeliveredChemistry();
@@ -387,7 +389,7 @@ export class EveningDirector {
   private closingVerdictNow(): ClosingVerdict {
     const e = this.state.evening;
     return closingVerdict({ guarded: GUARDED.includes(e.stance), romanceClosed: e.care.romanceClosed, repairedAfterHurt: this.repaired && this.wasHurt, chemistryUnlocked: this.chemistry.unlocked,
-      comfortable: e.stance === 'comfortable', reciprocalFlirts: this.chemistry.reciprocalFlirts, trustEarned: hasEarnedConfidence(e.agenda) });
+      comfortable: e.stance === 'comfortable', reciprocalFlirts: this.chemistry.reciprocalFlirts, trustEarned: hasEarnedConfidence(e.agenda), madeAmends: this.amends >= 2 });
   }
   /** What the next reply should know about the clock: null until the last stretch. On the final exchange the verdict is fixed here. */
   closingContext(): ClosingContext | null {

@@ -240,7 +240,7 @@ export function boundaryLines(context: BoundaryPrompt, who = 'they'): string[] {
   return context.boundaries.map(item => {
     if (!item.delivered) return `- ${item.topic}: you started to say ${quote(item.pendingRefusal ?? item.refusal)}, but ${who} ${has} not heard it, so it is not in force yet.`;
     const times = item.disregardCount === 1 ? 'once' : `${item.disregardCount} times`;
-    return `- ${item.topic}: ${who} heard you say ${quote(item.refusal)}${item.disregardCount ? ` and ${has} disregarded it ${times}` : ''}.`;
+    return `- ${item.topic}: ${who} heard you say ${quote(item.refusal)}${item.disregardCount ? ` and ${has} disregarded it ${times}` : ''}.${item.disregardCount ? ' You do not owe this evening your patience: if it is pressed again you can end the date. Say in one plain sentence that you are leaving and set wantsToLeave true.' : ''}`;
   });
 }
 

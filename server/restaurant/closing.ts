@@ -11,10 +11,13 @@ const RANK: ClosingVerdict[] = ['quiet-goodbye', 'new-friend', 'second-chance', 
 /** Exchanges still to come, counting the one being answered now. */
 export const exchangesLeft = (dialogueTurns: number, total = EVENING_EXCHANGES) => Math.max(0, total - dialogueTurns);
 
-export interface ClosingState { guarded: boolean; romanceClosed: boolean; repairedAfterHurt: boolean; chemistryUnlocked: boolean; comfortable: boolean; reciprocalFlirts: number; trustEarned: boolean }
+export interface ClosingState { guarded: boolean; romanceClosed: boolean; repairedAfterHurt: boolean; chemistryUnlocked: boolean; comfortable: boolean; reciprocalFlirts: number; trustEarned: boolean;
+  /** The human said something rude, owned it, and the date accepted the apology more than once, with no boundary involved. */
+  madeAmends?: boolean }
 /**
  * The verdict from what the pair earned. An invitation home needs established mutual chemistry and a comfortable date;
- * a second date needs one flirt that landed both ways or earned trust; a flat evening is a kind goodnight.
+ * a second date needs one flirt that landed both ways or earned trust; a rude start that was owned leaves the door
+ * open; a flat evening is a kind goodnight.
  */
 export function closingVerdict(state: ClosingState): ClosingVerdict {
   if (state.guarded) return 'quiet-goodbye';
@@ -22,6 +25,7 @@ export function closingVerdict(state: ClosingState): ClosingVerdict {
   if (state.romanceClosed) return 'new-friend';
   if (state.chemistryUnlocked && state.comfortable) return 'invited-home';
   if (state.reciprocalFlirts >= 1 || state.trustEarned) return 'another-evening';
+  if (state.madeAmends) return 'second-chance';
   return 'new-friend';
 }
 /** The ending can fall below what the date was told before its last line (a last-second insult), never rise above what it said. */
@@ -43,5 +47,7 @@ const LAST_LINE: Record<ClosingVerdict, string> = {
 export function closingLine(closing: ClosingContext | null | undefined): string {
   if (!closing) return '';
   if (closing.final) return `The restaurant is closing: this is the last thing you say tonight. Answer what they just said in a few words, then close the evening the way you actually feel. ${LAST_LINE[closing.verdict]} Do not end on a question unless it is the invitation itself.`;
+  // An uncomfortable date is not asked to turn warm because the clock is running out.
+  if (closing.verdict === 'quiet-goodbye') return 'The restaurant is closing soon. You are not comfortable with how tonight has gone: keep your replies short, do not pretend you enjoyed what you did not, and do not offer anything you already declined.';
   return `The restaurant is closing soon; there is time for about ${closing.left - 1} more exchange${closing.left - 1 === 1 ? '' : 's'} after this one. Do not announce a countdown. Let the talk turn toward how tonight has felt and anything you still want to say or ask before it ends.`;
 }

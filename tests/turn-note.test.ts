@@ -314,8 +314,8 @@ test('boundaries say what was actually heard; a refusal still being said is not 
   ] } }));
   assert.equal(section(note, 'Boundaries in play'), [
     '- family: they heard you say “Let’s not do family.”.',
-    '- exes: they heard you say “I do not discuss exes.” and have disregarded it once.',
-    '- money: they heard you say “Money is private.” and have disregarded it 3 times.',
+    '- exes: they heard you say “I do not discuss exes.” and have disregarded it once. You do not owe this evening your patience: if it is pressed again you can end the date. Say in one plain sentence that you are leaving and set wantsToLeave true.',
+    '- money: they heard you say “Money is private.” and have disregarded it 3 times. You do not owe this evening your patience: if it is pressed again you can end the date. Say in one plain sentence that you are leaving and set wantsToLeave true.',
     '- work: you started to say “Not work, please.”, but they have not heard it, so it is not in force yet.',
   ].join('\n'));
 });

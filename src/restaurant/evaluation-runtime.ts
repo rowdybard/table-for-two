@@ -72,6 +72,9 @@ export class EvaluationConversation {
       const speaker = this.script.mode === 'double' ? turn.human ?? 'h1' : 'h1';
       this.views[speaker].memory = retireSharedPremise(this.views[speaker].memory, turn.text);
       for (const view of Object.values(this.views)) view.elapsed = 120 + index * 25 + (turn.quietSeconds ?? 0);
+      // A live evening starts a new generation per human turn, which is what lets a second reciprocal flirt count.
+      // Clocked scripts follow that; the frozen corpus keeps its single generation so earlier reports stay comparable.
+      if (this.script.closingClock) for (const view of Object.values(this.views)) view.generation = index + 1;
       if (turn.offstage) {
         const view = this.views[owner(turn.offstage)];
         view.phase = 'ended'; view.evening.care.romanceClosed = true;

@@ -19,6 +19,10 @@ test('an evening is thirty-six exchanges and the verdict comes from earned state
   assert.equal(closingVerdict({ ...flat, chemistryUnlocked: true, comfortable: true, romanceClosed: true }), 'new-friend', 'closed romance never becomes an invitation');
   assert.equal(closingVerdict({ ...flat, chemistryUnlocked: true, comfortable: true, guarded: true }), 'quiet-goodbye');
   assert.equal(closingVerdict({ ...flat, repairedAfterHurt: true, reciprocalFlirts: 1 }), 'second-chance');
+  assert.equal(closingVerdict({ ...flat, madeAmends: true }), 'second-chance', 'a rude start that was owned leaves the door open');
+  assert.equal(closingVerdict({ ...flat, madeAmends: true, reciprocalFlirts: 1 }), 'another-evening', 'amends never cap an evening that went well');
+  assert.match(closingLine({ left: 3, final: false, verdict: 'quiet-goodbye' }), /not comfortable/);
+  assert.doesNotMatch(closingLine({ left: 3, final: false, verdict: 'quiet-goodbye' }), /how tonight has felt/);
   assert.equal(settledVerdict('another-evening', 'invited-home'), 'another-evening', 'the ending never rises above what the date said');
   assert.equal(settledVerdict('invited-home', 'quiet-goodbye'), 'quiet-goodbye', 'a last-second insult still lowers it');
   assert.equal(settledVerdict(null, 'new-friend'), 'new-friend');

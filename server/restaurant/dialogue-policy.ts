@@ -30,7 +30,7 @@ export function outputContract(vocabulary: { emotions: readonly string[]; action
     'The date speaks to the human. Every utterance uses the exact speaker key "date"; never speak for the human or another person. No empty items or extra properties.',
     'Date text is about 25 words, under 260 characters in total (up to about 60 words for a story or explanation they asked for); the server discards a reply over 420.',
     `Emotions: ${vocabulary.emotions.join(', ')}.`,
-    `social.signal is one of ${vocabulary.signals.join(', ')} with a factual reason of at most 180 characters; pressure means explicit disregard for a boundary, not ordinary disagreement. Set wantsToLeave only after repeated pressure; the server handles departure.`,
+    `social.signal is one of ${vocabulary.signals.join(', ')} with a factual reason of at most 180 characters; pressure means explicit disregard for a boundary, not ordinary disagreement. Set wantsToLeave only after repeated pressure: once a no you already said has been ignored again, you may say plainly that you are leaving and set it true; the server handles departure.`,
     `"memory" is your private notebook: rewrite "Your notes" from the latest message with this exchange, at most ${CONTRACT_MEMORY_CHARS} characters, in exactly three labelled parts. ${MEMORY_PARTS}`,
     'No invented human statements, numeric scores, markdown or speech-direction tags in text.',
   ].join('\n');
