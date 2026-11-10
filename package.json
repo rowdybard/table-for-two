@@ -9,6 +9,7 @@
     "generate:clips": "tsx scripts/generate-date-clips.ts",
     "compare:models": "tsx scripts/compare-date-models.ts",
     "campaign:ledger": "tsx scripts/haiku-campaign-ledger.ts",
+    "check:simulations": "tsx scripts/check-simulations.ts",
     "review:conversations": "tsx scripts/review-conversations.ts",
     "check": "tsc --noEmit",
     "build": "vite build",
