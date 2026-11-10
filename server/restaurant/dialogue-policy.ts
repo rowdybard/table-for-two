@@ -46,7 +46,24 @@ export function humanLengthHint(humanText: string, speaker = 'They', listener = 
   return '';
 }
 /** A nudge when the date's last few lines were all the same size or all ended in questions. `owner` names the date in a shared room. */
-const WARM_UP = /^(ha+|oh+|okay|ok|honestly|mm+|fair enough|fair|right|well|yeah|look|wait|ooh|deal|noted|got it|sure)\b/i;
+const WARM_UP = /^(ha+|oh+|okay|ok|honestly|mm+|fair enough|fair|right|well|yeah|look|wait|ooh|deal|noted|got it|sure|good|agreed)\b/i;
+const FILLER_OPENING = /^(?:ha+|oh+|ooh+|mm+|honestly|fair enough|fair point|fair|well|look|noted)[,.!?…]+\s+(?=\S)/i;
+const ECHO_OPENING = /^[^.!?]{1,48},? huh\?\s+(?=\S)/i;
+/**
+ * Removes a spoken tic from the front of a date line before it is validated and shown: a filler word
+ * (“Fair, …”, “Honestly? …”) or the human's own words handed back (“Another evening, huh? …”). The prompt
+ * forbids both and the model does them anyway in about half its replies. Only the opener is dropped, only when
+ * a real sentence of three or more words follows, and never when what follows leans on it (“Noted, and…”).
+ */
+export function tidyOpening(text: string): string {
+  let line = text.trim();
+  for (const pattern of [ECHO_OPENING, FILLER_OPENING]) {
+    const rest = line.replace(pattern, '');
+    if (rest === line || rest.split(/\s+/).length < 3 || /^(?:and|but|so|because|or|though|which|that|then)\b/i.test(rest)) continue;
+    line = rest[0].toUpperCase() + rest.slice(1);
+  }
+  return line;
+}
 const warmUp = (text: string) => { const found = WARM_UP.exec(text.trim())?.[1].toLowerCase(); return found ? found.replace(/^ha+$/, 'ha').replace(/^oh+$/, 'oh').replace(/^mm+$/, 'mm') : undefined; };
 export function dateShapeHint(recentDelivered: readonly SceneUtterance[], owner?: string): string {
   const mine = recentDelivered.filter(line => line.speaker === 'date').slice(-3), hint: string[] = [], your = owner ? `${owner}’s` : 'Your';
@@ -240,7 +257,7 @@ export function alternatingMessages(messages: readonly Message[], leadIn: string
 }
 
 /** Spoken-register block: placed last in the system prompt, nearest to generation, so every earlier rule is read through it. */
-export const SPOKEN_REGISTER = 'HOW YOU TALK. You are on a date and you are not neutral about it. Talk like a person across a table, not a writer: plain words and short lines, usually one sentence and often under twelve words, two sentences when you have something to tell. React first with what you actually feel: interested, amused, unconvinced, flattered, annoyed. When they flirt, flirt back or turn it down in so many words (“Good. Keep looking then.”); never deflect a flirt into a joke about food or work. Be bold: say what you like about them, what you want, what you do not buy. Tease them, disagree, make them work a little; do not agree with everything and do not reassure. Give real things: a fact about your life, a strong opinion, something that happened today. Ask one short question when you are curious about them, not every turn; if they do not answer it, drop it for good, never ask it again and never say they owe you an answer. Do not open by handing their words back (“Another evening?”, “Distracting, huh?”); respond to them instead. No clever sayings, no metaphors, no wordplay built on their phrase, no comparing things to your job. Never comment on the conversation itself (no “I appreciate the honesty”, “no pressure”, “that’s refreshing”, “I like that you…”); just have it. Never repeat yourself: once you have mentioned a thing, a joke or an image, leave it; each reply brings something new or follows them somewhere new. Leave scenery, plants, furniture and food alone unless they ask or something happens. Open on the content, with no warm-up word (“Ha”, “Oh”, “Okay”, “Honestly”, “Fair”). Say their name rarely. If confused, ask plainly. If your line was odd, own it and move on.';
+export const SPOKEN_REGISTER = 'HOW YOU TALK. You are on a date and you are not neutral about it. Talk like a person across a table, not a writer: plain words and short lines, usually one sentence and often under twelve words, two sentences when you have something to tell. React first with what you actually feel: interested, amused, unconvinced, flattered, annoyed. When they flirt, flirt back or turn it down in so many words; never deflect a flirt into a joke about food or work. Be bold: say what you like about them, what you want, what you do not buy. Tease them, disagree, make them work a little; do not agree with everything and do not reassure. Give real things: a fact about your life, a strong opinion, something that happened today. Ask one short question when you are curious about them, not every turn; if they do not answer it, drop it for good, never ask it again and never say they owe you an answer. Do not open by handing their words back (“Another evening?”, “Distracting, huh?”); respond to them instead. No clever sayings, no metaphors, no wordplay built on their phrase, no comparing things to your job. Never comment on the conversation itself (no “I appreciate the honesty”, “no pressure”, “that’s refreshing”, “I like that you…”); just have it. Never repeat yourself: once you have mentioned a thing, a joke or an image, leave it; each reply brings something new or follows them somewhere new. Leave scenery, plants, furniture and food alone unless they ask or something happens. Open on the content: no warm-up word (“Ha”, “Oh”, “Okay”, “Honestly”, “Fair”, “Good”, “Agreed”, “Noted”) and no verdict on what they said before you answer it. Say their name rarely. If confused, ask plainly. If your line was odd, own it and move on.';
 /** The very last line of the system prompt. */
 export const VOICE_REMINDER = 'Reply out loud in one or two short plain sentences: react to what they just said with what you feel or want, be bold, and bring something new instead of returning to anything you already said.';
 /** Compact per-character voice cues, for a per-turn reminder. Blind dates carry their own derived voice instead. */

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { createEvening } from '../src/restaurant/evening';
 import type { DateId, DinnerState, SceneUtterance } from '../src/restaurant/types';
 import { clampMemory } from '../server/restaurant/memory';
-import { alternatingMessages, deferrableCue, dialogueLoopContext, tableNow } from '../server/restaurant/dialogue-policy';
+import { alternatingMessages, deferrableCue, dialogueLoopContext, tableNow, tidyOpening } from '../server/restaurant/dialogue-policy';
 
 function scene(dateId: DateId = 'mira'): DinnerState {
   return { id: 'dialogue-context', generation: 1, mode: 'ai-date', phase: 'playing', dateId, stage: 'arrival', elapsed: 0,
@@ -133,4 +133,16 @@ test('a question the date asked and did not get answered is not kept in the note
   // Words spread over six replies still count, and a plural in -ies folds properly.
   const fries = [dateLine('You admit the crispy fries win.'), dateLine('That is honest.'), dateLine('You are not getting out of the fries question.'), dateLine('Bring no camera.'), dateLine('You still owe me an answer about the fries.')];
   assert.ok(dialogueLoopContext(fries, 'I would like another evening with you.').avoidUnpromptedTopics.some(item => item.startsWith('“fry” (you have said it in nearly every reply')));
+});
+
+test('filler and echo openers are dropped from the front of a date line, and nothing else is', () => {
+  // Lines from the Haiku rerun on 10 Nov 2026.
+  assert.equal(tidyOpening('Another evening, huh? Fine, I\'m listening. Just don\'t make it a photo shoot.'), 'Fine, I\'m listening. Just don\'t make it a photo shoot.');
+  assert.equal(tidyOpening('Distracting, huh? Good. I\'ll take that over boring any day.'), 'Good. I\'ll take that over boring any day.');
+  assert.equal(tidyOpening('Fair, I heard it as a dig. Nervous is better.'), 'I heard it as a dig. Nervous is better.');
+  assert.equal(tidyOpening('Honestly? Someone who lets me be the fun one for once.'), 'Someone who lets me be the fun one for once.');
+  assert.equal(tidyOpening('Oh, the fries have been promoted to flirting assistant.'), 'The fries have been promoted to flirting assistant.');
+  assert.equal(tidyOpening('Fair enough. Consider it noted, not requested.'), 'Consider it noted, not requested.');
+  // An answer, a reaction that is the whole reply, or an opener the sentence leans on stays.
+  for (const kept of ['Good. Keep looking then.', 'Yes, a lot easier.', 'Fair.', 'Fair enough. Okay.', 'Noted, and I\'m glad you said it plainly.', 'Me too, honestly.', 'Wait, really? You did that?', 'Absolutely not. The big soft ones are the good ones.']) assert.equal(tidyOpening(kept), kept);
 });
