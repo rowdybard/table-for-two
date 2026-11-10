@@ -75,6 +75,11 @@ async function assertFits(page: Page, selectors: string[]) {
   }
 }
 const settleFrame = (page: Page) => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+async function assertCenterHit(page: Page, selector: string) {
+  const point = await center(page, selector);
+  expect(await page.evaluate(({ point, selector }) => !!document.elementFromPoint(point.x, point.y)?.closest(selector), { point, selector }), `${selector} must receive its center touch`).toBe(true);
+  return point;
+}
 
 test('landscape phone: two thumbs, talk return, neutral input, context action and pause remain usable', async ({ page, browserName }) => {
   test.skip(browserName !== 'chromium', 'Native multi-touch dispatch uses Chromium CDP; menu and viewport checks also run in WebKit.');
@@ -136,6 +141,7 @@ test('landscape phone: two thumbs, talk return, neutral input, context action an
   await page.locator('#send-turn').tap();
   await expect(page.locator('#conversation-form')).toBeHidden();
   await expect.poll(() => messages.some(text => text.includes('I wanted to say hello.'))).toBe(true);
+  await assertCenterHit(page, '#mobile-pause');
   await page.locator('#mobile-pause').tap();
   await expect(page.locator('#pause-dialog')).toBeVisible();
   await assertFits(page, ['#resume-date', '#pause-talk', '#pause-journal', '#pause-settings', '#finish-date']);
@@ -177,8 +183,9 @@ test('landscape phone: two thumbs, talk return, neutral input, context action an
   await expect(page.locator('#restaurant-app')).toHaveAttribute('data-mobile-seated', 'true');
   await assertFits(page, ['#prompt-line', '#prompt-chips button']);
   expect((await menuChip.boundingBox())!.height).toBeGreaterThanOrEqual(44);
-  const chipPoint = await center(page, '#prompt-chips button');
-  expect(await page.evaluate(({ x, y }) => !!document.elementFromPoint(x, y)?.closest('#prompt-chips button'), chipPoint)).toBe(true);
+  const chipPoint = await assertCenterHit(page, '#prompt-chips button');
+  await assertCenterHit(page, '#mobile-pause');
+  await assertCenterHit(page, '#mobile-look');
   await page.touchscreen.tap(chipPoint.x, chipPoint.y);
   await expect(page.locator('#menu-dialog')).toBeVisible();
   await page.locator('[data-order="Wild mushroom risotto"]').tap();
@@ -195,7 +202,7 @@ test('landscape phone: two thumbs, talk return, neutral input, context action an
   await expect(page.locator('#prompt-line')).toBeVisible();
   await page.setViewportSize({ width: 667, height: 320 });
   await assertFits(page, ['#prompt-line', '#mobile-pause']);
-  const pause = await center(page, '#mobile-pause');
+  const pause = await assertCenterHit(page, '#mobile-pause');
   const pauseRequestsBeforeTap = pauseRequests;
   await thumbs.down(3, pause.x, pause.y); await thumbs.move(3, pause.x + 24, pause.y); await thumbs.up(3);
   await settleFrame(page);
