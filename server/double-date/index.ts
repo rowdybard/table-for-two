@@ -1,4 +1,4 @@
-import { HORDE_MODEL, isEarnedModel } from '../../src/restaurant/types';
+import { DOLPHIN_LLM_MODEL, HORDE_MODEL, isEarnedModel } from '../../src/restaurant/types';
 import type { RestaurantScenarioId } from '../../src/restaurant/scenario-types';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -127,7 +127,7 @@ export async function attachDoubleDateServer(_http: Server, restaurant: { servic
       if (state.phase !== 'waiting' || state.members.length !== 2 || !state.members.every(item => item.connected && item.ready && item.dateId) || state.dates.length !== 2) throw failure(409, 'not_ready', 'Both friends need to choose a date and get ready.');
       initializeScenario(state, options.scenarioId); room.scene.setPhase('playing'); room.conversation.collectCues();
     } else if (data.type === 'set-model' && exact(data, ['type', 'model']) && services.status().models.includes(data.model as ClaudeModel)) {
-      if (human !== state.hostId) throw failure(403, 'host_only', 'Your host chooses the table’s conversation model.'); if (isEarnedModel(data.model) && data.model !== services.status().defaultModel) throw failure(409, data.model === HORDE_MODEL ? 'horde_locked' : 'dolphin_locked', 'The alternative model unlocks independently for each couple through mutual chemistry.'); state.model = data.model as ClaudeModel;
+      if (human !== state.hostId) throw failure(403, 'host_only', 'Your host chooses the table’s conversation model.'); if (isEarnedModel(data.model) && data.model !== DOLPHIN_LLM_MODEL && data.model !== services.status().defaultModel) throw failure(409, data.model === HORDE_MODEL ? 'horde_locked' : 'dolphin_locked', 'The alternative model unlocks independently for each couple through mutual chemistry.'); state.model = data.model as ClaudeModel;
     } else if (data.type === 'reset-model' && exact(data, ['type'])) {
       if (human !== state.hostId) throw failure(403, 'host_only', 'Your host chooses the table’s conversation model.');
       room.conversation.resetModel();
@@ -177,7 +177,7 @@ export async function attachDoubleDateServer(_http: Server, restaurant: { servic
       const data = await body(req), playerName = name(data.name), status = services.status();
       if (!exact(data, ['name', 'model', 'sessionLimit']) || data.model !== undefined && !status.models.includes(data.model as ClaudeModel)) throw failure(400, 'invalid_room', 'Choose a supported conversation model.');
       if (data.sessionLimit !== undefined && (typeof data.sessionLimit !== 'number' || !Number.isFinite(data.sessionLimit) || data.sessionLimit < .01)) throw failure(400, 'invalid_limit', 'Choose a positive room spending limit.');
-      if (isEarnedModel(data.model) && data.model !== status.defaultModel) throw failure(409, data.model === HORDE_MODEL ? 'horde_locked' : 'dolphin_locked', 'Start with Haiku and build mutual chemistry first.');
+      if (isEarnedModel(data.model) && data.model !== DOLPHIN_LLM_MODEL && data.model !== status.defaultModel) throw failure(409, data.model === HORDE_MODEL ? 'horde_locked' : 'dolphin_locked', 'Start with Haiku and build mutual chemistry first.');
       const account = services.createAccount(data.sessionLimit as number | undefined), id = randomBytes(12).toString('hex');
       let code: string; do { code = [...randomBytes(6)].map(value => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[value % 32]).join(''); } while (codes.has(code));
       const state: DoubleDateRoomState = { id, code, mode: 'double-date', phase: 'waiting', hostId: 'h1', generation: 0, revision: 0, members: [], dates: [], views: { h1: createPairView(id, 'h1', playerName, 'mira', account.usage, account.sessionLimit), h2: createPairView(id, 'h2', 'Your friend', 'jules', account.usage, account.sessionLimit) }, lines: [], usage: account.usage, sessionLimit: account.sessionLimit, model: data.model as ClaudeModel || status.defaultModel, voice: { enabled: { h1: false, h2: false }, epoch: 0, iceServers: structuredClone(iceServers) } };

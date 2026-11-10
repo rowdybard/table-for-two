@@ -35,7 +35,7 @@ Implement the user's approved “Make Table for Two's conversations worth sharin
 - Browser recovery must cover headers-only/stalled bodies, failed streams, late receipts and successful next turns without reset.
 - Human quality gates remain **unverified** until a real review: candidate preferred in at least 70% of non-tied comparisons, at least 90% latest-turn relevance, 80% anonymized cast identification, and both reviewers find an earned memorable beat in at least forty of sixty scripts. No fabricated human facts, unheard callbacks or transferred couple progress.
 - Work through Mira's content slice and offline checks first, then extend to other cast, Blind and Double. Mock checks do not establish human preference or live dialogue quality.
-- Publish the game only after integrated quality review and deployment checks. Keep the branch/PR reviewable when human-review or spending gates are pending.
+- Updated release authorization: the owner explicitly permits the complete update to merge and deploy after technical checks pass, with two-person stress testing afterward. Human conversation-quality thresholds still require actual review and must remain unverified until then. Preserve the separate spending caps.
 
 ## Progress log
 
@@ -84,14 +84,16 @@ Implement the user's approved “Make Table for Two's conversations worth sharin
 
 ## Remaining release gates
 
+The owner has confirmed the direct Dolphin key was filled in Cloudflare and authorized at most eight synthetic Mira requests, text only, with a $0.03 ceiling and no retries, voice or fallback. This is separate from the closed Horde allowance. `/model dolphin` now targets dolphinllm.com directly; removed Horde commands are handled locally, and reset preserves the evening. Provider-disabled verification of this final integration and deployment are still pending. Continue in the owner's normal mode; do not enable Fast mode.
+
 - [x] Remote provider-disabled CI passes the complete integrated suite, package checks and browser recovery flows after the completion-audit corrections at application revision `b2b8463`.
 - [x] CI screenshot artifacts reviewed for actual framing, captions and performance handoff, including the corrected seated delivery.
 - [x] Compatible baseline benchmark is prepared and verified offline.
 - [x] Separately authorized $0 pilot closed at eighteen total attempts; all failures and the missing baseline turn are retained. No requests remain under that authorization.
 - [ ] Complete matched baseline/candidate corpus captures under a separately authorized cap; the partial one-script pilot does not satisfy coverage.
 - [ ] Two human reviewers complete the documented preference, relevance, cast-identification and memorable-beat gates.
-- [ ] Publish only after the quality and deployment gates; preserve current live provider configuration and secrets.
+- [ ] Publish after the final integrated technical checks, as subsequently authorized by the owner; preserve current live provider configuration and secrets. Human quality review follows deployment and is not inferred from technical checks.
 
-No game/browser was launched on the user's computer during implementation. Only the separately approved, request-capped $0 Horde pilot uses a live provider; the live game has not been replaced by this candidate.
+No game/browser was launched on the user's computer during implementation. The closed Horde pilot is historical; the separately approved direct Dolphin pilot has not yet run, and the live game has not yet been replaced by this candidate.
 
 Update this checklist with concrete tests and unresolved gates; never mark qualitative review passed from mock output.

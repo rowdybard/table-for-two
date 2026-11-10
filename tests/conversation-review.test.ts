@@ -101,6 +101,76 @@ test('matched pinned Horde configurations are reviewable while actual worker ide
   assert.doesNotThrow(() => prepareConversationReview(before, after, secret));
 });
 
+test('matched pinned OpenRouter settings prepare blinded, unrated packets; mismatches and unknown routing are rejected', () => {
+  const before = report(false), after = report(true);
+  const dolphin = 'cognitivecomputations/dolphin-mistral-24b-venice-edition';
+  for (const value of [before, after]) {
+    value.modelSettings = [{ model: dolphin, upstreamModel: dolphin, transport: 'openrouter-chat-completions', maxTokens: 700, effectiveMaxTokens: 700, timeoutMs: 30000, providerTimeoutMs: null,
+      routingConfig: { selection: 'fixed-model', requestedModels: [dolphin], responseFormat: 'json_object', allowFallbacks: false, requireParameters: true } }];
+    for (const result of value.results) for (const row of result.turns) {
+      result.model = dolphin; row.request.model = dolphin;
+      row.rawResponse = JSON.stringify({ utterances: [{ speaker: 'date', text: `OpenRouter ${dolphin} Dolphin`, emotion: 'neutral' }] });
+    }
+  }
+  const prepared = prepareConversationReview(before, after, secret);
+  assert.equal(prepared.key.provenance.modelSettings[0].upstreamModel, dolphin);
+  for (const packet of prepared.packets) {
+    assert.equal(packet.reviewer.id, null);
+    assert.ok(packet.pairs.every(pair => pair.review.preference === null));
+    assert.doesNotMatch(JSON.stringify(packet), /openrouter|dolphin|cognitivecomputations|mistral/i);
+  }
+  const gated = gateConversationReview(prepared.key, prepared.packets, prepared.key.reports);
+  assert.equal(gated.status, 'blocked'); assert.deepEqual(gated.metrics, []); assert.equal(gated.automaticJudging, false);
+  const synthetic = gateConversationReview(prepared.key, syntheticRatings(prepared.key, prepared.packets), prepared.key.reports);
+  assert.match(synthetic.metrics[0].identityEvidence, /actual OpenRouter provider was not observed/);
+  for (const mutate of [
+    (setting: any) => { setting.upstreamModel = 'other/model'; },
+    (setting: any) => { setting.routingConfig.requestedModels = ['other/model']; },
+    (setting: any) => { setting.routingConfig.responseFormat = 'json_schema'; },
+    (setting: any) => { setting.routingConfig.allowFallbacks = true; },
+    (setting: any) => { setting.routingConfig.requireParameters = false; },
+    (setting: any) => { setting.effectiveMaxTokens = 512; },
+    (setting: any) => { setting.upstreamModel = 'auto'; },
+    (setting: any) => { setting.routingConfig = null; },
+  ]) {
+    const changed = structuredClone(after); mutate(changed.modelSettings[0]);
+    assert.throws(() => prepareConversationReview(before, changed, secret));
+  }
+  const unknownBefore = structuredClone(before), unknownAfter = structuredClone(after);
+  unknownBefore.modelSettings[0].routingConfig = null; unknownAfter.modelSettings[0].routingConfig = null;
+  assert.throws(() => prepareConversationReview(unknownBefore, unknownAfter, secret), /known routing/);
+  const wrongBefore = structuredClone(before), wrongAfter = structuredClone(after);
+  for (const value of [wrongBefore, wrongAfter]) {
+    value.modelSettings[0].upstreamModel = 'other/model'; value.modelSettings[0].routingConfig.requestedModels = ['other/model'];
+  }
+  assert.throws(() => prepareConversationReview(wrongBefore, wrongAfter, secret), /pinned upstream/);
+});
+
+test('direct Dolphin pairs retain the requested alias and disclose unknown base model and provider', () => {
+  const before = report(false), after = report(true), direct = 'dolphinllm/uncensored';
+  for (const value of [before, after]) {
+    value.modelSettings = [{ model: direct, upstreamModel: 'uncensored', transport: 'dolphinllm-chat-completions', maxTokens: 700, effectiveMaxTokens: 700, timeoutMs: 30000, providerTimeoutMs: null,
+      routingConfig: { selection: 'fixed-endpoint-and-model-alias', requestedModels: ['uncensored'], endpoint: 'https://dolphinllm.com/v1/chat/completions', responseFormat: 'json_object', temperature: .8, actualBaseModelObserved: false, actualProviderObserved: false } }];
+    for (const result of value.results) { result.model = direct; for (const row of result.turns) { row.request.model = direct; row.rawResponse = JSON.stringify({ utterances: [{ speaker: 'date', text: 'DolphinLLM at dolphinllm.com', emotion: 'neutral' }] }); } }
+  }
+  const prepared = prepareConversationReview(before, after, secret);
+  for (const packet of prepared.packets) { assert.equal(packet.reviewer.id, null); assert.ok(packet.pairs.every(pair => pair.review.preference === null)); assert.doesNotMatch(JSON.stringify(packet), /dolphinllm/i); }
+  const unrated = gateConversationReview(prepared.key, prepared.packets, prepared.key.reports);
+  assert.equal(unrated.status, 'blocked'); assert.equal(unrated.automaticJudging, false); assert.deepEqual(unrated.metrics, []);
+  const synthetic = gateConversationReview(prepared.key, syntheticRatings(prepared.key, prepared.packets), prepared.key.reports);
+  assert.match(synthetic.metrics[0].identityEvidence, /base model and serving provider were not observed/);
+  for (const mutate of [
+    (setting: any) => { setting.upstreamModel = 'another'; },
+    (setting: any) => { setting.routingConfig.endpoint = 'https://other.invalid'; },
+    (setting: any) => { setting.routingConfig.temperature = .7; },
+    (setting: any) => { setting.routingConfig.responseFormat = 'json_schema'; },
+    (setting: any) => { setting.routingConfig.actualBaseModelObserved = true; },
+  ]) {
+    const changed = structuredClone(after); mutate(changed.modelSettings[0]);
+    assert.throws(() => prepareConversationReview(before, changed, secret));
+  }
+});
+
 test('failed, absent and interrupted turns remain explicit slots and block a pass', () => {
   const before = report(false), after = report(true);
   before.selectedScripts[0].turns[1].previousDelivery = 'interrupted'; after.selectedScripts[0].turns[1].previousDelivery = 'interrupted';

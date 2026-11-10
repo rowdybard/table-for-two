@@ -19,7 +19,8 @@ import { validBoundaryAssessment } from './boundaries';
 import { alternatingMessages, deferrableCue, dialogueLoopContext, tableNow } from './dialogue-policy';
 import { openRouterAdapter, openRouterSchemaInstructions } from './openrouter';
 import { hordeAdapter } from './horde';
-import { DOLPHIN_MODEL, HORDE_MODEL, isEarnedModel } from '../../src/restaurant/types';
+import { dolphinLlmAdapter } from './dolphin-llm';
+import { DOLPHIN_MODEL, DOLPHIN_LLM_MODEL, HORDE_MODEL, isEarnedModel } from '../../src/restaurant/types';
 import { TURN_SCHEMA } from './providers';
 import { isSilentDialogueLine } from './providers';
 import { TABLETOP_ACTIONS } from '../../src/restaurant/tabletop';
@@ -43,7 +44,7 @@ export interface RestaurantServices {
   streamSpeech(account: RestaurantPaidAccount, request: { text: string; emotion: Emotion; voice: DateId | 'waiter' | 'diner' }, signal: AbortSignal): AsyncIterable<Uint8Array>;
 }
 export interface RestaurantOptions {
-  env?: NodeJS.ProcessEnv; claude?: ClaudeAdapter; dolphin?: ClaudeAdapter; horde?: ClaudeAdapter; speech?: SpeechAdapter;
+  env?: NodeJS.ProcessEnv; claude?: ClaudeAdapter; dolphin?: ClaudeAdapter; dolphinLlm?: ClaudeAdapter; horde?: ClaudeAdapter; speech?: SpeechAdapter;
   now?: () => number; autoTick?: boolean; requestTimeoutMs?: number; clipsDirectory?: string; development?: boolean; ledgerPath?: string | false;
   budgetStore?: { load(): Promise<BudgetRecord | null>; save(record: BudgetRecord): Promise<void> };
   storyRate?: number; scenarioId?: RestaurantScenarioId;
@@ -132,10 +133,11 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
   const hordeDefault = env.DATE_CONVERSATION_PROVIDER === 'aihorde';
   const hordeEarned = env.DATE_EARNED_PROVIDER === 'aihorde';
   const hordeConfigured = hordeDefault || hordeEarned || env.DATE_ALLOW_MODEL_SELECTION === '1' || !!opts.horde;
-  const anthropic = opts.claude ?? anthropicAdapter(env), dolphin = opts.dolphin ?? openRouterAdapter(env), horde = opts.horde ?? hordeAdapter({ ...env, DATE_EARNED_PROVIDER: 'aihorde', AI_HORDE_TRANSPORT: env.AI_HORDE_TRANSPORT || 'native' });
+  const anthropic = opts.claude ?? anthropicAdapter(env), dolphin = opts.dolphin ?? openRouterAdapter(env), directDolphin = opts.dolphinLlm ?? dolphinLlmAdapter(env), horde = opts.horde ?? hordeAdapter({ ...env, DATE_EARNED_PROVIDER: 'aihorde', AI_HORDE_TRANSPORT: env.AI_HORDE_TRANSPORT || 'native' });
   const anthropicConfigured = !!env.ANTHROPIC_API_KEY || !!opts.claude, dolphinConfigured = !hordeDefault && !hordeEarned && (!!env.OPENROUTER_API_KEY || !!opts.dolphin);
-  const earnedModel = hordeEarned || (!dolphinConfigured && hordeConfigured) ? HORDE_MODEL : DOLPHIN_MODEL;
-  const claude: ClaudeAdapter = { stream(request, signal) { return (request.model === HORDE_MODEL ? horde : request.model === DOLPHIN_MODEL ? dolphin : anthropic).stream(request, signal); } };
+  const directDolphinConfigured = !!env.DOLPHIN_LLM_API_KEY?.trim() || !!opts.dolphinLlm;
+  const earnedModel = directDolphinConfigured ? DOLPHIN_LLM_MODEL : hordeEarned || (!dolphinConfigured && hordeConfigured) ? HORDE_MODEL : DOLPHIN_MODEL;
+  const claude: ClaudeAdapter = { stream(request, signal) { return (request.model === DOLPHIN_LLM_MODEL ? directDolphin : request.model === HORDE_MODEL ? horde : request.model === DOLPHIN_MODEL ? dolphin : anthropic).stream(request, signal); } };
   // Look up worker availability early without sending dialogue or queuing inference.
   if (hordeConfigured) void horde.prepare?.().catch(() => {});
   // Injected adapters keep the legacy paid-accounting test contract unless the
@@ -150,15 +152,16 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
   const development = opts.development ?? env.NODE_ENV !== 'production';
   const defaultModel: ClaudeModel = hordeDefault ? HORDE_MODEL : models[0];
   // An explicitly free server cannot be switched into a paid route by a client.
-  const selectableModels = hordeDefault ? [HORDE_MODEL] : [...(development || env.DATE_ALLOW_MODEL_SELECTION === '1' ? models : [defaultModel]), ...(dolphinConfigured ? [DOLPHIN_MODEL] : []), ...(hordeConfigured ? [HORDE_MODEL] : [])];
+  const selectableModels = hordeDefault ? [HORDE_MODEL] : [...(development || env.DATE_ALLOW_MODEL_SELECTION === '1' ? models : [defaultModel]), ...(directDolphinConfigured ? [DOLPHIN_LLM_MODEL] : []), ...(dolphinConfigured ? [DOLPHIN_MODEL] : []), ...(hordeConfigured ? [HORDE_MODEL] : [])];
   const modelFor = (requested: ClaudeModel, state: DinnerState, context?: ConversationRoutingContext): ClaudeModel => {
     if (hordeDefault) {
       if (requested !== HORDE_MODEL) throw apiError(400, 'invalid_model', 'This server uses the free AI Horde conversation route.');
       return HORDE_MODEL;
     }
     const unlocked = state.phase === 'playing' && !!state.evening.chemistry?.unlocked && !state.evening.care.romanceClosed && !state.evening.farewell.ending;
-    if (isEarnedModel(requested) && !unlocked) throw apiError(409, requested === HORDE_MODEL ? 'horde_locked' : 'dolphin_locked', 'This date has not reached mutual chemistry yet.');
-    if (unlocked && (hordeConfigured || dolphinConfigured) && requested === models[0] && context && needsAdultConversation(context)) return earnedModel;
+    // Explicit provider selection never changes this couple's romantic progress.
+    if (isEarnedModel(requested) && requested !== DOLPHIN_LLM_MODEL && !unlocked) throw apiError(409, requested === HORDE_MODEL ? 'horde_locked' : 'dolphin_locked', 'This date has not reached mutual chemistry yet.');
+    if (unlocked && (directDolphinConfigured || hordeConfigured || dolphinConfigured) && requested === models[0] && context && needsAdultConversation(context)) return earnedModel;
     return requested;
   };
   const speechModel = speechProvider === 'edge' ? EDGE_MODEL : env.DATE_SPEECH_MODEL || 'eleven_v4_turbo';
@@ -222,7 +225,7 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
       }
     }
   };
-  const status = (): ProviderStatus => ({ claude: anthropicConfigured || dolphinConfigured || hordeConfigured, anthropic: anthropicConfigured, dolphin: dolphinConfigured, horde: hordeConfigured, conversationTimeoutMs: timeoutMs, hordeTimeoutMs: timeoutFor(HORDE_MODEL), speech: !!opts.speech || speechProvider === 'edge' || speechProvider === 'elevenlabs' && !!env.ELEVENLABS_API_KEY, speechProvider, speechModel, speechCostPer1K: speechRate * 1000, cachedSpeech: clips.some(clip => (clip.provider ?? 'elevenlabs') === (speechProvider === 'none' ? 'elevenlabs' : speechProvider) && clip.model === speechModel), development, models: selectableModels, defaultModel, sessionLimit, ...(!anthropicConfigured && !dolphinConfigured && !hordeConfigured ? { message: 'Configure a server conversation key for live dialogue. Scene interactions and free voice options remain available.' } : {}) });
+  const status = (): ProviderStatus => ({ claude: anthropicConfigured || dolphinConfigured || directDolphinConfigured || hordeConfigured, anthropic: anthropicConfigured, dolphin: dolphinConfigured || directDolphinConfigured, horde: hordeConfigured, conversationTimeoutMs: timeoutMs, hordeTimeoutMs: timeoutFor(HORDE_MODEL), speech: !!opts.speech || speechProvider === 'edge' || speechProvider === 'elevenlabs' && !!env.ELEVENLABS_API_KEY, speechProvider, speechModel, speechCostPer1K: speechRate * 1000, cachedSpeech: clips.some(clip => (clip.provider ?? 'elevenlabs') === (speechProvider === 'none' ? 'elevenlabs' : speechProvider) && clip.model === speechModel), development, models: selectableModels, defaultModel, sessionLimit, ...(!anthropicConfigured && !dolphinConfigured && !directDolphinConfigured && !hordeConfigured ? { message: 'Configure a server conversation key for live dialogue. Scene interactions and free voice options remain available.' } : {}) });
   function authorize(req: IncomingMessage, id: string) {
     const s = sessions.get(id); if (!s) throw apiError(404, 'session_missing', 'This date session is no longer available.');
     const token = (req.headers.authorization || '').replace(/^Bearer /, ''); const a = Buffer.from(tokenHash(token)), b = Buffer.from(s.token);
@@ -405,7 +408,7 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
       const blind = blindMode ? createBlindDate((data.seed as string | undefined) ?? randomBytes(16).toString('hex')) : undefined;
       const scene = new DinnerScene(blind?.dateId ?? data.dateId as DinnerState['dateId'], Math.min(sessionLimit, (data.sessionLimit as number | undefined) ?? sessionLimit), { storyRate: opts.storyRate, scenarioId: opts.scenarioId, ...(blind ? { blindDate: { seed: blind.seed }, variation: blind.traits.spontaneity % 3 } : {}) });
       const token = randomBytes(24).toString('hex');
-      if (isEarnedModel(data.model) && data.model !== defaultModel) throw apiError(409, data.model === HORDE_MODEL ? 'horde_locked' : 'dolphin_locked', 'Start with Haiku and build mutual chemistry first.');
+      if (isEarnedModel(data.model) && data.model !== DOLPHIN_LLM_MODEL && data.model !== defaultModel) throw apiError(409, data.model === HORDE_MODEL ? 'horde_locked' : 'dolphin_locked', 'Start with Haiku and build mutual chemistry first.');
       const s: Session = { scene, token: tokenHash(token), model: (data.model as ClaudeModel) || defaultModel, generation: 0, speechControllers: new Set(), turns: new Map(), allowed: new Map(), generations: new Map(), capturedCues: new Set(), history: [], reserved: 0, touched: now(), turnStarted: 0 };
       const opening: SceneUtterance = { speaker: 'date', text: blind?.opening ?? getDate(scene.state.dateId)!.opening, emotion: blind ? 'warm' : 'neutral' }; s.allowed.set(keyFor(opening), opening); s.generations.set(0, { lines: [], playback: new Map(), interrupted: false }); sessions.set(scene.state.id, s);
       captureCues(s);

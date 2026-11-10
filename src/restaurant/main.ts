@@ -1,6 +1,7 @@
 import './style.css';
 import { DATES, EVENT_COPY, getDate } from './content';
 import type { AudioPlayback, ClaudeModel, DateId, DinnerCommand, DinnerState, ProviderStatus, SceneUtterance, TurnEvent, TurnVia } from './types';
+import { DOLPHIN_LLM_MODEL, DOLPHIN_MODEL } from './types';
 import { markup } from './ui';
 import { RestaurantRenderer } from './RestaurantRenderer';
 import { LocalRecognition } from './LocalRecognition';
@@ -43,7 +44,7 @@ const preferences: Preferences = { model: 'claude-haiku-5-5', sessionLimit: 2, s
 try {
   const saved = JSON.parse(localStorage.getItem('table-for-two-settings') || '{}') as Partial<Preferences>;
   preferences.model = savedConversationModel(saved);
-  if (saved.modelSource === 'chat-command') preferences.modelSource = 'chat-command';
+  if (saved.modelSource === 'chat-command' && saved.model === preferences.model) preferences.modelSource = 'chat-command';
   if (typeof saved.sessionLimit === 'number' && saved.sessionLimit >= .05 && saved.sessionLimit <= 20) preferences.sessionLimit = saved.sessionLimit;
   if (typeof saved.speech === 'boolean') preferences.speech = saved.speech;
   if (typeof saved.captions === 'boolean') preferences.captions = saved.captions;
@@ -177,7 +178,7 @@ function renderUsage() {
 function renderProviders() {
   if (!providers) return;
   const voiceStatus = providers.speechProvider === 'edge' ? 'Free Edge neural voices' : providers.speechProvider === 'elevenlabs' ? (providers.speech ? 'ElevenLabs configured' : 'ElevenLabs key is missing') : providers.cachedSpeech ? 'Reusable voice clips' : 'Captions only';
-  el('provider-status').textContent = `Anthropic: ${(providers.anthropic ?? providers.claude) ? 'key configured' : 'key missing'}. ${providers.horde ? `AI Horde: ${providers.defaultModel === 'ai-horde' ? 'free conversation' : 'available via /model horde'}. Community hosts process messages and may read or save them; replies can wait in a queue.` : `Dolphin: ${providers.dolphin ? 'available after mutual chemistry' : 'key not configured'}.`} Voice: ${voiceStatus}. Recognition runs locally.`;
+  el('provider-status').textContent = `Anthropic: ${(providers.anthropic ?? providers.claude) ? 'key configured' : 'key missing'}. Dolphin: ${providers.models.includes(DOLPHIN_LLM_MODEL) ? 'available via /model dolphin' : 'direct provider unavailable'}.${providers.models.includes(DOLPHIN_MODEL) ? ' Dolphin Venice via OpenRouter is also configured.' : ''} Voice: ${voiceStatus}. Recognition runs locally.`;
   el('developer-settings').hidden = !providers.development;
   input('session-limit').max = String(Math.min(20, providers.sessionLimit));
   if (!providers.models.includes(preferences.model)) { preferences.model = providers.defaultModel; delete preferences.modelSource; }
@@ -932,7 +933,7 @@ async function applyModelChatCommand(command: ModelChatCommand, controlEpoch: nu
     } catch (error) { toast((error as Error).message); }
     return;
   }
-  if (!providers.models.includes(command.model)) { toast('That model is unavailable on this server.'); return; }
+  if (!providers.models.includes(command.model)) { toast(command.model === DOLPHIN_LLM_MODEL ? 'Dolphin direct is unavailable on this server.' : 'That model is unavailable on this server.'); return; }
   try {
     if (doubleClient.active) await doubleClient.command({ type: 'set-model', model: command.model });
     if (controlEpoch !== modelResetEpoch) return;

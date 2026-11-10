@@ -3,12 +3,12 @@ import { createHash } from 'node:crypto';
 import { EVALUATION_MAX_TOKENS } from '../../src/restaurant/evaluation-runtime';
 import { DEFAULT_HORDE_MODEL, HORDE_BRIDGE_CONTEXT_FIT, HORDE_BRIDGE_RESPONSE_FORMAT, HORDE_BRIDGE_SCHEMA_STRICT } from '../../server/restaurant/horde';
 import { DATE_EVALUATION_RUBRIC, EVALUATION_REVIEW_GUIDE, EVALUATION_MODELS, EVALUATION_SCRIPTS, EvaluationConversation, type EvaluationScript } from '../../src/restaurant/evaluation';
-import type { ClaudeModel } from '../../src/restaurant/types';
+import { DOLPHIN_LLM_MODEL, DOLPHIN_MODEL, type ClaudeModel } from '../../src/restaurant/types';
 import { completeUtterances } from '../../server/restaurant';
 import { DateApiError, TURN_SCHEMA, type ClaudeAdapter, type ClaudeRequest, type TokenUsage } from '../../server/restaurant/providers';
 
 export interface EvaluationOptions { run: boolean; budgetUSD?: number; models: ClaudeModel[]; scripts: EvaluationScript[]; help: boolean }
-const aliases: Record<string, ClaudeModel> = { haiku: 'claude-haiku-5-5', sonnet: 'claude-sonnet-5-5', horde: 'ai-horde' };
+const aliases: Record<string, ClaudeModel> = { haiku: 'claude-haiku-5-5', sonnet: 'claude-sonnet-5-5', horde: 'ai-horde', dolphin: DOLPHIN_LLM_MODEL, venice: DOLPHIN_MODEL };
 export function parseEvaluationOptions(args: readonly string[]): EvaluationOptions {
   let run = false, help = false, budgetUSD: number | undefined, suite = 'all', ids: string[] | undefined;
   let models: ClaudeModel[] = ['claude-haiku-5-5', 'claude-sonnet-5-5'];
@@ -23,7 +23,7 @@ export function parseEvaluationOptions(args: readonly string[]): EvaluationOptio
     const value = args[++i];
     if (!value || value.startsWith('--')) throw new Error(`Missing value for ${flag}.`);
     if (flag === '--budget') { if (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(value)) throw new Error('Budget must be an explicit USD number.'); budgetUSD = Number(value); }
-    if (flag === '--models') { models = value.split(',').map(model => aliases[model] ?? model as ClaudeModel); if (new Set(models).size !== models.length || models.some(model => !EVALUATION_MODELS.includes(model))) throw new Error('Choose distinct models: haiku, sonnet, horde.'); }
+    if (flag === '--models') { models = value.split(',').map(model => aliases[model] ?? model as ClaudeModel); if (new Set(models).size !== models.length || models.some(model => !EVALUATION_MODELS.includes(model))) throw new Error('Choose distinct models: haiku, sonnet, horde, dolphin, venice.'); }
     if (flag === '--scripts') ids = value.split(',');
     if (flag === '--suite') suite = value;
   }
@@ -80,19 +80,20 @@ export interface EvaluationRunOptions {
   onProgress?(message: { scriptId: string; model: ClaudeModel; turn: number; valid: boolean; accountedCostUSD: number }): void;
 }
 
-export function evaluationModelSettings(models: readonly ClaudeModel[], env: NodeJS.ProcessEnv = {}, timeoutMs?: number) {
+interface EvaluationRoutingConfig { selection: string; requestedModels: string[] | null; actualWorkerObserved?: boolean; actualBaseModelObserved?: boolean; actualProviderObserved?: boolean; endpoint?: string; temperature?: number; contextFit?: string; responseFormat?: string; schemaStrict?: boolean; allowFallbacks?: boolean; requireParameters?: boolean }
+export function evaluationModelSettings(models: readonly ClaudeModel[], env: NodeJS.ProcessEnv = {}, timeoutMs?: number): { model: ClaudeModel; upstreamModel: string | null; transport: string; maxTokens: number; effectiveMaxTokens: number; timeoutMs: number; providerTimeoutMs: number | null; routingConfig: EvaluationRoutingConfig | null }[] {
   return models.map(model => {
-    const horde = model === 'ai-horde', native = horde && env.AI_HORDE_TRANSPORT === 'native';
+    const horde = model === 'ai-horde', venice = model === DOLPHIN_MODEL, dolphin = model === DOLPHIN_LLM_MODEL, native = horde && env.AI_HORDE_TRANSPORT === 'native';
     const pinned = env.AI_HORDE_MODEL?.trim() || null;
-    const upstreamModel = horde ? pinned ?? (native ? null : DEFAULT_HORDE_MODEL) : model;
+    const upstreamModel = horde ? pinned ?? (native ? null : DEFAULT_HORDE_MODEL) : dolphin ? 'uncensored' : model;
     const configuredTimeout = Number(env.AI_HORDE_TIMEOUT_MS?.trim() || 60_000);
-    return { model, upstreamModel, transport: horde ? native ? 'horde-native' : 'horde-openai' : 'anthropic-messages',
+    return { model, upstreamModel, transport: horde ? native ? 'horde-native' : 'horde-openai' : venice ? 'openrouter-chat-completions' : dolphin ? 'dolphinllm-chat-completions' : 'anthropic-messages',
       maxTokens: EVALUATION_MAX_TOKENS, effectiveMaxTokens: horde ? Math.min(512, EVALUATION_MAX_TOKENS) : EVALUATION_MAX_TOKENS,
       timeoutMs: timeoutMs ?? (horde ? 65000 : 30000),
       providerTimeoutMs: native ? Number.isFinite(configuredTimeout) ? Math.floor(Math.max(1000, Math.min(120_000, configuredTimeout))) : 60_000 : null,
       routingConfig: horde ? { selection: native && !pinned ? 'reviewed-native-pool' : pinned ? 'configured-model' : 'default-fixed-model',
         requestedModels: upstreamModel ? [upstreamModel] : null, actualWorkerObserved: false, contextFit: native ? 'reject' : HORDE_BRIDGE_CONTEXT_FIT,
-        ...(!native ? { responseFormat: HORDE_BRIDGE_RESPONSE_FORMAT, schemaStrict: HORDE_BRIDGE_SCHEMA_STRICT } : {}) } : null };
+        ...(!native ? { responseFormat: HORDE_BRIDGE_RESPONSE_FORMAT, schemaStrict: HORDE_BRIDGE_SCHEMA_STRICT } : {}) } : venice ? { selection: 'fixed-model', requestedModels: [DOLPHIN_MODEL], responseFormat: 'json_object', allowFallbacks: false, requireParameters: true } : dolphin ? { selection: 'fixed-endpoint-and-model-alias', requestedModels: ['uncensored'], endpoint: 'https://dolphinllm.com/v1/chat/completions', responseFormat: 'json_object', temperature: .8, actualBaseModelObserved: false, actualProviderObserved: false } : null };
   });
 }
 

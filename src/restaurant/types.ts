@@ -2,11 +2,12 @@ export type DateId = 'mira' | 'jules' | 'dev';
 export type Speaker = 'date' | 'other-date' | 'waiter' | 'diner';
 export type Emotion = 'neutral' | 'amused' | 'warm' | 'flirtatious' | 'embarrassed' | 'annoyed' | 'angry' | 'defensive' | 'surprised';
 export const DOLPHIN_MODEL = 'cognitivecomputations/dolphin-mistral-24b-venice-edition' as const;
+export const DOLPHIN_LLM_MODEL = 'dolphinllm/uncensored' as const;
 /** Stable game identity; the current community model is configured only on the server. */
 export const HORDE_MODEL = 'ai-horde' as const;
-export const isEarnedModel = (model: unknown): boolean => model === DOLPHIN_MODEL;
+export const isEarnedModel = (model: unknown): boolean => model === DOLPHIN_MODEL || model === DOLPHIN_LLM_MODEL;
 /** Legacy name retained for saved games; these identifiers may use different providers. */
-export type ClaudeModel = 'claude-haiku-5-5' | 'claude-sonnet-5-5' | typeof DOLPHIN_MODEL | typeof HORDE_MODEL;
+export type ClaudeModel = 'claude-haiku-5-5' | 'claude-sonnet-5-5' | typeof DOLPHIN_MODEL | typeof DOLPHIN_LLM_MODEL | typeof HORDE_MODEL;
 export type DinnerStage = 'arrival' | 'seated' | 'ordered' | 'dining' | 'dessert' | 'farewell' | 'finished';
 export type DinnerEvent = 'wrong-order' | 'spilled-drink' | 'disruptive-diner';
 export type DateAction = 'follow' | 'sit' | 'order' | 'reassure' | 'finish' | 'none';

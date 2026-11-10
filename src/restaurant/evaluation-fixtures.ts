@@ -1,4 +1,4 @@
-import type { ClaudeModel, DateId, TurnVia } from './types';
+import { DOLPHIN_LLM_MODEL, DOLPHIN_MODEL, type ClaudeModel, type DateId, type TurnVia } from './types';
 import type { ConversationTarget, DoubleHumanId } from './double-date-types';
 
 export interface EvaluationTurn {
@@ -724,4 +724,4 @@ CONTINUITY_EVALUATION_SCRIPTS.find(s => s.id === 'continuity-double-wingman')!.t
 CONTINUITY_EVALUATION_SCRIPTS.find(s => s.id === 'continuity-double-wingman')!.humanNames = { h1: 'Rowan', h2: 'Ellis' };
 
 export const EVALUATION_SCRIPTS = [...SHORT_EVALUATION_SCRIPTS, ...CONTINUITY_EVALUATION_SCRIPTS];
-export const EVALUATION_MODELS: readonly ClaudeModel[] = ['claude-haiku-5-5', 'claude-sonnet-5-5', 'ai-horde'];
+export const EVALUATION_MODELS: readonly ClaudeModel[] = ['claude-haiku-5-5', 'claude-sonnet-5-5', 'ai-horde', DOLPHIN_MODEL, DOLPHIN_LLM_MODEL];

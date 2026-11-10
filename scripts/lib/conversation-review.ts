@@ -57,9 +57,25 @@ function validateReport(value: unknown, label: string) {
   for (const setting of value.modelSettings) {
     insist(object(setting) && text(setting.model) && text(setting.upstreamModel) && !/^(?:unknown|auto)$/i.test(setting.upstreamModel), `${label}: a known requested upstream model is required; an unknown automatic pool cannot establish model parity.`);
     insist(Number.isSafeInteger(setting.maxTokens) && setting.maxTokens > 0 && Number.isFinite(setting.timeoutMs) && setting.timeoutMs > 0 && !settings.has(setting.model), `${label}: invalid or duplicate model settings.`);
-    insist(['anthropic-messages', 'horde-openai', 'horde-native'].includes(setting.transport) && Number.isSafeInteger(setting.effectiveMaxTokens) && setting.effectiveMaxTokens > 0 && setting.effectiveMaxTokens <= setting.maxTokens, `${label}: transport/effective response limits are unknown.`);
+    insist(['anthropic-messages', 'horde-openai', 'horde-native', 'openrouter-chat-completions', 'dolphinllm-chat-completions'].includes(setting.transport) && Number.isSafeInteger(setting.effectiveMaxTokens) && setting.effectiveMaxTokens > 0 && setting.effectiveMaxTokens <= setting.maxTokens, `${label}: transport/effective response limits are unknown.`);
     insist(setting.providerTimeoutMs === null || Number.isFinite(setting.providerTimeoutMs) && setting.providerTimeoutMs > 0, `${label}: provider timeout settings are unknown.`);
     insist(setting.routingConfig === null || object(setting.routingConfig), `${label}: routing settings are unknown.`);
+    if (setting.transport === 'openrouter-chat-completions') {
+      const routing = setting.routingConfig;
+      insist(setting.upstreamModel === setting.model && object(routing) && routing.selection === 'fixed-model' && Array.isArray(routing.requestedModels)
+        && routing.requestedModels.length === 1 && routing.requestedModels[0] === setting.upstreamModel
+        && routing.responseFormat === 'json_object' && routing.allowFallbacks === false && routing.requireParameters === true,
+      `${label}: OpenRouter requires a pinned upstream model and known routing/format settings.`);
+    }
+    if (setting.transport === 'dolphinllm-chat-completions') {
+      const routing = setting.routingConfig;
+      insist(setting.model === 'dolphinllm/uncensored' && setting.upstreamModel === 'uncensored' && object(routing)
+        && routing.selection === 'fixed-endpoint-and-model-alias' && Array.isArray(routing.requestedModels)
+        && routing.requestedModels.length === 1 && routing.requestedModels[0] === 'uncensored'
+        && routing.endpoint === 'https://dolphinllm.com/v1/chat/completions' && routing.responseFormat === 'json_object'
+        && routing.temperature === .8 && routing.actualBaseModelObserved === false && routing.actualProviderObserved === false,
+      `${label}: Dolphin LLM requires its documented endpoint, model alias and route settings.`);
+    }
     settings.set(setting.model, setting);
   }
   const scripts = new Map<string, EvaluationScript>();
@@ -97,7 +113,9 @@ function anonymizer(script: EvaluationScript) {
   const ids = script.mode === 'double' ? script.dateIds ?? [script.dateId] : [script.dateId];
   const names = new Map(ids.map((id, index) => [id, script.mode === 'double' ? `Date ${index + 1}` : 'Date']));
   return (value: string) => value.replace(/\b(?:Mira|Jules|Dev)\b/gi, name => names.get(name.toLowerCase() as Cast) ?? 'Other date')
-    .replace(/\b(?:Anthropic|OpenRouter|AI Horde|Horde|Claude|Haiku|Sonnet)\b/gi, '[provider]');
+    .replace(/\bcognitivecomputations\/dolphin-mistral-24b-venice-edition\b/gi, '[provider]')
+    .replace(/\bdolphinllm(?:\.com|\/uncensored)?\b/gi, '[provider]')
+    .replace(/\b(?:Anthropic|OpenRouter|AI Horde|Horde|Claude|Haiku|Sonnet|Dolphin|Mistral)\b/gi, '[provider]');
 }
 function transcript(script: EvaluationScript, result: ObjectValue | undefined) {
   const scrub = anonymizer(script);
@@ -196,7 +214,7 @@ export function gateConversationReview(key: CoordinatorKey, packets: readonly Hu
   }
   const blockers: string[] = [], failures: string[] = [], identities = new Set<string>();
   const metrics = key.provenance.modelSettings.map(setting => ({ model: setting.model as string,
-    identityEvidence: String(setting.transport).startsWith('horde') ? 'Matched requested upstream/configuration; the actual volunteer worker was not observed.' : 'Matched requested upstream model alias.',
+    identityEvidence: String(setting.transport).startsWith('horde') ? 'Matched requested upstream/configuration; the actual volunteer worker was not observed.' : setting.transport === 'openrouter-chat-completions' ? 'Matched requested upstream model and routing settings; the actual OpenRouter provider was not observed.' : setting.transport === 'dolphinllm-chat-completions' ? 'Matched documented endpoint and requested model alias; the actual base model and serving provider were not observed.' : 'Matched requested upstream model alias.',
     candidateWins: 0, baselineWins: 0, ties: 0, preference: null as number | null, preferences: [] as { reviewer: string; candidateWins: number; baselineWins: number; ties: number; preference: number | null }[], relevant: 0, relevanceTotal: 0, relevance: null as number | null, castCorrect: 0, castTotal: 0, castIdentification: null as number | null, memorable: [] as { reviewer: string; earned: number; denominator: number }[], continuityFailures: 0, hardFailures: 0 }));
   for (const packet of packets) {
     const expected = key.packets.find(item => item.packetId === packet.packetId);

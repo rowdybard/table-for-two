@@ -18,11 +18,13 @@ const claude: ClaudeAdapter = { async *stream(request, signal) {
   for (let i = 0; i < json.length; i += 25) { if (signal.aborted) return; yield { type: 'text', text: json.slice(i, i + 25) }; await new Promise(resolve => setTimeout(resolve, 5)); }
   yield { type: 'usage', usage: { outputTokens: 100 } };
 } };
-type HordeWaitGate = { marker: string; started: boolean; aborted: boolean; lateAttempted: boolean };
-let hordeWaitGate: HordeWaitGate | undefined;
-const cancelledHordeLine = 'The cancelled violet comet should never answer.';
-const horde: ClaudeAdapter = { async *stream(request, signal) {
-  const content = request.messages.at(-1)!.content, gate = hordeWaitGate;
+type DolphinWaitGate = { marker: string; started: boolean; aborted: boolean; lateAttempted: boolean };
+let dolphinWaitGate: DolphinWaitGate | undefined;
+let dolphinCalls = 0;
+const cancelledDolphinLine = 'The cancelled violet comet should never answer.';
+const dolphinLlm: ClaudeAdapter = { async *stream(request, signal) {
+  dolphinCalls++;
+  const content = request.messages.at(-1)!.content, gate = dolphinWaitGate;
   if (!gate || !content.includes(gate.marker)) { yield* claude.stream(request, signal); return; }
   calls.push({ model: request.model, text: content });
   gate.started = true;
@@ -33,7 +35,7 @@ const horde: ClaudeAdapter = { async *stream(request, signal) {
   });
   // Model a provider's final packet racing with cancellation. It must not play.
   gate.lateAttempted = true;
-  yield { type: 'text', text: JSON.stringify({ utterances: [{ speaker: 'date', text: cancelledHordeLine, emotion: 'neutral' }], emotion: 'neutral', action: 'none', memory: 'A cancelled response.' } satisfies SceneTurn) };
+  yield { type: 'text', text: JSON.stringify({ utterances: [{ speaker: 'date', text: cancelledDolphinLine, emotion: 'neutral' }], emotion: 'neutral', action: 'none', memory: 'A cancelled response.' } satisfies SceneTurn) };
 } };
 const state = (page: Page) => page.evaluate(() => (window as unknown as Window & { __restaurantState: DinnerState }).__restaurantState);
 const plantAsset = '/restaurant-props/potted_plant_02.glb';
@@ -108,7 +110,7 @@ test.beforeAll(async () => {
     if (!file.startsWith(root + sep)) { res.writeHead(403).end(); return; }
     void readFile(file).then(data => { res.setHeader('Content-Type', ({ '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.wasm': 'application/wasm', '.woff2': 'font/woff2', '.jpg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json' } as Record<string, string>)[extname(file)] || 'application/octet-stream'); res.end(data); }).catch(() => res.writeHead(404).end());
   });
-  app = await attachRestaurantServer(http, { env: { DATE_SPEECH_PROVIDER: 'none' }, claude, horde, development: true, ledgerPath: false });
+  app = await attachRestaurantServer(http, { env: { DATE_SPEECH_PROVIDER: 'none', DATE_ALLOW_MODEL_SELECTION: '1' }, claude, dolphinLlm, development: true, ledgerPath: false });
   await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${(http.address() as { port: number }).port}`;
   await mkdir('.qa', { recursive: true });
@@ -510,6 +512,10 @@ test('Haiku is the default, private model commands survive reload and reset rest
   await expect(page.locator('#toast')).toHaveText('Conversation model: Haiku.');
   await modelCommand(page, '/model nonexistent');
   await expect(page.locator('#toast')).toHaveText('That model command is not valid.');
+  await modelCommand(page, '/model horde');
+  await expect(page.locator('#toast')).toHaveText('That model command is not valid.');
+  await modelCommand(page, '/model ai-horde');
+  await expect(page.locator('#toast')).toHaveText('That model command is not valid.');
   expect(turnPosts).toEqual([]); expect(calls.length).toBe(before);
   expect((await state(page)).usage.claudeRequests).toBe(0);
 
@@ -546,23 +552,24 @@ test('Haiku is the default, private model commands survive reload and reset rest
   expect(turnPosts.map(turn => turn.model)).toEqual(['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']);
   // Every one of these was typed, and the client says so (spoken turns say "voice"). Added with the turn-provenance work; not run in the authoring environment.
   expect(turnPosts.map(turn => turn.via)).toEqual(['typed', 'typed', 'typed', 'typed']);
-  const beforeHordeCost = (await state(page)).usage.claudeCost;
-  await modelCommand(page, '/model horde');
-  await expect(page.locator('#toast')).toHaveText('AI Horde selected for the next turn.');
+  const directBefore = dolphinCalls;
+  await modelCommand(page, '/model dolphin');
+  await expect(page.locator('#toast')).toHaveText('Dolphin selected for the next turn.');
   expect(calls.length).toBe(before + 4);
   await modelCommand(page, '/model');
-  await expect(page.locator('#toast')).toHaveText('Conversation model: AI Horde (next turn).');
-  await speak('Tell me what makes a first date feel exciting.', 'ai-horde', 5);
-  expect((await state(page)).usage.claudeCost).toBe(beforeHordeCost);
+  await expect(page.locator('#toast')).toHaveText('Conversation model: Dolphin (next turn).');
+  await speak('Tell me what makes a first date feel exciting.', 'dolphinllm/uncensored', 5);
+  expect(dolphinCalls).toBe(directBefore + 1);
   await reloadRestaurantScene(page);
   await expect(page.locator('#pause-dialog')).toBeVisible({ timeout: 15000 });
   await page.locator('#resume-date').click();
   await expect.poll(async () => (await state(page)).phase).toBe('playing');
   await waitForRestaurantScene(page);
   await modelCommand(page, '/model');
-  await expect(page.locator('#toast')).toHaveText('Conversation model: AI Horde.');
-  await speak('I like a little playful confidence.', 'ai-horde', 6);
-  expect(turnPosts.slice(-2).map(turn => turn.model)).toEqual(['ai-horde', 'ai-horde']);
+  await expect(page.locator('#toast')).toHaveText('Conversation model: Dolphin.');
+  await speak('I like a little playful confidence.', 'dolphinllm/uncensored', 6);
+  expect(dolphinCalls).toBe(directBefore + 2);
+  expect(turnPosts.slice(-2).map(turn => turn.model)).toEqual(['dolphinllm/uncensored', 'dolphinllm/uncensored']);
 
   const beforeReset = await state(page);
   const savedSession = await page.evaluate(() => JSON.parse(sessionStorage.getItem('table-for-two-session')!));
@@ -600,12 +607,12 @@ test('Haiku is the default, private model commands survive reload and reset rest
   await expect(page.locator('#model-select')).toHaveCount(0);
 });
 
-test('model reset cancels a waiting Horde turn and keeps the same date playable on Haiku', async ({ page }) => {
+test('model reset cancels a waiting Dolphin turn and keeps the same date playable on Haiku', async ({ page }) => {
   test.setTimeout(60000);
   await page.addInitScript(() => {
     localStorage.setItem('table-for-two-settings', JSON.stringify({ speech: false, ambience: false }));
   });
-  const gate: HordeWaitGate = { marker: 'A fictional violet comet waits at platform nine.', started: false, aborted: false, lateAttempted: false };
+  const gate: DolphinWaitGate = { marker: 'A fictional violet comet waits at platform nine.', started: false, aborted: false, lateAttempted: false };
   const turnPosts: { text: string; model: ClaudeModel }[] = [], playbackTexts: string[] = [];
   page.on('request', request => {
     if (request.method() !== 'POST') return;
@@ -615,17 +622,17 @@ test('model reset cancels a waiting Horde turn and keeps the same date playable 
       const data = request.postDataJSON(); playbackTexts.push(data.text ?? data.utterance?.text ?? '');
     }
   });
-  hordeWaitGate = gate;
+  dolphinWaitGate = gate;
   try {
     await beginNewSolo(page);
     const before = await state(page), callsBefore = calls.length;
-    await modelCommand(page, '/model horde');
-    await expect(page.locator('#toast')).toHaveText('AI Horde selected for the next turn.');
+    await modelCommand(page, '/model dolphin');
+    await expect(page.locator('#toast')).toHaveText('Dolphin selected for the next turn.');
     await page.keyboard.press('t');
     await page.locator('#conversation-input').fill(gate.marker);
     await page.locator('#send-turn').click();
     await expect.poll(() => gate.started).toBe(true);
-    expect(calls.at(-1)?.model).toBe('ai-horde');
+    expect(calls.at(-1)?.model).toBe('dolphinllm/uncensored');
     await expect(page.locator('#conversation-form')).toBeHidden();
 
     // Ordinary turns stay disabled while this request is pending; reset can escape it.
@@ -643,9 +650,9 @@ test('model reset cancels a waiting Horde turn and keeps the same date playable 
     expect(await page.evaluate(() => JSON.parse(localStorage.getItem('table-for-two-settings')!))).not.toHaveProperty('modelSource');
     await expect(page.locator('#conversation-input')).toHaveValue('');
     await expect(page.locator('#caption')).toBeHidden();
-    await expect(page.locator('#conversation-log')).not.toContainText(cancelledHordeLine);
-    await expect(page.locator('#caption-text')).not.toContainText(cancelledHordeLine);
-    await page.screenshot({ path: '.qa/restaurant-model-reset-cancelled-horde.png' });
+    await expect(page.locator('#conversation-log')).not.toContainText(cancelledDolphinLine);
+    await expect(page.locator('#caption-text')).not.toContainText(cancelledDolphinLine);
+    await page.screenshot({ path: '.qa/restaurant-model-reset-cancelled-dolphin.png' });
 
     await modelCommand(page, '/model');
     await expect(page.locator('#toast')).toHaveText('Conversation model: Haiku.');
@@ -657,11 +664,11 @@ test('model reset cancels a waiting Horde turn and keeps the same date playable 
     await expect(page.locator('#conversation-log')).toContainText('What do you like to cook?');
     await expect.poll(async () => (await state(page)).usage.outputTokens).toBe(100);
     await expect(page.locator('#send-turn')).toBeEnabled();
-    expect(turnPosts.map(turn => turn.model)).toEqual(['ai-horde', 'claude-haiku-5-5']);
-    expect(playbackTexts).not.toContain(cancelledHordeLine);
-    await expect(page.locator('#conversation-log')).not.toContainText(cancelledHordeLine);
-    await expect(page.locator('#caption-text')).not.toContainText(cancelledHordeLine);
-  } finally { hordeWaitGate = undefined; }
+    expect(turnPosts.map(turn => turn.model)).toEqual(['dolphinllm/uncensored', 'claude-haiku-5-5']);
+    expect(playbackTexts).not.toContain(cancelledDolphinLine);
+    await expect(page.locator('#conversation-log')).not.toContainText(cancelledDolphinLine);
+    await expect(page.locator('#caption-text')).not.toContainText(cancelledDolphinLine);
+  } finally { dolphinWaitGate = undefined; }
 });
 
 test('model reset discards an ordinary turn still waiting for interruption before submission', async ({ page }) => {

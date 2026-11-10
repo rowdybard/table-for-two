@@ -18,7 +18,7 @@ const ledger = createServer((request, response) => {
 await new Promise(resolve => ledger.listen(0, '127.0.0.1', resolve));
 const lease = createServer(); await new Promise(resolve => lease.listen(0, '127.0.0.1', resolve));
 const port = lease.address().port; await new Promise(resolve => lease.close(resolve));
-const child = spawn(process.execPath, [backend], { windowsHide: true, env: { ...process.env, NODE_ENV: 'production', PORT: String(port), BUDGET_EPOCH: 'smoke-process', BUDGET_BRIDGE_URL: `http://127.0.0.1:${ledger.address().port}/ledger`, ANTHROPIC_API_KEY: '', OPENROUTER_API_KEY: '', ELEVENLABS_API_KEY: '', DATE_SPEECH_PROVIDER: withEdge ? 'edge' : 'none' }, stdio: ['ignore', 'pipe', 'pipe'] });
+const child = spawn(process.execPath, [backend], { windowsHide: true, env: { ...process.env, NODE_ENV: 'production', PORT: String(port), BUDGET_EPOCH: 'smoke-process', BUDGET_BRIDGE_URL: `http://127.0.0.1:${ledger.address().port}/ledger`, ANTHROPIC_API_KEY: '', OPENROUTER_API_KEY: '', DOLPHIN_LLM_API_KEY: '', ELEVENLABS_API_KEY: '', AI_HORDE_API_KEY: '', DATE_SPEECH_PROVIDER: withEdge ? 'edge' : 'none' }, stdio: ['ignore', 'pipe', 'pipe'] });
 let output = ''; child.stdout.on('data', data => { output += data; }); child.stderr.on('data', data => { output += data; });
 const base = `http://127.0.0.1:${port}`;
 try {
