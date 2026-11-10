@@ -1,8 +1,10 @@
 # Conversation depth: persistent implementation goal
 
-Status: **active**. Current branch: `codex/conversation-delivery-continuity`.
+Status: **active**. The table-only update is merged to `main` in PR #13 (`1c23101`) and deployed. Human quality review remains outstanding.
 
 ## Current direction: conversation at the table
+
+The resulting release passed 605 provider-disabled unit/controller checks and 32 browser cases (one WebKit-only skip), including native Chromium tab visibility, microphone/connection teardown and same-evening resume. CI is [run 42746202031](https://github.com/rowdybard/table-for-two/actions/runs/42746202031). Worker version is `776dd1bc-bade-4922-9e88-f5c729da8f32`; no new live model or speech tests were spent for this pass. The frozen application is `f94d64a`; later changes through tested `d8f7121` affect the CI fixture only. A 2,640-pair offline comparison against the frozen original baseline remains inside the 600-token addition bound (conservative UTF-8 byte estimate, not provider tokenization).
 
 The owner's November 9 follow-up supersedes the restaurant choreography requirements below: start the human seated, let the date arrive second, and keep play at the table. Remove walking, waiter/diner dialogue, service choices, forced scenarios, agenda objectives and canned conversational interruptions. Keep the cast, Solo/Blind/Double modes, genuine model replies, earned chemistry, model routing, truthful delivery-aware memory and same-evening recovery. Frame the date clearly on portrait and landscape screens. An inactive tab must stop drawing, polling, recognition, speech preparation and audio connections; foreground reconnection must preserve the evening without replaying missed dialogue or generating an automatic reply.
 

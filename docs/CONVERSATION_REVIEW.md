@@ -1,5 +1,7 @@
 # Human conversation review
 
+The table-only release is merged in [PR #13](https://github.com/rowdybard/table-for-two/pull/13) and deployed as Worker `776dd1bc-bade-4922-9e88-f5c729da8f32`. Its technical gate passed 605 unit/controller checks and 32 browser cases, including real inactive-tab teardown/resume. Those checks used injected providers and establish behavior, not dialogue quality. No new live inference was run for this pass; the earlier diagnostic and pilot caps remain unchanged. The full matched conversation comparison and independent human ratings are still outstanding.
+
 The current candidate follows the owner's revised table-only direction: seated start, later date arrival, no waiter or service scripts, no walking and no forced scenario/agenda objectives. Candidate evaluation snapshots now match that seated conversation, with no invented meal order or served course. Earlier live captures below predate this change and remain historical evidence, not a comparison or quality pass for the table-only candidate.
 
 The corpus and evaluation runner are implemented. **The narrowly approved $0 Horde pilot is closed; no complete corpus comparison or human A/B review exists.** Initial captures include provider and formatting failures, which remain failures in the reports. Injected-provider checks establish execution, protocol validation, cost guards and bookkeeping. They do not establish that anyone preferred the dialogue or found it funny, flirty or memorable. All report ratings and baseline-comparison status remain **unrated**.
