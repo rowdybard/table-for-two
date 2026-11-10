@@ -75,6 +75,46 @@ test('interrupted delivery stays explicitly partial in the next note and transcr
   assert.equal(runtime.views.h1.evening.agenda!.clues.length, 0);
 });
 
+test('Solo evaluation never clarifies an older heard line after a newer unheard or interrupted reply', () => {
+  const lines = ['I have strong opinions about croissants.', 'I actually prefer pancakes today.'];
+  for (const delivery of ['heard', 'unheard', 'interrupted'] as const) {
+    const fixture = { ...script, turns: [{ text: 'Tell me your opinion.' }, { text: 'Tell me something else.', previousDelivery: 'heard' as const },
+      { text: 'What do you mean?', via: 'voice' as const, previousDelivery: delivery, quietSeconds: 75 }] };
+    const runtime = new EvaluationConversation(fixture, 'claude-haiku-5-5');
+    for (const [index, text] of lines.entries()) {
+      runtime.request(index);
+      const turn = JSON.parse(response()); turn.utterances[0].text = text;
+      runtime.commit(index, runtime.validate(JSON.stringify(turn)));
+    }
+    const note = runtime.request(2).messages.at(-1)!.content;
+    assert.doesNotMatch(note, /asking about your last line.*croissants/);
+    if (delivery === 'heard') {
+      assert.match(note, /asking about your last line.*pancakes/);
+      assert.match(note, /It was quiet for a minute or two/);
+      assert.doesNotMatch(note, /kept talking before|still speaking/);
+    } else {
+      assert.doesNotMatch(note, /asking about your last line|It was quiet/);
+      if (delivery === 'unheard') assert.match(note, /kept talking before your last reply reached them/);
+      else assert.match(note, /still speaking; you were cut off/);
+    }
+  }
+});
+
+test('Solo evaluation treats only the last partially delivered line as the overlap and ignores subthreshold quiet gaps', () => {
+  const fixture = { ...script, turns: [{ text: 'Tell me your opinion.' }, { text: 'Wait, let me explain.', via: 'voice' as const,
+    previousDelivery: 'interrupted' as const, quietSeconds: 75 }, { text: 'That makes sense.', quietSeconds: 10 }] };
+  const runtime = new EvaluationConversation(fixture, 'claude-haiku-5-5');
+  runtime.request(0);
+  const turn = JSON.parse(response());
+  turn.utterances = [{ speaker: 'date', text: 'I enjoy cold weather.', emotion: 'warm' }, { speaker: 'date', text: 'Pancakes are best on a rainy morning.', emotion: 'warm' }];
+  runtime.commit(0, runtime.validate(JSON.stringify(turn)));
+  const overlap = runtime.request(1).messages.at(-1)!.content;
+  assert.match(overlap, /cut off after.*Pancakes/);
+  assert.doesNotMatch(overlap, /cut off after.*cold weather|It was quiet/);
+  runtime.commit(1, runtime.validate(response()));
+  assert.doesNotMatch(runtime.request(2).messages.at(-1)!.content, /It was quiet/);
+});
+
 test('Double uses its production contract, disambiguates member names and preserves an offstage notebook', () => {
   const sameName = SHORT_EVALUATION_SCRIPTS.find(s => s.id === 'double-names')!;
   const named = new EvaluationConversation(sameName, 'claude-haiku-5-5').request(0);
