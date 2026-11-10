@@ -4,7 +4,9 @@
 .agenda-clues blockquote {margin:10px 0;padding-left:12px;border-left:2px solid var(--signal);font:400 15px/1.5 var(--body);overflow-wrap:anywhere;}
 .agenda-reflection {margin:18px 0;padding-top:16px;border-top:1px solid var(--line);}
 .agenda-reflection p {margin:6px 0;overflow-wrap:anywhere;}
-.agenda-reflection .agenda-understanding {margin:12px 0 8px;font-weight:600;font-size:14px;}
+.agenda-reflection .agenda-understanding {display:flex;flex-wrap:wrap;gap:4px 16px;margin:12px 0 8px;font-weight:600;font-size:14px;}
+.agenda-understanding span[data-earned=false] {opacity:.38;text-decoration:line-through;}
+.agenda-understanding span[data-earned=true] {color:var(--blush,var(--signal));}
 .agenda-evidence {margin-top:16px;}
 .agenda-evidence p {margin:7px 0;font:400 14px/1.5 var(--body);overflow-wrap:anywhere;}
 @media(max-height:500px) {
