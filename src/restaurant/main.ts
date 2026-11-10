@@ -1044,7 +1044,7 @@ function frame(now: number) {
   updateTypedSubmit();
   el('scene-loading').hidden = renderer.isReady;
   const controlsBlocked = menuInputOpen() || !el('conversation-form').hidden || pageSuspended || document.hidden;
-  mobile?.update({ joined, playing: state.phase === 'playing' && renderer.isReady && !pageSuspended, blocked: controlsBlocked, modal: visibleModal(), typing: !el('conversation-form').hidden, seated: true, micEnabled, interactionLabel: null });
+  mobile?.update({ joined, playing: state.phase === 'playing' && renderer.isReady && !pageSuspended, blocked: controlsBlocked, modal: visibleModal(), typing: !el('conversation-form').hidden, seated: true, micEnabled, micAvailable: !btn('mic-toggle').disabled, interactionLabel: null });
   perfStats?.sample(now, performance.now() - frameStart);
 }
 // The DOM menus are ready before shader preparation or the first rendered frame.

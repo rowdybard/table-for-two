@@ -158,6 +158,8 @@
 @media(prefers-reduced-motion:reduce) { .mobile-stick {transition:none;} }
 
 /* A conversation at one table, in either phone orientation. */
+#restaurant-app[data-mobile=true] .bottom-tray {display:none;}
+#restaurant-app[data-mobile=true] .bottom-tray:has(#friend-audio-unlock:not([hidden])) {display:flex;transform:none;}
 #restaurant-app[data-mobile=true] .mobile-toolbar {top:auto;bottom:var(--safe-bottom);right:50%;transform:translateX(50%);gap:8px;padding:3px 8px;border:1px solid #fff2dc2b;border-radius:28px;background:#151c29ec;}
 #restaurant-app[data-mobile=true] .mobile-toolbar button {min-width:52px;padding:0 12px;}
 #restaurant-app[data-mobile=true] .caption {bottom:calc(var(--safe-bottom) + 80px);width:min(620px,calc(100% - 32px));max-height:30%;}

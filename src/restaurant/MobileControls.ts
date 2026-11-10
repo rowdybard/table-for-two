@@ -17,6 +17,7 @@ export type MobileControlsState = {
   typing: boolean;
   seated: boolean;
   micEnabled: boolean;
+  micAvailable?: boolean;
   interactionLabel: string | null;
 };
 const emptyState: MobileControlsState = { joined: false, playing: false, blocked: false, modal: false, typing: false, seated: false, micEnabled: false, interactionLabel: null };
@@ -102,6 +103,7 @@ export class MobileControls {
     const enabled = this.active && state.joined && state.playing && !state.modal && !state.typing && !this.helpOpen;
     this.controls.hidden = !enabled || document.hidden;
     this.micButton.setAttribute('aria-pressed', String(state.micEnabled));
+    this.micButton.disabled = state.micAvailable === false;
     this.micButton.setAttribute('aria-label', state.micEnabled ? 'Turn microphone off' : 'Turn microphone on');
     this.displayButton.hidden = !this.active || state.joined || state.modal || this.helpOpen || this.isStandalone();
     this.displayButton.textContent = this.supportsFullscreen() ? (document.fullscreenElement ? 'Exit full screen' : 'Full screen') : 'Home screen';

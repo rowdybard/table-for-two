@@ -703,10 +703,19 @@ test('failed typed turns keep the player draft and can be retried', async ({ pag
 
 });
 
+// Playwright otherwise forces every Chromium page to report focus, even in headed mode.
+async function useRealTabFocus(...pages: Page[]) {
+  for (const page of pages) {
+    const session = await page.context().newCDPSession(page);
+    await session.send('Emulation.setFocusEmulationEnabled', { enabled: false });
+  }
+}
+
 test('a newly opened background tab defers WebGL until it is activated', async ({ page, browserName }) => {
   test.skip(browserName !== 'chromium', 'This check uses real Chromium tab visibility and focus.');
   test.setTimeout(90000);
   const background = await page.context().newPage();
+  await useRealTabFocus(page, background);
   await background.addInitScript(() => {
     const win = window as Window & { __webglInitializations?: number };
     win.__webglInitializations = 0;
@@ -717,9 +726,22 @@ test('a newly opened background tab defers WebGL until it is activated', async (
       return original.apply(this, args);
     };
   });
+  let releaseNavigation!: () => void, navigationReached = false;
+  const navigationReleased = new Promise<void>(resolve => { releaseNavigation = resolve; });
+  await background.route(base + '/', async route => {
+    const response = await route.fetch();
+    navigationReached = true;
+    await navigationReleased;
+    await route.fulfill({ response });
+  }, { times: 1 });
   try {
+    const navigation = background.goto(base, { waitUntil: 'domcontentloaded' });
+    void navigation.catch(() => {});
+    await expect.poll(() => navigationReached, { timeout: 20000 }).toBe(true);
     await page.bringToFront();
-    await background.goto(base, { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => background.evaluate(() => ({ hidden: document.hidden, focused: document.hasFocus() }))).toEqual({ hidden: true, focused: false });
+    releaseNavigation();
+    await navigation;
     await expect.poll(() => background.evaluate(() => ({ hidden: document.hidden, focused: document.hasFocus() }))).toEqual({ hidden: true, focused: false });
     await expect(background.locator('.restaurant-canvas')).toHaveCount(0);
     expect(await background.evaluate(() => (window as Window & { __webglInitializations?: number }).__webglInitializations)).toBe(0);
@@ -735,7 +757,7 @@ test('a newly opened background tab defers WebGL until it is activated', async (
     await expect(background.locator('#dinner-hud')).toBeVisible();
     await expect.poll(async () => (await state(background)).seated).toBe(true);
     await expect(background.locator('.restaurant-canvas')).toHaveCount(1);
-  } finally { await background.close(); }
+  } finally { releaseNavigation(); await background.close(); }
 });
 
 test('background tab stops work and resumes the same paused date without replaying a pending turn', async ({ page, browserName }) => {
@@ -770,6 +792,7 @@ test('background tab stops work and resumes the same paused date without replayi
   const gate = { marker: 'A unique pending lifecycle turn.', started: false, aborted: false, lateAttempted: false };
   lifecycleWaitGate = gate;
   const other = await page.context().newPage();
+  await useRealTabFocus(page, other);
   try {
     await page.goto(base + '/?stats', { waitUntil: 'domcontentloaded' }); await page.bringToFront();
     await expect(page.locator('#start-error')).toBeVisible();
