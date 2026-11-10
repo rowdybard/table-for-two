@@ -76,6 +76,7 @@ async function assertFits(page: Page, selectors: string[]) {
 }
 const settleFrame = (page: Page) => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 async function assertCenterHit(page: Page, selector: string) {
+  await expect(page.locator(selector)).toBeVisible();
   const point = await center(page, selector);
   expect(await page.evaluate(({ point, selector }) => !!document.elementFromPoint(point.x, point.y)?.closest(selector), { point, selector }), `${selector} must receive its center touch`).toBe(true);
   return point;

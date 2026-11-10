@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { validateTurn } from '../server/restaurant/index';
+import { soloSystem } from '../server/restaurant/conversation-prompt';
 import { MEMORY_REJECT } from '../server/restaurant/memory';
 import { DateApiError } from '../server/restaurant/providers';
 
@@ -13,6 +14,13 @@ const waiterTurn = {
   action: 'none',
   memory: 'HUMAN: Asked Eli for water.',
 };
+
+test('the production Solo prompt specifies the exact first speaker even for an Eli question', () => {
+  const system = soloSystem({ dateId: 'mira', blindDate: undefined, model: 'claude-haiku-5-5' });
+  assert.match(system, /Set utterances\[0\]\.speaker to "date" even for questions about Eli/);
+  assert.match(system, /only utterances\[1\] may use "waiter" or "diner"/);
+  assert.match(system, /Eli does not comment on ordinary conversation/);
+});
 
 test('a valid waiter response is accepted and retains its date and waiter lines', () => {
   assert.deepEqual(validateTurn(waiterTurn), waiterTurn);
