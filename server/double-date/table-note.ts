@@ -13,6 +13,8 @@ import { BOUNDARY_INSTRUCTIONS } from '../restaurant/boundaries';
 import { QUIET_GAP_SECONDS, NOTES_EMPTY, agendaLine, asksAboutLine, boundaryLines, clean, heardPrefix, hintTurn, lastQuestion, quote, serviceFacts } from '../restaurant/turn-note';
 import type { AgendaPrompt, BoundaryPrompt } from '../restaurant/turn-note';
 import { conversationContentNote } from '../../src/restaurant/conversation-content';
+import { conversationMove } from '../restaurant/conversation-move';
+import { createBlindDate } from '../../src/restaurant/blind-date';
 
 type Entry = { role: 'user' | 'assistant'; content: string };
 
@@ -67,7 +69,7 @@ export function doubleOutputContract(vocabulary: { emotions: readonly string[]; 
 
 function sheetText(sheet: DateSheet): string {
   const { date } = sheet;
-  return `${sheet.actorId} is ${date.name}, an adult (${date.age}) fictional AI date. Pronouns: ${date.pronouns}. Paired with the friend ${sheet.humanId}.\nPersonality: ${date.personality}\nLikes and dislikes: ${date.preferences}\nBoundaries: ${date.boundaries.replace(/\.$/, '')}.\nLife (draw on it only where the talk goes there and reveal it slowly; its disclosure rules apply): ${JSON.stringify(sheet.life)}`;
+  return `${sheet.actorId} is ${date.name}, an adult (${date.age}) fictional AI date. Pronouns: ${date.pronouns}. Paired with the friend ${sheet.humanId}.\nPersonality: ${date.personality}\nLikes and dislikes: ${date.preferences}\nBoundaries: ${date.boundaries.replace(/\.$/, '')}.\nLife (everyday facts are plain answers when asked; hopes and worries come out gradually under its disclosure rules): ${JSON.stringify(sheet.life)}`;
 }
 
 /**
@@ -219,6 +221,8 @@ export interface DoubleNoteInput {
   scenario?: { phase: string; description: string; target: DoubleHumanId };
   flow: DoubleFlow;
   elapsedMinutes: number;
+  /** The speaker's previous few turns, oldest first, for the conversation's momentum. */
+  previousHuman?: readonly string[];
 }
 
 function rightNow(couple: Couple): string {
@@ -271,7 +275,15 @@ export function doubleTurnNote(input: DoubleNoteInput): string {
   if (flow.lastDateLine && asksAboutLine(input.humanText, flow.lastDateLine.text, couples.map(couple => couple.dateName))) { const by = flow.lastDateLine.by; after.push(`${own.humanName} seems to be asking about ${by}’s last line (${quote(flow.lastDateLine.text)}). If it had a plain meaning, ${by} should say it in one short sentence. If it made no sense, ${by} should say so (“that came out wrong, scratch that”) instead of inventing a meaning now. Then ${by} picks up what ${own.humanName} was telling them.`); }
   // The reply-shape hints are about the date who will most likely answer, and the length hint names who was told.
   const addressed = couples.find(couple => couple.actorId === target) ?? own, listener = target === 'table' ? 'the table' : target === 'h1' || target === 'h2' ? couples.find(couple => couple.humanId === target)!.humanName : addressed.dateName;
-  const shape = [humanLengthHint(input.humanText, own.humanName, listener), addressed.available ? dateShapeHint(addressed.recentOwn, addressed.dateName) : ''].filter(Boolean).join(' ');
+  const clarifying = !!flow.lastDateLine && asksAboutLine(input.humanText, flow.lastDateLine.text, couples.map(couple => couple.dateName));
+  // Talking to the other friend is not a turn for a date to play; to the table, the friend's own date most likely answers.
+  const mover = target === 'h1' || target === 'h2' ? undefined : addressed.available ? addressed : undefined;
+  const blind = mover?.view.blindDate ? createBlindDate(mover.view.blindDate.seed) : undefined;
+  const move = mover ? conversationMove({ dateId: mover.view.dateId, humanText: input.humanText, lastDateLine: mover.recentOwn.filter(line => line.speaker === 'date').at(-1)?.text,
+    recentDelivered: mover.recentOwn, previousHuman: input.previousHuman, clarifying, guarded: ['guarded', 'hurt', 'leaving'].includes(mover.view.evening.stance),
+    romanceClosed: mover.view.evening.care.romanceClosed, ...(blind ? { blind: { occupation: blind.biography.occupation } } : {}) }) : '';
+  if (move) after.push(`For ${mover!.dateName} (“you”), answering ${own.humanName} (“they”): ${move}`);
+  const shape = [move ? '' : humanLengthHint(input.humanText, own.humanName, listener), addressed.available ? dateShapeHint(addressed.recentOwn, addressed.dateName) : ''].filter(Boolean).join(' ');
   if (shape) after.push(shape);
   out.push([`${own.humanName} said ${to}: ${quote(clean(input.humanText))}`, ...after].join('\n'));
   return out.join('\n\n');

@@ -1,8 +1,10 @@
+import { EVENING_EXCHANGES } from '../../src/restaurant/evening';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve, sep } from 'node:path';
 import RAPIER from '@dimforge/rapier3d-compat';
+import { settleLooseAssessments } from './loose-assessments';
 import { DATES, getDate, MODEL_RATES } from '../../src/restaurant/content';
 import { AUTHORED_UTTERANCES } from '../../src/restaurant/authored';
 import { createBlindDate } from '../../src/restaurant/blind-date';
@@ -54,7 +56,8 @@ type GenerationRecord = { lines: SceneUtterance[]; playback: Map<string, { compl
 type Session = { scene: DinnerScene; token: string; model: ClaudeModel; generation: number; controller?: AbortController; speechControllers: Set<AbortController>; turns: Map<string, TurnRecord>; allowed: Map<string, SceneUtterance>; generations: Map<number, GenerationRecord>; capturedCues: Set<string>; history: { role: 'user' | 'assistant'; content: string }[]; reserved: number; touched: number; activeTurn?: string; turnStarted: number; trimmed?: boolean; lastHeardAt?: number; replyGeneration?: number };
 type Clip = { id: string; text: string; emotion: SceneUtterance['emotion']; voiceId: string; model: string; file: string; provider?: SpeechRequest['provider']; settings?: SpeechRequest['settings'] };
 const models: ClaudeModel[] = ['claude-haiku-5-5', 'claude-sonnet-5-5'];
-const HISTORY_ENTRIES = 60, HISTORY_BYTES = 20_000;
+// A whole evening (EVENING_EXCHANGES exchanges) fits in the verbatim window, so nothing said tonight drops out of view.
+const HISTORY_ENTRIES = EVENING_EXCHANGES * 2, HISTORY_BYTES = 24_000;
 const numberEnv = (env: NodeJS.ProcessEnv, key: string, fallback: number, min: number, max: number) => { const v = Number(env[key]); return env[key] && Number.isFinite(v) ? Math.max(min, Math.min(max, v)) : fallback; };
 const keyFor = (u: SceneUtterance) => JSON.stringify([u.speaker, u.text, u.emotion]);
 const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
@@ -154,7 +157,7 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
   const speechProvider = opts.speech && env.DATE_SPEECH_PROVIDER !== 'edge' ? 'elevenlabs' : env.DATE_SPEECH_PROVIDER === 'elevenlabs' ? 'elevenlabs' : env.DATE_SPEECH_PROVIDER === 'none' ? 'none' : 'edge';
   const speech = opts.speech ?? (speechProvider === 'edge' ? edgeSpeechAdapter() : elevenLabsAdapter(env));
   const sessionLimit = numberEnv(env, 'DATE_SESSION_LIMIT_USD', 2, .01, 100), dailyLimit = numberEnv(env, 'DATE_DAILY_LIMIT_USD', 10, .01, 1000);
-  const maxTokens = Math.floor(numberEnv(env, 'DATE_MAX_OUTPUT_TOKENS', 700, 200, 1500)), timeoutMs = opts.requestTimeoutMs ?? numberEnv(env, 'DATE_REQUEST_TIMEOUT_MS', 25_000, 1000, 60_000);
+  const maxTokens = Math.floor(numberEnv(env, 'DATE_MAX_OUTPUT_TOKENS', 700, 200, 1500)), tableMaxTokens = Math.min(1500, Math.ceil(maxTokens * 10 / 7)), timeoutMs = opts.requestTimeoutMs ?? numberEnv(env, 'DATE_REQUEST_TIMEOUT_MS', 25_000, 1000, 60_000);
   const timeoutFor = (model: ClaudeModel) => model === HORDE_MODEL ? opts.requestTimeoutMs ?? numberEnv(env, 'AI_HORDE_TIMEOUT_MS', 60_000, 1000, 120_000) : timeoutMs;
   const speechRate = speechProvider === 'edge' || speechProvider === 'none' ? 0 : numberEnv(env, 'DATE_SPEECH_COST_PER_1K', .04, .001, 10) / 1000;
   const development = opts.development ?? env.NODE_ENV !== 'production';
@@ -271,6 +274,7 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
       }
       if (controller.signal.aborted || generation !== s.generation) throw apiError(499, 'interrupted', 'Response interrupted.');
       let parsed: unknown; try { parsed = JSON.parse(text); } catch { throw apiError(502, 'invalid_dialogue', 'The date returned incomplete dialogue. Please try another turn.'); }
+      settleLooseAssessments(parsed, request.model);
       const turn = validateTurn(parsed), genRecord = s.generations.get(generation)!;
       s.scene.applyTurn({ ...turn, memory: mergeMemoryForDelivery(turn.memory, s.scene.state.memory, false, request.text) }, request.text);
       genRecord.pendingMemory = { value: turn.memory, humanText: request.text, lines: turn.utterances.filter(line => line.speaker === 'date') };
@@ -351,7 +355,9 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
       if (closed) throw apiError(503, 'server_closed', 'The date server is shutting down.');
       if (!status().claude) throw apiError(503, 'claude_unconfigured', 'Live conversation is unavailable. Scene interactions remain playable.');
       if (!selectableModels.includes(request.model)) throw apiError(400, 'invalid_model', 'That model is unavailable on this server.');
-      const bounded = { ...request, maxTokens: Math.min(maxTokens, Math.max(200, request.maxTokens)) };
+      // A shared-table reply carries two dates' lines and both notebooks, so it gets proportionally more room than a
+      // Solo reply (1000 at the default 700). The operator's ceiling still scales it and the reservation below uses it.
+      const bounded = { ...request, maxTokens: Math.min(tableMaxTokens, Math.max(200, request.maxTokens)) };
       const estimatedInput = Buffer.byteLength(bounded.system + JSON.stringify(bounded.messages) + (isEarnedModel(request.model) || request.model === HORDE_MODEL ? openRouterSchemaInstructions(request.outputSchema ?? TURN_SCHEMA) : ''), 'utf8') + 512;
       const amount = costOf(request.model, { inputTokens: estimatedInput, outputTokens: bounded.maxTokens, cacheReadTokens: 0, cacheWriteTokens: estimatedInput });
       const day = await reserveAccount(account, amount);
@@ -495,7 +501,7 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
       pendingQuestion: s.scene.director.pendingQuestion,
       ...(lastDateLine?.heard ? { lastDateLine: lastDateLine.line.text } : {}),
     };
-    const note = turnNote({ scene, dateName: date, humanText: request.text, via: request.via, tableNow: tableNow(scene, date), memory: scene.memory, facts: tableFacts(s.scene.state), agenda: s.scene.director.agenda.promptContext(), boundaries: s.scene.director.boundaries.promptContext(), avoid: dialogueLoopContext(recentDelivered, request.text).avoidUnpromptedTopics, mechanics: scenarioMechanicsContext(scene), scenario: e.scenario, recentDelivered, flow });
+    const note = turnNote({ scene, dateName: date, humanText: request.text, via: request.via, tableNow: tableNow(scene, date), memory: scene.memory, facts: tableFacts(s.scene.state), agenda: s.scene.director.agenda.promptContext(), boundaries: s.scene.director.boundaries.promptContext(), avoid: dialogueLoopContext(recentDelivered, request.text).avoidUnpromptedTopics, mechanics: scenarioMechanicsContext(scene), scenario: e.scenario, recentDelivered, flow, closing: s.scene.director.closingContext(), previousHuman: s.history.filter(entry => entry.role === 'user').slice(-3).map(entry => entry.content) });
     const messages = conversationMessages(s.history, !!s.trimmed, date, note);
     // One token per UTF-8 byte plus framing is a conservative upper bound even
     // for non-English transcripts; characters/4 would under-reserve some scripts.

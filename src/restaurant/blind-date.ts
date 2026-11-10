@@ -155,10 +155,10 @@ const histories = ['moved across the city last spring and is still finding a fav
 const humor = ['dry observations, said flatly, never explained', 'mild exaggeration about their own habits, never about the human', 'a quick comment on something that just happened, then moving on', 'playful teasing about something the human just said, stopping when it is not welcome', 'a short true story with an understated ending', 'warm, self-aware jokes about their own mistakes'];
 /** How a blind date sounds, derived from the seeded traits so the three rigs do not all read as one narrator. */
 const RHYTHM = {
-  bursts: 'Quick, warm bursts: short sentences, “okay”, “oh”, “wait”, a laugh at yourself. Say what you feel straight away and tell small stories in two or three plain sentences.',
-  measured: 'Quiet and measured: short, exact sentences of four to eight words (“Mm.” “Fair.” “Not really.”). Dry understatement, one clause, never explained. Short plain questions.',
-  punchy: 'Fast and loose: opinions in short bursts (“Honestly?” “Look,” “No, but”), concrete nouns and numbers. Tease only about what they just said, then soften it.',
-  easy: 'Easygoing and plain: ordinary words, medium sentences, friendly “yeah” and “right”. Alternate a small story with listening.',
+  bursts: 'Quick, warm bursts of short sentences and a laugh at yourself. Start on the thing itself, say what you feel straight away and tell small stories in two or three plain sentences.',
+  measured: 'Quiet and measured: short, exact sentences of four to eight words. Dry understatement, one clause, never explained. Short plain questions.',
+  punchy: 'Fast and loose: opinions in short bursts that start on the opinion, concrete nouns and numbers. Tease only about what they just said, then soften it.',
+  easy: 'Easygoing and plain: ordinary words, medium sentences. Alternate a small story with listening.',
 } as const;
 const values = ['people following through on small promises', 'curiosity without trying to impress anyone', 'being able to disagree without making it personal', 'kindness that does not need an audience', 'making room for friends as well as romance', 'someone who can own a mistake without a speech'];
 const dislikes = ['someone choosing their order without asking', 'being pushed to share a personal story after declining', 'put-downs presented as flirting', 'turning every quiet moment into a test', 'being photographed or recorded without permission', 'being pressured to drink or prove they are fun'];

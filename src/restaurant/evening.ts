@@ -1,5 +1,7 @@
 import type { DateId, EveningState } from './types';
 
+/** How many exchanges an evening lasts before the restaurant closes, and how many of the last ones the date knows it. */
+export const EVENING_EXCHANGES = 36, CLOSING_STRETCH = 5;
 export const DESSERTS = [
   { id: 'lemon', name: 'Lemon posset', description: 'Sharp lemon cream, shortbread, and two spoons.' },
   { id: 'chocolate', name: 'Chocolate fondant', description: 'A warm middle, vanilla cream, and an excellent excuse to share.' },
@@ -50,7 +52,7 @@ export const EVENING_PACE = Object.freeze({
 });
 
 export function createEvening(dateId: DateId, variation = 0): EveningState {
-  return { care: { tasteOffer: null, toast: null, water: { status: 'none', requestedAt: null }, checkIn: null, romanceClosed: false, quietUntil: 0 }, lastInterruptionAt: -1000, chapter: 'welcome', variation, dialogueTurns: 0, stance: 'curious', stanceReason: 'You have only just met.',
+  return { care: { tasteOffer: null, toast: null, water: { status: 'none', requestedAt: null }, checkIn: null, romanceClosed: false, quietUntil: 0 }, lastInterruptionAt: -1000, chapter: 'welcome', variation, dialogueTurns: 0, exchangesLeft: EVENING_EXCHANGES, stance: 'curious', stanceReason: 'You have only just met.',
     main: { status: 'none', bites: 0, dateDish: null, servedDish: null }, dessert: { choice: null, status: 'none', bites: 0, chosenBy: null }, beats: 0,
     incident: null, resolutions: {}, sharedActivities: [], moments: [], cues: [],
     bill: { requested: false, settlement: null }, farewell: { choice: null, ending: null } };

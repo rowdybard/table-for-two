@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { createWallClock } from './WallClock';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { createProceduralMaterial, type SurfaceKind } from './ProceduralMaterials';
 import { createBotanicalPlant, createLeafBladeGeometry } from './RestaurantFoliage';
@@ -456,6 +457,11 @@ export function createRestaurantScene(quality?: Pick<RenderQuality, 'tier'>): Re
   target('exit', 0, 1.4, 6.95, 2.1, 2.8, .2);
   targets.push(...tabletop.targets);
 
+  // The closing-time clock hangs on the plaster beside the bar, in view from the table past the date's shoulder.
+  const wallClock = createWallClock(.46);
+  wallClock.root.position.set(2.27, 2.2, -7.133);
+  b.root.add(wallClock.root);
+
   const exterior = createNightExterior();
   applyNightExteriorQuality(exterior.root, quality);
   b.root.add(exterior.root);
@@ -466,6 +472,7 @@ export function createRestaurantScene(quality?: Pick<RenderQuality, 'tier'>): Re
     update(time, reducedMotion) { exterior.update(time, reducedMotion); },
     updateTabletop(state, dt, reducedMotion) {
       tabletop.update(state, dt, reducedMotion);
+      wallClock.update(state.evening.exchangesLeft, dt, reducedMotion);
       const x = state.doubleDate ? (state.doubleDate.localHumanId === 'h1' ? -.57 : .57) : 0;
       const parked=dessertLayout(state).park;
       menu.position.set(state.doubleDate ? (x>0&&parked?.03:Math.sign(x)*.36) : -.42, .783, state.doubleDate ? (x>0&&parked?-.62:-.76) : -.75);
@@ -473,7 +480,7 @@ export function createRestaurantScene(quality?: Pick<RenderQuality, 'tier'>): Re
       if (menuTarget) { menuTarget.position.set(menu.position.x, .83, menu.position.z); menuTarget.userData.inspectRadius = .2; }
     },
     dispose() {
-      props.dispose(); exterior.dispose(); tabletop.dispose();
+      props.dispose(); exterior.dispose(); tabletop.dispose(); wallClock.root.removeFromParent(); wallClock.dispose();
       const geometries = new Set<THREE.BufferGeometry>();
       b.root.traverse(object => { if (object instanceof THREE.Mesh || object instanceof THREE.LineSegments) geometries.add(object.geometry); if (object instanceof THREE.InstancedMesh) object.dispose(); });
       geometries.forEach(geometry => geometry.dispose());

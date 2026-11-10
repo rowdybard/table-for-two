@@ -12,6 +12,7 @@ import { tableFacts } from '../../server/restaurant/table-facts';
 import { roleplayInstructions } from '../../server/restaurant/roleplay';
 import { EMOTIONS, SOCIAL_SIGNALS, TURN_SCHEMA, type ClaudeRequest } from '../../server/restaurant/providers';
 import { validateTurn } from '../../server/restaurant';
+import { settleLooseAssessments } from '../../server/restaurant/loose-assessments';
 import { DOUBLE_TURN_SCHEMA, validateDoubleTurn } from '../../server/double-date/conversation';
 import { doubleConversationFlow, doubleMessages, doubleSystem, doubleTurnNote, friendNames, presetDateSheet, renderDoubleHistory, type Couple, type DateSheet, type HistoryEntry, type Playback } from '../../server/double-date/table-note';
 import type { EvaluationScript, EvaluationTurn } from './evaluation-fixtures';
@@ -23,6 +24,8 @@ export type EvaluationResult = { kind: 'solo'; turn: SceneTurn } | { kind: 'doub
 const humans: DoubleHumanId[] = ['h1', 'h2'];
 const actors: DoubleDateActorId[] = ['d1', 'd2'];
 export const EVALUATION_MAX_TOKENS = 700;
+/** A shared-table reply gets the same room the server gives it at the default operator ceiling. */
+export const EVALUATION_DOUBLE_MAX_TOKENS = 1000;
 const names = { h1: 'Alex', h2: 'Casey' };
 const owner = (actor: DoubleDateActorId): DoubleHumanId => actor === 'd1' ? 'h1' : 'h2';
 const zeroUsage = () => ({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, speechCharacters: 0, cacheHits: 0, claudeRequests: 0, claudeCost: 0, speechCost: 0, totalCost: 0, responseMs: null, firstAudioMs: null });
@@ -53,7 +56,7 @@ export class EvaluationConversation {
   private previous: { lines: SceneUtterance[]; delivery: 'heard' | 'interrupted' | 'unheard' } | undefined;
   private prepared = -1;
 
-  constructor(readonly script: EvaluationScript, readonly model: ClaudeModel, readonly maxTokens = EVALUATION_MAX_TOKENS) {
+  constructor(readonly script: EvaluationScript, readonly model: ClaudeModel, readonly maxTokens = script.mode === 'double' ? EVALUATION_DOUBLE_MAX_TOKENS : EVALUATION_MAX_TOKENS) {
     const ids = script.dateIds ?? [script.blindSeed ? createBlindDate(script.blindSeed).dateId : script.dateId, 'jules'];
     this.views = { h1: snapshot(script, ids[0], 'h1'), h2: snapshot(script, ids[1], 'h2') };
     this.humanNames = friendNames(humans.map(id => ({ id, name: script.humanNames?.[id] ?? names[id] })));
@@ -72,6 +75,9 @@ export class EvaluationConversation {
       const speaker = this.script.mode === 'double' ? turn.human ?? 'h1' : 'h1';
       this.views[speaker].memory = retireSharedPremise(this.views[speaker].memory, turn.text);
       for (const view of Object.values(this.views)) view.elapsed = 120 + index * 25 + (turn.quietSeconds ?? 0);
+      // A live evening starts a new generation per human turn, which is what lets a second reciprocal flirt count.
+      // Clocked scripts follow that; the frozen corpus keeps its single generation so earlier reports stay comparable.
+      if (this.script.closingClock) for (const view of Object.values(this.views)) view.generation = index + 1;
       if (turn.offstage) {
         const view = this.views[owner(turn.offstage)];
         view.phase = 'ended'; view.evening.care.romanceClosed = true;
@@ -91,7 +97,7 @@ export class EvaluationConversation {
       ...(this.previous?.delivery === 'heard' && lastDateLine ? { lastDateLine: lastDateLine.text } : {}) };
     const note = turnNote({ scene: view, dateName, humanText: turn.text, via: turn.via ?? 'typed', tableNow: tableNow(view, dateName), memory: view.memory, facts: tableFacts(view),
       agenda: null, boundaries: director.boundaries.promptContext(), avoid: dialogueLoopContext(this.recent, turn.text).avoidUnpromptedTopics,
-      recentDelivered: this.recent, flow });
+      recentDelivered: this.recent, flow, ...(this.script.closingClock ? { closing: director.closingContext() } : {}) });
     return { model: this.model, system: soloSystem({ dateId: view.dateId, blindDate: view.blindDate, model: this.model }),
       messages: conversationMessages(this.history, this.trimmed, dateName, note), maxTokens: this.maxTokens, outputSchema: TURN_SCHEMA };
   }
@@ -117,7 +123,9 @@ export class EvaluationConversation {
   }
 
   validate(raw: string): EvaluationResult {
-    return this.script.mode === 'double' ? { kind: 'double', turn: validateDoubleTurn(raw) } : { kind: 'solo', turn: validateTurn(JSON.parse(raw)) };
+    if (this.script.mode === 'double') return { kind: 'double', turn: validateDoubleTurn(raw, this.model) };
+    const parsed: unknown = JSON.parse(raw); settleLooseAssessments(parsed, this.model);
+    return { kind: 'solo', turn: validateTurn(parsed) };
   }
 
   commit(index: number, result: EvaluationResult) {
@@ -130,7 +138,7 @@ export class EvaluationConversation {
       this.history.push({ role: 'user', content: input.text }, { role: 'assistant', content: JSON.stringify({ spokenResponse }) });
       if (delivery === 'heard') for (const line of turn.utterances) { director.acknowledge(line); if (line.speaker === 'date') this.recent.push(line); }
       this.recent.splice(0, Math.max(0, this.recent.length - 8)); this.previous = { lines: turn.utterances, delivery };
-      while (this.history.length > 60 || this.history.length > 2 && Buffer.byteLength(JSON.stringify(this.history)) > 20_000) { this.history.shift(); this.trimmed = true; }
+      while (this.history.length > 72 || this.history.length > 2 && Buffer.byteLength(JSON.stringify(this.history)) > 24_000) { this.history.shift(); this.trimmed = true; }
       return;
     }
     const speaker = input.human ?? 'h1', nextListener = this.script.turns[index + 1]?.human ?? speaker;
@@ -156,6 +164,9 @@ export class EvaluationConversation {
   }
 
   reviewSnapshot() {
-    return Object.fromEntries(humans.map(human => [human, { dateId: this.views[human].dateId, memory: this.views[human].memory, phase: this.views[human].phase, agenda: structuredClone(this.views[human].evening.agenda) }]));
+    return Object.fromEntries(humans.map(human => [human, { dateId: this.views[human].dateId, memory: this.views[human].memory, phase: this.views[human].phase, agenda: structuredClone(this.views[human].evening.agenda),
+      stance: this.views[human].evening.stance, exchangesLeft: this.views[human].evening.exchangesLeft, ending: this.views[human].evening.farewell.ending?.kind ?? null }]));
   }
+  /** A clocked Solo evening is over once the controllers began an ending: the clock ran out, or the date left first. */
+  get over() { return !!this.script.closingClock && this.script.mode !== 'double' && this.directors.h1.departing; }
 }
