@@ -33,6 +33,23 @@ test('flirts, jokes, disclosures, opinions and short answers are told apart with
   assert.ok(!readHumanTurn('yes?').moves.includes('short'), 'a question is not a short answer');
 });
 
+test('reactions, invitations and plain facts about themselves are not treated as fresh questions or short answers', () => {
+  for (const text of ['really?', 'what', 'no way', 'is that right', 'wait, seriously?']) {
+    const read = readHumanTurn(text);
+    assert.ok(read.moves.includes('reaction'), text); assert.equal(read.questions.length, 0, text);
+  }
+  assert.ok(!readHumanTurn('What do you do?').moves.includes('reaction'));
+  const invite = readHumanTurn('no way, tell me more');
+  assert.ok(invite.moves.includes('invite')); assert.equal(invite.questions.length, 0);
+  assert.deepEqual(readHumanTurn('Tell me about your family.').questions, ['Tell me about your family.']);
+  assert.deepEqual(readHumanTurn("I'm a nurse").moves, ['share']);
+  assert.deepEqual(readHumanTurn('I love dogs').moves, ['opinion'], 'one steer, not two');
+  assert.ok(readHumanTurn('you first', 'Where did you grow up?').moves.includes('bounce'));
+  assert.match(conversationMove({ dateId: 'mira', humanText: 'really?', lastDateLine: 'I once shot a wedding on a ferry.' }), /confirm it/);
+  assert.match(conversationMove({ dateId: 'mira', humanText: 'what', lastDateLine: 'Where did you grow up?' }), /simpler words/);
+  assert.match(conversationMove({ dateId: 'mira', humanText: "I'm a nurse" }), /never ask for what they just told you/);
+});
+
 test('a direct question is answered with the date’s own plain facts and never the private hope', () => {
   const facts = answerFacts('mira', ['What do you do for work?', 'Any siblings?']);
   assert.deepEqual(facts.map(fact => fact.split(':')[0]), ['work', 'family']);

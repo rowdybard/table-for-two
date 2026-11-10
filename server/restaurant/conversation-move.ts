@@ -7,7 +7,7 @@ import { CHARACTER_STORIES } from '../../src/restaurant/story';
 import { isTopicStopRequest } from '../../src/restaurant/conversation-content';
 import type { DateId, SceneUtterance } from '../../src/restaurant/types';
 
-export type HumanMove = 'stop' | 'question' | 'bounce' | 'flirt' | 'joke' | 'disclosure' | 'opinion' | 'short';
+export type HumanMove = 'stop' | 'question' | 'bounce' | 'reaction' | 'invite' | 'flirt' | 'joke' | 'disclosure' | 'opinion' | 'share' | 'short';
 export interface HumanRead {
   moves: HumanMove[];
   /** The questions put to the date, in the human's words, at most three. */
@@ -26,7 +26,13 @@ const SUBJECT = String.raw`(?:you|ya|u|your|it|that|this|there|they|he|she|we|i|
 /** A sentence that asks, with or without a question mark (an automatic transcript rarely adds one). */
 const ASKS = new RegExp(String.raw`^${LEAD}(?:${WH}\b|${AUX}\s+${SUBJECT}\b|tell me\b|any (?:pets|siblings|plans|kids)\b|got any\b|ever (?:been|tried|had)\b)`, 'i');
 /** The human hands the date's own question back: "and you?", "what about you", "wbu". */
-const BOUNCE = new RegExp(String.raw`^${LEAD}(?:(?:and|so|what|how) about (?:you|yourself|u)|and (?:you|yourself|u)|you|yourself|wbu|hbu|same question|same to you|your turn|you go|what do you think|how about you)\b[\s,.!?]*$`, 'i');
+const BOUNCE = new RegExp(String.raw`^${LEAD}(?:(?:and|so|what|how) about (?:you|yourself|u)|and (?:you|yourself|u)|you|yourself|wbu|hbu|same question|same to you|your turn|you go|you first|what do you think|how about you)\b[\s,.!?]*$`, 'i');
+/** A whole message that only reacts to the date's last line ("really?", "no way", "what"): not a question to answer from scratch. */
+const REACTION = new RegExp(String.raw`^${LEAD}(?:what|wait what|really|seriously|for real|no way|is that (?:right|so|true)|are you (?:serious|kidding|joking)|you(?:'re| are) (?:kidding|joking)|you (?:did|do|are|were|have)|(?:did|do|are|were|have) you|huh|wow|shut up|get out|since when)[\s,.!?…]*$`, 'i');
+/** An invitation to keep going with what the date was just saying. */
+const INVITE = /\b(?:tell me more|go on|keep going|carry on|say more|and then(?: what)?|then what|what happened(?: next| then)?|more about that|i want to hear (?:it|this|more))\b/i;
+/** A short plain fact about themselves ("I'm a nurse", "my brother lives there"). */
+const SHARE = new RegExp(String.raw`^${LEAD}(?:i'm|i am|i was|i work|i do|i have|i've|i live|i grew|i used to|i just|my|mine|me too|same)\b`, 'i');
 const FLIRT = /\b(?:you(?:'re| are| look| seem)\s+(?:so\s+|really\s+|very\s+|kinda\s+|kind of\s+|pretty\s+|quite\s+)?(?:cute|pretty|beautiful|gorgeous|handsome|hot|sexy|attractive|stunning|adorable|charming|lovely|sweet|amazing|fun|funny|interesting|cool|nice|great|good)|your\s+(?:eyes|smile|laugh|voice|hair|outfit|dress)|(?:i\s+)?(?:like|fancy|adore)\s+you|into you|crush on you|kiss(?:ing)? you|flirt\w*|cutie|second date|see you again)\b/i;
 const JOKE = /(?:\b(?:lol|lmao|lmfao|rofl|haha+|hehe+|jk|just kidding|kidding|joking)\b|😂|🤣|😜|😉)/i;
 const DISCLOSURE = /\b(?:i\s+(?:feel|felt)\b|i(?:'m| am)\s+(?:so\s+|really\s+|kind of\s+|a bit\s+)?(?:sad|stressed|nervous|anxious|lonely|scared|worried|overwhelmed|exhausted|burnt out|burned out|heartbroken|grieving)|passed away|died|lost my|got fired|laid off|broke up|divorc\w*|depress\w*|therapy|diagnos\w*|miss (?:her|him|them|my)|hard (?:time|year|week))\b/i;
@@ -40,18 +46,24 @@ export function readHumanTurn(humanText: string, lastDateLine?: string): HumanRe
   const text = normalize(humanText).slice(0, 2000), words = wordCount(text), moves: HumanMove[] = [], questions: string[] = [];
   let bounced: string | undefined;
   if (isTopicStopRequest(text)) moves.push('stop');
+  const reaction = words <= 5 && REACTION.test(text), invite = !reaction && INVITE.test(text);
   for (const sentence of sentencesOf(text)) {
     const bare = sentence.replace(/[\s.!?…]+$/, '');
+    if (reaction || (INVITE.test(sentence) && wordCount(sentence) <= 6)) continue;
     if (BOUNCE.test(sentence)) { bounced = (lastDateLine && lastQuestionIn(lastDateLine)) || ''; continue; }
     if (/\?\s*$/.test(sentence) || ASKS.test(bare)) { if (questions.length < 3) questions.push(sentence.length > 140 ? `${sentence.slice(0, 137).replace(/\s+\S*$/, '')}…` : sentence); }
   }
   if (questions.length) moves.push('question');
   if (bounced !== undefined) moves.push('bounce');
+  if (reaction) moves.push('reaction');
+  if (invite) moves.push('invite');
   if (FLIRT.test(text)) moves.push('flirt');
   if (JOKE.test(text)) moves.push('joke');
   if (DISCLOSURE.test(text) || (words >= 30 && !questions.length)) moves.push('disclosure');
   if (!questions.length && OPINION.test(text)) moves.push('opinion');
-  if (!questions.length && bounced === undefined && words <= 4 && !moves.includes('flirt') && !moves.includes('stop')) moves.push('short');
+  const plain = !questions.length && bounced === undefined && !moves.length;
+  if (plain && words <= 12 && SHARE.test(text)) moves.push('share');
+  else if (plain && words <= 4) moves.push('short');
   return { moves, questions, ...(bounced !== undefined ? { bounced } : {}), words };
 }
 
@@ -147,16 +159,19 @@ export function conversationMove(input: MoveInput): string {
   if (has('question')) {
     const facts = answerFacts(input.dateId, read.questions, input.blind);
     const many = read.questions.length > 1;
-    out.push(`They asked you ${read.questions.map(quote).join(' and ')}. Answer ${many ? 'each one' : 'it'} in your first sentence with a real, specific answer${facts.length ? ` (true for you: ${facts.join('; ')})` : ''}; no dodging, and no handing it back before you have answered. If you truly don’t know, say so and guess.`);
+    out.push(`They asked you ${read.questions.map(quote).join(' and ')}. Answer ${many ? 'each one' : 'it'} in your first sentence, plainly and specifically${facts.length ? ` (true for you: ${facts.join('; ')})` : ''}, before anything else; then add one thing of your own.`);
   }
   if (has('bounce')) out.push(read.bounced ? `They turned your question back on you (${quote(read.bounced)}): answer it about yourself, as concretely as you hoped they would.` : 'They turned it back to you: give your own answer to what you were just talking about, concretely.');
+  if (has('reaction')) out.push(input.lastDateLine && /\?["”’)]*\s*$/.test(input.lastDateLine.trim()) ? 'They are reacting to your question rather than answering it: put it once more in simpler words, or answer it yourself first.' : 'They are reacting to what you just said, not asking something new: confirm it in a word or two and give the next concrete detail of that same thing.');
+  if (has('invite')) out.push('They want more of what you were just saying: keep going with the next specific part of it, no recap and no question back yet.');
   if (has('flirt')) out.push(input.romanceClosed || input.guarded
     ? 'They are flirting: you can notice it out loud, but answer as you actually feel right now, without encouraging more than you mean.'
     : 'They are flirting with you: react in the moment first, the way you really feel about it (pleased, flustered, teasing back, or a little cooler), instead of analysing it or changing the subject.');
   if (has('joke') && !has('question')) out.push('They are joking around: play along or top it with something specific before you get serious.');
   if (has('disclosure')) out.push(`They told you something real: respond to the specific detail first, by name. Then ${askingLately ? 'share a small parallel of your own' : 'ask one follow-up about it or share a small parallel of your own'}; no advice unless they ask.`);
   if (has('opinion')) out.push('They gave an opinion: take a side with your own reason; agreeing is fine, and friendly friction is fun.');
-  if (has('short') && !has('joke')) out.push(previousShort >= 1 || askingLately
+  if (has('share')) out.push(`They told you a fact about themselves: react to that exact detail with your own take or a matching piece of your life${askingLately ? ', and don’t follow it with another question' : ''}; never ask for what they just told you.`);
+  if (has('short')) out.push(previousShort >= 1 || askingLately
     ? 'Their answers are getting short and you have been doing the asking: stop interviewing and take the lead with your own story, opinion or tease, something easy to react to.'
     : 'Short answer: pick up one thing in it and add something of your own (an opinion, a small story, a tease) so they have something easy to answer. Don’t just acknowledge it.');
   return out.join(' ');
