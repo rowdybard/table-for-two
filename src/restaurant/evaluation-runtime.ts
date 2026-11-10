@@ -107,7 +107,7 @@ export class EvaluationConversation {
         friendOnlyTurns: this.excluded[actorId], recentOwn, pendingQuestion: director.pendingQuestion };
     });
     const flow = doubleConversationFlow({ history: this.doubleHistory, lines: this.lines, human: speaker, target, text: turn.text,
-      quietSeconds: turn.quietSeconds ?? 0, dateNames: this.dateNames, available: id => this.views[owner(id)].phase !== 'ended', heard: (id, human) => this.heard.get(id)?.[human] });
+      quietSeconds: turn.quietSeconds ?? 0, dateNames: this.dateNames, humanNames: humans.map(human => this.script.humanNames?.[human] ?? names[human]), available: id => this.views[owner(id)].phase !== 'ended', heard: (id, human) => this.heard.get(id)?.[human] });
     const note = doubleTurnNote({ couples, speaker, target, humanText: turn.text, via: turn.via ?? 'typed', elapsedMinutes: Math.floor(this.views.h1.elapsed / 60), flow });
     const schema = structuredClone(DOUBLE_TURN_SCHEMA);
     schema.properties.utterances.items.properties.speaker.enum = actors.filter(actor => this.views[owner(actor)].phase !== 'ended');

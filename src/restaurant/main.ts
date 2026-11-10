@@ -25,7 +25,7 @@ import { InterestCue } from './InterestCue';
 import { createPerfStats } from './PerfStats';
 import { createFrameCap } from './FrameCap';
 import { consumeTurnResponse, replyDeadlineMs } from './conversation-stream';
-import { captionReadingMs, waitForCaptionPaint, waitForCaptionReading } from './caption-delivery';
+import { captionReadingMs, waitForCaptionPaint, waitForCaptionReading, watchCaptionObstructions } from './caption-delivery';
 import { PageActivity } from './PageActivity';
 import { dateArrival } from './DateArrival';
 
@@ -388,9 +388,14 @@ async function presentCaption(utterance: SceneUtterance, generation: number, epo
   const deliveryId = `caption:${++captionDeliverySequence}`;
   caption(utterance);
   playback = { speaker: utterance.speaker, amplitude: 0, emotion: utterance.emotion, caption: utterance.text, actorId: utterance.actorId, deliveryId };
-  const readable = () => !document.hidden && !el('caption').hidden && preferences.captions;
-  const painted = await waitForCaptionPaint(controller.signal, document, readable, { request: callback => requestAnimationFrame(callback), cancel: id => cancelAnimationFrame(id) });
-  const completed = painted && await waitForCaptionReading(captionReadingMs(utterance.text), controller.signal, document, readable);
+  const readable = () => !document.hidden && !el('caption').hidden && preferences.captions
+    && !visibleModal() && el('journal').hidden && !mobile?.menuScope;
+  const stopWatching = watchCaptionObstructions([...document.querySelectorAll('.modal-backdrop, #journal, #mobile-display-help')], () => controller.abort());
+  let completed = false;
+  try {
+    const painted = await waitForCaptionPaint(controller.signal, document, readable, { request: callback => requestAnimationFrame(callback), cancel: id => cancelAnimationFrame(id) });
+    completed = painted && await waitForCaptionReading(captionReadingMs(utterance.text), controller.signal, document, readable);
+  } finally { stopWatching(); }
   if (captionReadAbort === controller) captionReadAbort = undefined;
   // A readable caption is real delivery. Enqueueing it, or interrupting it early, is not.
   if (epoch === generationEpoch && joined && state.phase === 'playing' && playback.deliveryId === deliveryId) {
@@ -998,7 +1003,7 @@ async function resumePage() {
   await Promise.all([doubleClient.resume(), backgroundPause]);
   if (disposed || document.hidden || epoch !== pageEpoch) return;
   pageSuspended = false; pageRequests = new AbortController(); backgroundPause = undefined;
-  if (!renderer) rebuildRenderer(); else { renderer.setActive(true); renderer.resize(); }
+  if (!renderer) rebuildRenderer(); else renderer.setActive(true);
   lastFrame = performance.now(); scheduleFrame();
   if (!double && joined && state.phase !== 'ended') { clearTimeout(pollTimer); void poll(); }
   else if (!double && (!providers || !joined && !userEnteredMenu && !restoreAttempted)) void connectRestaurant();

@@ -188,3 +188,58 @@ test('disabling then re-enabling a visible caption cancels that reading interval
   await send(page, 'Another ordinary greeting after the interruption.');
   await expect.poll(() => receipts.some(receipt => receipt.generation !== generation && receipt.completed), { timeout: 12000 }).toBe(true);
 });
+
+test('a briefly covered caption does not complete its old reading interval or disclosure memory', async ({ page }) => {
+  const receipts: { generation: number; completed: boolean }[] = [];
+  page.on('request', request => {
+    if (request.method() === 'POST' && request.url().endsWith('/playback')) {
+      const body = request.postDataJSON();
+      if (body.text === REPLY) receipts.push({ generation: body.generation, completed: body.completed });
+    }
+  });
+  await begin(page); await send(page, 'A greeting before opening Little moments.');
+  await expect(page.locator('#caption')).toBeVisible();
+  const generation = (await state(page)).generation;
+  // The real UI handlers open the journal and Little moments, then close it in
+  // one task: the interruption must survive a batched mutation notification.
+  await page.evaluate(() => {
+    document.querySelector<HTMLButtonElement>('#journal-toggle')!.click();
+    document.querySelector<HTMLButtonElement>('#journal-moments')!.click();
+    document.querySelector<HTMLButtonElement>('#journal-close')!.click();
+  });
+  await expect.poll(() => receipts.some(receipt => receipt.generation === generation && !receipt.completed)).toBe(true);
+  await page.waitForTimeout(captionReadingMs(REPLY) + 250);
+  expect(receipts.some(receipt => receipt.generation === generation && receipt.completed)).toBe(false);
+  expect((await state(page)).memory).not.toContain('TOLD THEM: nothing personal yet.');
+  await send(page, 'A fresh readable greeting.');
+  await expect.poll(() => receipts.some(receipt => receipt.generation !== generation && receipt.completed), { timeout: 12000 }).toBe(true);
+  await expect.poll(async () => (await state(page)).memory).toContain('TOLD THEM: nothing personal yet.');
+});
+
+test('covering the screen does not cancel a completed actual audio delivery', async ({ page }) => {
+  const rate = 8000, samples = rate * 8, wav = Buffer.alloc(44 + samples * 2), receipts: boolean[] = [];
+  wav.write('RIFF', 0); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8);
+  wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(rate, 24); wav.writeUInt32LE(rate * 2, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34);
+  wav.write('data', 36); wav.writeUInt32LE(samples * 2, 40);
+  for (let i = 0; i < samples; i++) wav.writeInt16LE(Math.round(Math.sin(i * 2 * Math.PI * 220 / rate) * 8000), 44 + i * 2);
+  await page.route('**/api/date/status', async route => {
+    const response = await route.fetch(), status = await response.json();
+    await route.fulfill({ response, json: { ...status, speech: true, speechProvider: 'none' } });
+  });
+  await page.route('**/api/date/sessions/*/speech', route => route.fulfill({ status: 200, contentType: 'audio/wav', body: wav }));
+  page.on('request', request => {
+    if (request.method() === 'POST' && request.url().endsWith('/playback')) {
+      const body = request.postDataJSON(); if (body.text === REPLY) receipts.push(body.completed);
+    }
+  });
+  await begin(page, true); await send(page, 'A greeting while voice is playing.');
+  await expect(page.locator('#caption')).toBeVisible();
+  await page.evaluate(() => {
+    document.querySelector<HTMLButtonElement>('#journal-toggle')!.click();
+    document.querySelector<HTMLButtonElement>('#journal-moments')!.click();
+    document.querySelector<HTMLButtonElement>('#journal-close')!.click();
+  });
+  await expect.poll(() => receipts.includes(true), { timeout: 20000 }).toBe(true);
+  expect(receipts).not.toContain(false);
+});
