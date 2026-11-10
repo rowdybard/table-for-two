@@ -1,5 +1,6 @@
 import { DurableObject, WorkerEntrypoint } from 'cloudflare:workers';
 import { validBudget, type BudgetRecord } from './budget';
+import { observeConversationFailures } from './conversation-telemetry';
 
 declare const __GAME_BACKEND_VERSION__: string;
 const runtimeName = 'restaurant';
@@ -119,7 +120,8 @@ export class RestaurantRuntime extends DurableObject<Env> {
       const hordeWait = Number(this.env.AI_HORDE_TIMEOUT_MS || 60_000);
       const proxyTimeout = this.env.DATE_CONVERSATION_PROVIDER === 'aihorde' || this.env.DATE_EARNED_PROVIDER === 'aihorde' || this.env.DATE_ALLOW_MODEL_SELECTION === '1' ? Math.min(120_000, Math.max(1000, Number.isFinite(hordeWait) ? hordeWait : 60_000)) + 5000 : 35_000;
       const signal = request.headers.get('upgrade')?.toLowerCase() === 'websocket' ? request.signal : AbortSignal.any([request.signal, AbortSignal.timeout(proxyTimeout)]);
-      return await this.ctx.container!.getTcpPort(port).fetch(new Request(upstream, new Request(request, { headers, signal })));
+      const response = await this.ctx.container!.getTcpPort(port).fetch(new Request(upstream, new Request(request, { headers, signal })));
+      return observeConversationFailures(response, failure => console.warn('Restaurant conversation failed.', failure));
     } catch (error) {
       console.error('Restaurant runtime request failed.', { stage: this.startupStage, type: error instanceof Error ? error.name : typeof error });
       if (this.boot === boot) { this.boot = undefined; this.ready = false; }

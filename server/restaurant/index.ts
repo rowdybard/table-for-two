@@ -78,7 +78,14 @@ function enforceDateSpeechBudget(lines: readonly SceneUtterance[]) {
   if (lines.filter(line => line.speaker === 'date').map(line => line.text).join(' ').length > 420) throw new DateApiError(502, 'invalid_dialogue', 'The date returned too much dialogue for one reply.', { field: 'date_response_length' });
 }
 export function validateTurn(value: unknown): SceneTurn {
-  if (!object(value) || !exactKeys(value, ['utterances', 'emotion', 'action', 'memory', 'social', 'agenda']) || !Array.isArray(value.utterances) || value.utterances.length < 1 || value.utterances.length > 2 || !EMOTIONS.includes(value.emotion as any) || !ACTIONS.includes(value.action as any) || typeof value.memory !== 'string' || value.memory.length > MEMORY_REJECT) throw apiError(502, 'invalid_dialogue', 'The date returned an invalid response. Please try another turn.');
+  const invalid = (field: string) => new DateApiError(502, 'invalid_dialogue', 'The date returned an invalid response. Please try another turn.', { field });
+  if (!object(value) || !exactKeys(value, ['utterances', 'emotion', 'action', 'memory', 'social', 'agenda'])) throw invalid('turn_shape');
+  if (!Array.isArray(value.utterances)) throw invalid('utterances_type');
+  if (value.utterances.length < 1 || value.utterances.length > 2) throw invalid('utterances_count');
+  if (!EMOTIONS.includes(value.emotion as any)) throw invalid('turn_emotion');
+  if (!ACTIONS.includes(value.action as any)) throw invalid('turn_action');
+  if (typeof value.memory !== 'string') throw invalid('memory_type');
+  if (value.memory.length > MEMORY_REJECT) throw invalid('memory_length');
   if (value.social !== undefined && (!object(value.social) || !exactKeys(value.social, ['signal', 'reason', 'wantsToLeave', 'boundary']) || !SOCIAL_SIGNALS.includes(value.social.signal as any) || typeof value.social.reason !== 'string' || value.social.reason.length > 180 || typeof value.social.wantsToLeave !== 'boolean' || value.social.boundary !== undefined && !validBoundaryAssessment(value.social.boundary))) throw apiError(502, 'invalid_dialogue', 'The date returned an invalid social reaction.');
   if (value.agenda !== undefined && !validAgendaAssessment(value.agenda)) throw apiError(502, 'invalid_dialogue', 'The date returned an invalid understanding assessment.');
   const utterances = value.utterances.filter((line, index) => index === 0 || !isSilentDialogueLine(line, ['date', 'waiter', 'diner'])).map(validateUtterance);

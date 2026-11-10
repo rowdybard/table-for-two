@@ -13,7 +13,8 @@
 #restaurant-app[data-mobile=true] :is(.modal-backdrop,.paper-dialog,#double-date-lobby,#journal) {overscroll-behavior:contain;-webkit-overflow-scrolling:touch;}
 #restaurant-app[data-mobile=true] :is(.title-key-hint,.key-hint,.capture-pointer,#interaction,.bottom-tray .tray-button) {display:none!important;}
 #restaurant-app[data-mobile=true] .bottom-tray {left:auto;right:var(--safe-right);bottom:calc(var(--safe-bottom) + 52px);max-width:38%;}
-#restaurant-app[data-mobile=true] .prompt-line {left:var(--safe-left);top:calc(var(--safe-top) + 6px);max-width:min(430px,56%);gap:5px;}
+/* Raise just the prompt over the seated look surface, leaving the toolbar above the interest cue. */
+#restaurant-app[data-mobile=true] .prompt-line {z-index:9;left:var(--safe-left);top:calc(var(--safe-top) + 6px);max-width:min(430px,56%);gap:5px;}
 #restaurant-app[data-mobile=true] .prompt-line p {padding:5px 10px;font-size:13px;}
 #restaurant-app[data-mobile=true] #prompt-chips {gap:5px;}
 #restaurant-app[data-mobile=true] #prompt-chips button {min-height:44px;padding:0 14px;font-size:14px;}
