@@ -57,9 +57,10 @@ const ECHO_OPENING = /^[^.!?]{1,48},? huh\?\s+(?=\S)/i;
  */
 export function tidyOpening(text: string): string {
   let line = text.trim();
-  for (const pattern of [ECHO_OPENING, FILLER_OPENING]) {
+  // The filler pattern runs more than once because the tics stack (“Ha, fair enough, …”).
+  for (const pattern of [ECHO_OPENING, FILLER_OPENING, FILLER_OPENING, FILLER_OPENING]) {
     const rest = line.replace(pattern, '');
-    if (rest === line || rest.split(/\s+/).length < 3 || /^(?:and|but|so|because|or|though|which|that|then)\b/i.test(rest)) continue;
+    if (rest === line || rest.split(/\s+/).length < 3 || /^(?:and|but|so|because|or|though|which|that)\b/i.test(rest)) continue;
     line = rest[0].toUpperCase() + rest.slice(1);
   }
   return line;

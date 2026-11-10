@@ -143,6 +143,7 @@ test('filler and echo openers are dropped from the front of a date line, and not
   assert.equal(tidyOpening('Honestly? Someone who lets me be the fun one for once.'), 'Someone who lets me be the fun one for once.');
   assert.equal(tidyOpening('Oh, the fries have been promoted to flirting assistant.'), 'The fries have been promoted to flirting assistant.');
   assert.equal(tidyOpening('Fair enough. Consider it noted, not requested.'), 'Consider it noted, not requested.');
+  assert.equal(tidyOpening('Ha, fair enough, I walked into that one.'), 'I walked into that one.');
   // An answer, a reaction that is the whole reply, or an opener the sentence leans on stays.
   for (const kept of ['Good. Keep looking then.', 'Yes, a lot easier.', 'Fair.', 'Fair enough. Okay.', 'Noted, and I\'m glad you said it plainly.', 'Me too, honestly.', 'Wait, really? You did that?', 'Absolutely not. The big soft ones are the good ones.']) assert.equal(tidyOpening(kept), kept);
 });
