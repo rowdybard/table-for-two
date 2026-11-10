@@ -1,6 +1,23 @@
 /** Reading, not enqueueing, completes a caption-only delivery. */
 export const captionReadingMs = (text: string) => Math.min(20000, Math.max(1400, 600 + text.trim().split(/\s+/).length * 240));
 
+/** Any overlay opening interrupts a continuous reading interval, even if it closes in the same task. */
+export function watchCaptionObstructions(elements: readonly Element[], onObscured: () => void): () => void {
+  const observer = new MutationObserver(records => {
+    for (let index = 0; index < records.length; index++) {
+      const record = records[index]!;
+      if (record.attributeName !== 'hidden' || record.oldValue === null) continue;
+      // MutationObserver batches changes. The next change for this same node
+      // contains the value after this one, even if it was immediately closed.
+      const next = records.slice(index + 1).find(item => item.target === record.target && item.attributeName === 'hidden');
+      const after = next ? next.oldValue : (record.target as Element).getAttribute('hidden');
+      if (after === null) { onObscured(); return; }
+    }
+  });
+  for (const element of elements) observer.observe(element, { attributes: true, attributeFilter: ['hidden'], attributeOldValue: true });
+  return () => observer.disconnect();
+}
+
 type CaptionFrames = { request(callback: FrameRequestCallback): number; cancel(id: number): void };
 /** Two animation frames give newly inserted text a paint opportunity before its reading interval starts. */
 export function waitForCaptionPaint(signal: AbortSignal, visibility: Pick<EventTarget, 'addEventListener' | 'removeEventListener'>, isVisible: () => boolean, frames: CaptionFrames, timeoutMs = 5000): Promise<boolean> {

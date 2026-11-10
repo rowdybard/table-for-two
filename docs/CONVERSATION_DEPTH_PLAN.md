@@ -1,6 +1,16 @@
 # Conversation depth: persistent implementation goal
 
-Status: **active**. The table-only update is merged to `main` in PR #13 (`1c23101`) and deployed. Human quality review remains outstanding.
+Status: **handoff ready; validation pending**. Source changes are merged through PR #17 (`9c0fb4e`) and deployed. The owner explicitly asked to finish and hand continued simulation/tuning work to Claude/Fable 5.2. Human quality and physical-device evidence remain outstanding.
+
+The final implementation audit corrected missing plain/rude greetings in corpus v2 and expanded Blind to 36 anecdotes/opinions plus 18 retained contradictions/desires. Frozen candidate `c8270c8` passed 624 guarded unit/controller tests and 37 browser cases (one WebKit-only skip) in CI 42867959774. Worker `5ebcbe8e-e6a3-4d2d-969e-f9ba63667733` is live; 17 public paths were verified without inference/speech calls. Baseline-v2 harness `0420b6c` preserves original `05ff06a` production, with matching corpus hash `fa8cef06ffb5ade464fc57e8ca1568e2f9674b39333f43e19443e4f2056cacc9` and 34 guarded checks. Historical v1 and pilot records remain intact.
+
+New owner authorization: **$10 total, Haiku-only simulations**, including input/output logic checks, repeated prompt/memory/context tuning and normal/sexy routing polish after earned unlock. See `CLAUDE_HANDOFF.md` and `HAIKU_SIMULATION_CAMPAIGN.json`. Fable is the orchestrator; the campaign ledger is initialized unspent, and shared enforcement must be connected and tested before any paid request. Existing per-run budget flags are insufficient for a campaign ceiling. No new simulation requests have been made.
+
+Latest verification: [CI run 42863741978](https://github.com/rowdybard/table-for-two/actions/runs/42863741978) passed 620 provider-disabled unit/controller tests and 37 browser cases (one WebKit-only skip) at frozen `6b7e6c4`. Worker `dd330837-caa0-4f5a-b213-3a1f540ebe98` is live. Covered captions no longer create completed receipts, actual audio remains independent, inactive resizes defer, table-only prompts keep legacy action/agenda fields neutral, and Double clarification respects friend targets and the participant who last spoke. Captures were reviewed and 17 live public paths verified with zero model/speech calls. Offline comparison of 2,640 request pairs remains within the 600-token allowance. The original baseline bench was unchanged.
+
+Remaining acceptance evidence is absent: the 60-script matched capture is incomplete, both saved human-review packets are still unrated, and actual low-end hardware performance has not been measured. Running the offline human gate on the preserved pilot reports returns blocked for missing independent human attestations; this is not a failed conversation-quality score. The prior closed pilot caps authorize no new requests. The owner’s original phone subtitle disappearance also remains unreproduced.
+
+The latest follow-up passed 608 provider-disabled unit/controller tests and 35 browser cases (one WebKit-only skip) in [CI run 42859830760](https://github.com/rowdybard/table-for-two/actions/runs/42859830760). Worker `f918c83a-fb62-42d6-a574-53e1c59f9581` preserves the table-only flow, keys and runtime namespace. Standalone stop requests retire shared premises; Solo evaluation no longer confuses older heard replies with newer interrupted/unheard replies or adds a contradictory quiet-gap note. Three real-audio Android caption captures were reviewed, but the owner's missing-caption report remains unreproduced. No live model or speech calls were spent.
 
 ## Current direction: conversation at the table
 
@@ -27,7 +37,7 @@ Implement the user's approved “Make Table for Two's conversations worth sharin
 - [x] Preserve HUMAN / TOLD THEM / OPEN memory. Keep at most one grounded shared premise; corrections, disclosures and promises take priority. Retire stopped or stale bits.
 - [x] Three alternatives per character for twelve frequent authored cue slots: 108 versions total. Preserve suppression and aside limits.
 - [x] Existing scenario choices get branch-specific immediate context and appropriate later factual callbacks; no new branches or interruptions.
-- [x] Blind: thirty-six grounded seeds, twelve vulnerability motives, twelve opening templates; deterministic seeds and no preset biography leakage.
+- [x] Blind: thirty-six grounded anecdotes/opinions plus eighteen retained contradictions/desires, twelve vulnerability motives, twelve opening templates; deterministic seeds and no preset biography leakage.
 - [x] Double cast voice, knowledge, agenda and romantic progress stay independent.
 - [x] Refresh restrained reaction envelopes for distinct delivered utterances, including repeated emotion values. Important speech/listening wins over incidental gestures.
 - [x] Bound voice preparation/playback, retain existing fallbacks and truthful receipts, and reject late audio.

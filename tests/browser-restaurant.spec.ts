@@ -820,8 +820,12 @@ test('a newly opened background tab defers WebGL until it is activated', async (
     await background.waitForTimeout(1800);
     await expect(background.locator('.restaurant-canvas')).toHaveCount(0);
     expect(await background.evaluate(() => (window as Window & { __webglInitializations?: number }).__webglInitializations)).toBe(0);
+    const activationStarted = performance.now();
     await background.bringToFront();
-    await expect.poll(() => background.evaluate(() => ({ hidden: document.hidden, focused: document.hasFocus() }))).toEqual({ hidden: false, focused: true });
+    // Activation also starts the deferred renderer; allow its existing 30-second
+    // readiness budget for the first main-thread visibility evaluation to return.
+    await expect.poll(() => background.evaluate(() => ({ hidden: document.hidden, focused: document.hasFocus() })), { timeout: 30000 }).toEqual({ hidden: false, focused: true });
+    console.info(`Lifecycle initial activation checkpoint: ${Math.round(performance.now() - activationStarted)} ms`);
     await waitForRestaurantScene(background);
     await expect(background.locator('.restaurant-canvas')).toHaveCount(1);
     expect(await background.evaluate(() => (window as Window & { __webglInitializations?: number }).__webglInitializations)).toBeGreaterThan(0);
@@ -895,10 +899,16 @@ test('background tab stops work and resumes the same paused date without replayi
     await expect.poll(() => gate.aborted && gate.lateAttempted).toBe(true);
     await expect.poll(() => page.evaluate(() => (window as Window & { __lifecycleTrack?: MediaStreamTrack }).__lifecycleTrack?.readyState)).toBe('ended');
     const dormant = { polls: sessionPolls, speech: speechRequests, calls: calls.length, draws: await page.evaluate(() => window.__mobileGLDiagnostics!.drawCalls) };
+    const canvasBefore = await page.locator('.restaurant-canvas').evaluate((node: HTMLCanvasElement) => ({ width: node.width, height: node.height }));
+    await page.setViewportSize({ width: 1000, height: 700 });
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(1000);
+    expect(await page.evaluate(() => ({ hidden: document.hidden, focused: document.hasFocus() }))).toEqual({ hidden: true, focused: false });
     await page.waitForTimeout(1800);
     expect(sessionPolls).toBe(dormant.polls); expect(speechRequests).toBe(dormant.speech); expect(calls.length).toBe(dormant.calls);
     expect(await page.evaluate(() => window.__mobileGLDiagnostics!.drawCalls)).toBe(dormant.draws);
+    expect(await page.locator('.restaurant-canvas').evaluate((node: HTMLCanvasElement) => ({ width: node.width, height: node.height }))).toEqual(canvasBefore);
     await page.bringToFront();
+    await expect.poll(() => page.locator('.restaurant-canvas').evaluate((node: HTMLCanvasElement) => `${node.width}x${node.height}`)).not.toBe(`${canvasBefore.width}x${canvasBefore.height}`);
     await expect(page.locator('#pause-dialog')).toBeVisible();
     expect((await state(page)).id).toBe(sessionId);
     await expect(page.locator('#mic-toggle')).toHaveAttribute('aria-pressed', 'false');

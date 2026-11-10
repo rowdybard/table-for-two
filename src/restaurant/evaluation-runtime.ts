@@ -6,7 +6,7 @@ import type { DoubleDateActorId, DoubleHumanId } from './double-date-types';
 import { EveningDirector } from '../../server/restaurant/evening';
 import { soloSystem } from '../../server/restaurant/conversation-prompt';
 import { dialogueLoopContext, tableNow } from '../../server/restaurant/dialogue-policy';
-import { conversationMessages, deliveryLabel, heardPrefix, turnNote, type TurnFlow } from '../../server/restaurant/turn-note';
+import { QUIET_GAP_SECONDS, conversationMessages, deliveryLabel, heardPrefix, turnNote, type TurnFlow } from '../../server/restaurant/turn-note';
 import { mergeMemoryForDelivery, retireSharedPremise } from '../../server/restaurant/memory';
 import { tableFacts } from '../../server/restaurant/table-facts';
 import { roleplayInstructions } from '../../server/restaurant/roleplay';
@@ -82,10 +82,13 @@ export class EvaluationConversation {
     }
     if (this.script.mode === 'double') return this.doubleRequest(turn);
     const view = this.views.h1, director = this.directors.h1, dateName = getDate(view.dateId)!.name;
+    const lastDateLine = this.previous?.lines.filter(line => line.speaker === 'date').at(-1);
+    const cutOff = this.previous?.delivery === 'interrupted', keptTalking = this.previous?.delivery === 'unheard';
     const flow: TurnFlow = { pendingQuestion: director.pendingQuestion,
-      ...(this.previous?.delivery === 'interrupted' ? { talkedOver: { heard: heardPrefix(this.previous.lines[0]?.text ?? '', 1) } } : {}),
-      ...(this.previous?.delivery === 'unheard' ? { keptTalking: true } : {}), ...(turn.quietSeconds ? { quietSeconds: turn.quietSeconds } : {}),
-      ...(this.recent.at(-1) ? { lastDateLine: this.recent.at(-1)!.text } : {}) };
+      ...(cutOff ? { talkedOver: { heard: heardPrefix(lastDateLine?.text ?? '', 1) } } : {}),
+      ...(keptTalking ? { keptTalking: true } : {}),
+      ...(turn.quietSeconds && turn.quietSeconds >= QUIET_GAP_SECONDS && !cutOff && !keptTalking ? { quietSeconds: turn.quietSeconds } : {}),
+      ...(this.previous?.delivery === 'heard' && lastDateLine ? { lastDateLine: lastDateLine.text } : {}) };
     const note = turnNote({ scene: view, dateName, humanText: turn.text, via: turn.via ?? 'typed', tableNow: tableNow(view, dateName), memory: view.memory, facts: tableFacts(view),
       agenda: null, boundaries: director.boundaries.promptContext(), avoid: dialogueLoopContext(this.recent, turn.text).avoidUnpromptedTopics,
       recentDelivered: this.recent, flow });
@@ -104,7 +107,7 @@ export class EvaluationConversation {
         friendOnlyTurns: this.excluded[actorId], recentOwn, pendingQuestion: director.pendingQuestion };
     });
     const flow = doubleConversationFlow({ history: this.doubleHistory, lines: this.lines, human: speaker, target, text: turn.text,
-      quietSeconds: turn.quietSeconds ?? 0, dateNames: this.dateNames, available: id => this.views[owner(id)].phase !== 'ended', heard: (id, human) => this.heard.get(id)?.[human] });
+      quietSeconds: turn.quietSeconds ?? 0, dateNames: this.dateNames, humanNames: humans.map(human => this.script.humanNames?.[human] ?? names[human]), available: id => this.views[owner(id)].phase !== 'ended', heard: (id, human) => this.heard.get(id)?.[human] });
     const note = doubleTurnNote({ couples, speaker, target, humanText: turn.text, via: turn.via ?? 'typed', elapsedMinutes: Math.floor(this.views.h1.elapsed / 60), flow });
     const schema = structuredClone(DOUBLE_TURN_SCHEMA);
     schema.properties.utterances.items.properties.speaker.enum = actors.filter(actor => this.views[owner(actor)].phase !== 'ended');

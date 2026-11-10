@@ -324,3 +324,19 @@ test('“what do you mean?” is about the line of the date they were talking to
   assert.equal((await api.request(api.path(h1) + '/turn', h1.token, { turnId: 'sixth', text: 'huh what do you mean', target: 'table' })).status, 202); await api.settle(h1);
   assert.match(doubleNote(requests[5]), /asking about Jules’s last line/, 'said to the table, it is about whoever spoke last');
 });
+
+test('a table clarification after the friend speaks does not cite an older AI line when the dates stayed quiet', async t => {
+  const requests: ClaudeRequest[] = [];
+  const replies = [[{ speaker: 'd1', text: 'I collect tiny railway maps.', emotion: 'amused' }], [], []];
+  const api = await boot({ claude: claude(request => requests.push(request), () => response(replies.shift() ?? [])) });
+  t.after(() => api.close()); const { h1, h2 } = await api.pair(); await seatBoth(api, h1, h2);
+  assert.equal((await api.request(api.path(h1) + '/turn', h1.token, { turnId: 'maps', text: 'Tell us something.', target: 'table' })).status, 202);
+  await api.settle(h1); await api.hear(h1, 'd1', 'I collect tiny railway maps.');
+  assert.equal((await api.request(api.path(h2) + '/turn', h2.token, { turnId: 'friend-speaks', text: 'My house is a lighthouse, apparently.', target: 'h1' })).status, 202);
+  await api.settle(h2);
+  assert.equal((await api.request(api.path(h1) + '/turn', h1.token, { turnId: 'friend-clarification', text: 'What do you mean?', target: 'table' })).status, 202);
+  await api.settle(h1);
+  assert.equal(requests.length, 3, 'each human turn has one shared generation, including the quiet response');
+  assert.match(requests[2].messages.map(message => message.content).join('\n'), /Jamie \(to Alex\): My house is a lighthouse, apparently\./);
+  assert.doesNotMatch(doubleNote(requests[2]), /asking about Mira|asking about Jules/);
+});

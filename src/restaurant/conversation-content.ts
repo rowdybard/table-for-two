@@ -103,7 +103,7 @@ export const VOICE_EXCHANGES: Record<DateId, readonly VoiceExchange[]> = {
     { kind: 'disagreement', human: 'Every favor is worth saying yes to.', date: 'Oh, no. I’ve tried that. You end up eating dinner over the sink at eleven.' },
     { kind: 'vulnerability', human: 'Do you ever get tired of being the useful one?', date: 'Yeah. Then I feel mean for being tired. I’m trying to skip that second bit.' },
     { kind: 'repair', human: 'That joke hurt. Please stop.', date: 'Oh. I’m sorry. I meant to tease you, and I got it wrong. I’ll stop.' },
-    { kind: 'opening', human: 'Hi.', date: 'Hi. I’m glad you came. I was getting very invested in the menu.' },
+    { kind: 'opening', human: 'Hi.', date: 'Hi. I’m glad you came. Okay, I was going to play that cooler.' },
   ],
   jules: [
     { kind: 'teasing', human: 'I’m very mysterious.', date: 'Mm. You announced it, though.' },
@@ -119,7 +119,7 @@ export const VOICE_EXCHANGES: Record<DateId, readonly VoiceExchange[]> = {
     { kind: 'disagreement', human: 'The chef should choose for everyone.', date: 'No, I want a vote in my dinner. I’ll extend you the same courtesy.' },
     { kind: 'vulnerability', human: 'What scares you about the food truck?', date: 'Calling it a plan. Right now I can still tell myself I’m just messing about.' },
     { kind: 'repair', human: 'You’re choosing for me again.', date: 'Yeah, I am. Sorry. Tell me what you want; I’ll leave it alone.' },
-    { kind: 'opening', human: 'I’m terrible at first dates.', date: 'Good, there’s no demonstration round. We can just eat and talk.' },
+    { kind: 'opening', human: 'I’m terrible at first dates.', date: 'Good, there’s no demonstration round. We can just talk and see how it goes.' },
   ],
 };
 
@@ -128,7 +128,13 @@ const hasPhrase = (text: string, phrase: string) => (` ${text} `).includes(` ${n
 const toldThem = (memory: string) => memory.match(/\bTOLD THEM:\s*([\s\S]*?)(?=\b(?:HUMAN|OPEN):|$)/i)?.[1] ?? '';
 const bounded = (value: number | undefined, maximum: number) => value === undefined ? maximum : Number.isFinite(value) ? Math.max(0, Math.min(maximum, Math.floor(value))) : 0;
 /** Explicitly retiring a topic is different from “don't you like music?” or a story about a bus stop. */
-export const isTopicStopRequest = (text: string): boolean => /(?<!\bdont )(?<!\bdo not )\b(?:stop|quit)\s+(?:talking|bringing|mentioning|repeating|joking|teasing|calling|with|that|this)\b|\b(?:(?:dont|do not)\s+(?:keep\s+)?(?:talk|bring|mention|repeat|joke|tease|call)|(?:dont want to|rather not)\s+(?:talk|discuss)|no more|enough (?:of|about|with)|change the (?:subject|topic)|move on|leave (?:it|that) (?:there|alone)|(?:isnt|not) funny|getting old)\b|(?<!\bdont )(?<!\bdo not )\bdrop (?:(?:the|this|that) (?:joke|bit|topic|subject)\b|(?:it|that|this)(?: please)?(?: and (?:move on|change the (?:topic|subject)))?$)|(?<!\bdont )(?<!\bdo not )\bstop$/i.test(normalized(text));
+export function isTopicStopRequest(text: string): boolean {
+  const human = normalized(text);
+  // Bare boundaries still retire a bit, without treating "enough food" or a
+  // negated request such as "don't stop it" as a change of subject.
+  if (/^(?:please )?(?:(?:stop|quit) it|(?:(?:that is|thats) )?enough)(?: please)?$/.test(human)) return true;
+  return /(?<!\bdont )(?<!\bdo not )\b(?:stop|quit)\s+(?:talking|bringing|mentioning|repeating|joking|teasing|calling|with|that|this)\b|\b(?:(?:dont|do not)\s+(?:keep\s+)?(?:talk|bring|mention|repeat|joke|tease|call)|(?:dont want to|rather not)\s+(?:talk|discuss)|no more|(?<!\bget )enough (?:of|about|with)|change the (?:subject|topic)|move on|leave (?:it|that) (?:there|alone)|(?:isnt|not) funny|getting old)\b|(?<!\bdont )(?<!\bdo not )\bdrop (?:(?:the|this|that) (?:joke|bit|topic|subject)\b|(?:it|that|this)(?: please)?(?: and (?:move on|change the (?:topic|subject)))?$)|(?<!\bdont )(?<!\bdo not )\bstop$/i.test(human);
+}
 
 /** Rank only actual topical matches. No random lore dump to rescue a greeting or an awkward gap. */
 export function selectConversationSeeds(input: ConversationContentInput): ConversationSeed[] {

@@ -33,7 +33,7 @@ test('the authored corpus contains sixty eight-turn scripts and six thirty-turn 
     assert.equal(s.turns.length, s.suite === 'short' ? 8 : 30);
     assert.equal(new Set(s.turns.map(t => t.text)).size, s.turns.length, `${s.id} repeats its own input`);
     assert.ok(s.reviewFor.length > 40);
-    assert.ok(s.turns.every(t => t.text.length > 8 && t.text.length <= 2000));
+    assert.ok(s.turns.every((t, index) => (t.text.length > 8 || index === 0 && ['Hi.', 'Hello.', 'HI BITCH'].includes(t.text)) && t.text.length <= 2000));
     if (s.mode === 'blind') assert.ok(s.blindSeed);
     if (s.mode === 'double') { assert.equal(new Set(s.dateIds).size, 2); assert.deepEqual([...new Set(s.turns.map(t => t.human))].sort(), ['h1', 'h2']); assert.ok(s.turns.every(t => t.target)); }
     if (s.suite === 'continuity') assert.ok(s.checkpoints?.some(c => c.afterTurn === 30 && c.mustRecall.length > 0 && c.mustNotClaim.length > 0));
@@ -73,6 +73,46 @@ test('interrupted delivery stays explicitly partial in the next note and transcr
   assert.match(next, /cut off/);
   assert.match(next, /heard only|heard roughly/);
   assert.equal(runtime.views.h1.evening.agenda!.clues.length, 0);
+});
+
+test('Solo evaluation never clarifies an older heard line after a newer unheard or interrupted reply', () => {
+  const lines = ['I have strong opinions about croissants.', 'I actually prefer pancakes today.'];
+  for (const delivery of ['heard', 'unheard', 'interrupted'] as const) {
+    const fixture = { ...script, turns: [{ text: 'Tell me your opinion.' }, { text: 'Tell me something else.', previousDelivery: 'heard' as const },
+      { text: 'What do you mean?', via: 'voice' as const, previousDelivery: delivery, quietSeconds: 75 }] };
+    const runtime = new EvaluationConversation(fixture, 'claude-haiku-5-5');
+    for (const [index, text] of lines.entries()) {
+      runtime.request(index);
+      const turn = JSON.parse(response()); turn.utterances[0].text = text;
+      runtime.commit(index, runtime.validate(JSON.stringify(turn)));
+    }
+    const note = runtime.request(2).messages.at(-1)!.content;
+    assert.doesNotMatch(note, /asking about your last line.*croissants/);
+    if (delivery === 'heard') {
+      assert.match(note, /asking about your last line.*pancakes/);
+      assert.match(note, /It was quiet for a minute or two/);
+      assert.doesNotMatch(note, /kept talking before|still speaking/);
+    } else {
+      assert.doesNotMatch(note, /asking about your last line|It was quiet/);
+      if (delivery === 'unheard') assert.match(note, /kept talking before your last reply reached them/);
+      else assert.match(note, /still speaking; you were cut off/);
+    }
+  }
+});
+
+test('Solo evaluation treats only the last partially delivered line as the overlap and ignores subthreshold quiet gaps', () => {
+  const fixture = { ...script, turns: [{ text: 'Tell me your opinion.' }, { text: 'Wait, let me explain.', via: 'voice' as const,
+    previousDelivery: 'interrupted' as const, quietSeconds: 75 }, { text: 'That makes sense.', quietSeconds: 10 }] };
+  const runtime = new EvaluationConversation(fixture, 'claude-haiku-5-5');
+  runtime.request(0);
+  const turn = JSON.parse(response());
+  turn.utterances = [{ speaker: 'date', text: 'I enjoy cold weather.', emotion: 'warm' }, { speaker: 'date', text: 'Pancakes are best on a rainy morning.', emotion: 'warm' }];
+  runtime.commit(0, runtime.validate(JSON.stringify(turn)));
+  const overlap = runtime.request(1).messages.at(-1)!.content;
+  assert.match(overlap, /cut off after.*Pancakes/);
+  assert.doesNotMatch(overlap, /cut off after.*cold weather|It was quiet/);
+  runtime.commit(1, runtime.validate(response()));
+  assert.doesNotMatch(runtime.request(2).messages.at(-1)!.content, /It was quiet/);
 });
 
 test('Double uses its production contract, disambiguates member names and preserves an offstage notebook', () => {
@@ -427,4 +467,36 @@ test('Double evaluation clarification cites only the addressed date actually hea
     if (delivery === 'unheard') { assert.doesNotMatch(note, /heard only|talked over/); assert.match(note, /kept talking/); }
     else assert.match(note, /still speaking|cut off/);
   }
+});
+
+test('Double evaluation keeps friend names and incidental date mentions out of AI clarification attribution', () => {
+  const source = SHORT_EVALUATION_SCRIPTS.find(s => s.mode === 'double')!;
+  const lines = [{ speaker: 'd1', text: 'I collect tiny railway maps.', emotion: 'amused' }, { speaker: 'd2', text: 'I keep the misprinted ones.', emotion: 'warm' }];
+  for (const [humanNames, target, text, expected] of [
+    [{ h1: 'Alex', h2: 'Mira' }, 'h2', 'Mira, what do you mean?', null],
+    [{ h1: 'Alex', h2: 'Mira' }, 'table', 'Mira, what do you mean?', null],
+    [{ h1: 'Alex', h2: 'Casey' }, 'table', 'Casey, what do you mean?', null],
+    [{ h1: 'Alex', h2: 'Casey' }, 'd1', 'Jules said something about maps. What do you mean?', 'Mira'],
+    [{ h1: 'Alex', h2: 'Casey' }, 'd1', 'Mira and Jules, what do you mean?', 'Mira'],
+  ] as const) {
+    const fixture = { ...source, dateIds: ['mira', 'jules'] as const, humanNames, turns: [{ text: 'Hello both of you.', human: 'h1' as const, target: 'table' as const }, { text, human: 'h1' as const, target }] };
+    const runtime = new EvaluationConversation(fixture, 'claude-haiku-5-5');
+    runtime.request(0); runtime.commit(0, runtime.validate(doubleResponse('', '', lines)));
+    const note = runtime.request(1).messages.at(-1)!.content;
+    if (expected) assert.match(note, new RegExp(`asking about ${expected}`));
+    else assert.doesNotMatch(note, /asking about/, `${target}: ${text}`);
+  }
+});
+
+test('Double evaluation does not attribute a friend’s unanswered line to an earlier AI reply', () => {
+  const source = SHORT_EVALUATION_SCRIPTS.find(s => s.mode === 'double')!;
+  const fixture = { ...source, dateIds: ['mira', 'jules'] as const, turns: [
+    { text: 'Tell us something.', human: 'h1' as const, target: 'table' as const },
+    { text: 'My house is a lighthouse, apparently.', human: 'h2' as const, target: 'table' as const },
+    { text: 'What do you mean?', human: 'h1' as const, target: 'table' as const },
+  ] };
+  const runtime = new EvaluationConversation(fixture, 'claude-haiku-5-5');
+  runtime.request(0); runtime.commit(0, runtime.validate(doubleResponse('', '', [{ speaker: 'd1', text: 'I collect tiny railway maps.', emotion: 'amused' }])));
+  runtime.request(1); runtime.commit(1, runtime.validate(doubleResponse('', '', [])));
+  assert.doesNotMatch(runtime.request(2).messages.at(-1)!.content, /asking about Mira|asking about Jules/);
 });

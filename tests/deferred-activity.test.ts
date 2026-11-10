@@ -22,3 +22,15 @@ test('work deferred again during a flush stays pending until the next activation
   gate.setActive(true); assert.deepEqual(calls, ['first']);
   gate.setActive(true); assert.deepEqual(calls, ['first', 'second']);
 });
+
+test('inactive resize requests coalesce and apply the latest viewport on return', () => {
+  const gate = new DeferredActivity(), sizes: number[] = [];
+  let viewport = 100;
+  const resize = () => sizes.push(viewport);
+  gate.setActive(false);
+  gate.run(resize); viewport = 240; gate.run(resize); viewport = 360;
+  assert.deepEqual(sizes, []);
+  gate.setActive(true);
+  assert.deepEqual(sizes, [360]);
+  gate.setActive(true); assert.deepEqual(sizes, [360]);
+});
