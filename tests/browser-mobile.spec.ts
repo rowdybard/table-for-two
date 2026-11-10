@@ -65,14 +65,16 @@ async function center(page: Page, selector: string) {
 }
 async function assertFits(page: Page, selectors: string[]) {
   const viewport = page.viewportSize()!;
-  for (const selector of selectors) {
-    const bounds = await page.locator(selector).boundingBox();
-    expect(bounds, `${selector} must be visible`).not.toBeNull();
-    expect(bounds!.x, selector).toBeGreaterThanOrEqual(0);
-    expect(bounds!.y, selector).toBeGreaterThanOrEqual(0);
-    expect(bounds!.x + bounds!.width, selector).toBeLessThanOrEqual(viewport.width + 1);
-    expect(bounds!.y + bounds!.height, selector).toBeLessThanOrEqual(viewport.height + 1);
-  }
+  await expect(async () => {
+    for (const selector of selectors) {
+      const bounds = await page.locator(selector).boundingBox();
+      expect(bounds, `${selector} must be visible`).not.toBeNull();
+      expect(bounds!.x, selector).toBeGreaterThanOrEqual(0);
+      expect(bounds!.y, selector).toBeGreaterThanOrEqual(0);
+      expect(bounds!.x + bounds!.width, selector).toBeLessThanOrEqual(viewport.width + 1);
+      expect(bounds!.y + bounds!.height, selector).toBeLessThanOrEqual(viewport.height + 1);
+    }
+  }).toPass({ timeout: 8000 });
 }
 const settleFrame = (page: Page) => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 async function assertCenterHit(page: Page, selector: string) {
@@ -223,6 +225,7 @@ test('landscape phone: two thumbs, talk return, neutral input, context action an
   await expect(page.locator('#prompt-line')).toBeVisible();
   await page.locator('#mobile-pause').evaluate(button => button.addEventListener('pointerdown', event => { button.setAttribute('data-test-pointer', String((event as PointerEvent).pointerId)); }, { once: true }));
   await thumbs.down(4, pause.x, pause.y);
+  await expect(page.locator('#mobile-pause')).toHaveAttribute('data-test-pointer', /^\d+$/);
   const canceledPointer = Number(await page.locator('#mobile-pause').getAttribute('data-test-pointer'));
   await page.locator('#mobile-pause').dispatchEvent('pointercancel', { pointerId: canceledPointer, pointerType: 'touch', isPrimary: true });
   await thumbs.up(4); await settleFrame(page);
