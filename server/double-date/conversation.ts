@@ -181,7 +181,7 @@ export class DoubleConversation {
   /** How this turn's words arrived: over the date, before the last reply landed, or after a long quiet. */
   private flowFor(turn: QueuedTurn, dateNames: Record<DoubleDateActorId, string>): DoubleFlow {
     return doubleConversationFlow({ history: this.history, lines: this.state.lines, human: turn.human, target: turn.request.target,
-      text: turn.request.text, quietSeconds: turn.quiet, dateNames, available: id => this.availableForDialogue(id), heard: (id, human) => this.heard.get(id)?.[human] });
+      text: turn.request.text, quietSeconds: turn.quiet, dateNames, humanNames: this.state.members.map(member => member.name), available: id => this.availableForDialogue(id), heard: (id, human) => this.heard.get(id)?.[human] });
   }
 
   private async drain() {

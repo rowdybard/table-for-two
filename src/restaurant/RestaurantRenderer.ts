@@ -155,6 +155,7 @@ export class RestaurantRenderer {
 
   setActive(active: boolean) {
     if (this.disposed) return;
+    if (active) this.resize();
     this.lighting.setActive(active);
     this.activity.setActive(active);
     if (active && !this.compiled && !this.warmupTask) this.requestWarmup();
@@ -757,7 +758,9 @@ export class RestaurantRenderer {
     return hit?.object.userData.actorId as ConversationTarget | undefined ?? 'table';
   }
 
-  resize() {
+  resize() { this.activity.run(this.resizeNow); }
+
+  private readonly resizeNow = () => {
     if (this.disposed) return;
     this.drawCadence.reset();
     const rect = this.container.getBoundingClientRect();
@@ -768,7 +771,7 @@ export class RestaurantRenderer {
     const ratio = renderPixelRatio(this.quality, window.devicePixelRatio, width, height, this.resolutionScale);
     if (ratio !== this.renderer.getPixelRatio()) this.renderer.setPixelRatio(ratio);
     this.renderer.setSize(width, height, false);
-  }
+  };
 
   dispose() {
     if (this.disposed) return;

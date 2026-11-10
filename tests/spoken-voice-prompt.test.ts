@@ -145,7 +145,9 @@ test('the output contract states the three-part 700-character memory, the cast r
   for (const label of ['"HUMAN:"', '"TOLD THEM:"', '"OPEN:"', 'at most 700 characters', 'rewrite "Your notes"']) assert.ok(contract.includes(label), label);
   assert.match(contract, /about 25 words, under 260 characters/); assert.match(contract, /discards a reply over 420/);
   assert.match(contract, /Every utterance uses the exact speaker key "date"/); assert.match(contract, /never speak for the human or another person/);
-  for (const word of [...EMOTIONS, ...ACTIONS, ...SOCIAL_SIGNALS]) assert.ok(contract.includes(word), word);
+  for (const word of [...EMOTIONS, ...SOCIAL_SIGNALS]) assert.ok(contract.includes(word), word);
+  assert.match(contract, /Always set "action" to "none"/);
+  assert.doesNotMatch(contract, /Actions:|server owns courses/);
   assert.match(contract, /spoken line first/, 'the field order the schema streams in is stated');
 });
 

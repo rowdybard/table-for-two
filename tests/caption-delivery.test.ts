@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { captionReadingMs, waitForCaptionPaint, waitForCaptionReading } from '../src/restaurant/caption-delivery';
+import { captionReadingMs, waitForCaptionPaint, waitForCaptionReading, watchCaptionObstructions } from '../src/restaurant/caption-delivery';
 
 function frameQueue() {
   let id = 0;
@@ -54,4 +54,43 @@ test('only a continuously visible full reading interval completes; cancellation 
   assert.equal(await reading, false);
   assert.ok(captionReadingMs('A short line.') >= 1400);
   assert.ok(captionReadingMs('word '.repeat(70)) > captionReadingMs('A short line.'));
+});
+
+test('only a real overlay opening cancels a caption reading interval, even in a mixed batch', async t => {
+  let notify!: MutationCallback, disconnected = false;
+  const watched: Element[] = [];
+  class Observer {
+    constructor(callback: MutationCallback) { notify = callback; }
+    observe(target: Element, options: MutationObserverInit) { watched.push(target); assert.deepEqual(options.attributeFilter, ['hidden']); assert.equal(options.attributeOldValue, true); }
+    disconnect() { disconnected = true; }
+  }
+  const old = Object.getOwnPropertyDescriptor(globalThis, 'MutationObserver');
+  Object.defineProperty(globalThis, 'MutationObserver', { configurable: true, value: Observer });
+  t.after(() => { if (old) Object.defineProperty(globalThis, 'MutationObserver', old); else Reflect.deleteProperty(globalThis, 'MutationObserver'); });
+  const element = (hidden: string | null) => ({ hidden, getAttribute() { return this.hidden; } });
+  const first = element(''), second = element('');
+  const record = (target: typeof first, oldValue: string | null) => ({ target, attributeName: 'hidden', oldValue } as unknown as MutationRecord);
+  const emit = (records: MutationRecord[]) => notify(records, {} as MutationObserver);
+  let interruptions = 0;
+  const stop = watchCaptionObstructions([first as unknown as Element, second as unknown as Element], () => { interruptions++; });
+  emit([record(first, '')]); // hidden = true when already hidden
+  assert.equal(interruptions, 0);
+  first.hidden = null;
+  emit([record(first, null)]); // removing an already absent attribute
+  assert.equal(interruptions, 0);
+  emit([record(first, '')]); // a single hidden -> visible transition
+  assert.equal(interruptions, 1);
+  first.hidden = '';
+  emit([record(first, ''), record(second, ''), record(second, ''), record(first, null)]);
+  assert.equal(interruptions, 2, 'interleaved same-node records still reveal a brief opening');
+  stop(); assert.equal(disconnected, true);
+  assert.deepEqual(watched, [first, second]);
+
+  const controller = new AbortController();
+  const stopReading = watchCaptionObstructions([first as unknown as Element], () => controller.abort());
+  const reading = waitForCaptionReading(30, controller.signal, new EventTarget(), () => true);
+  // Both mutations arrive together: it opened and then closed before the observer ran.
+  emit([record(first, ''), record(first, null)]);
+  assert.equal(await reading, false);
+  stopReading();
 });

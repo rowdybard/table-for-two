@@ -895,10 +895,16 @@ test('background tab stops work and resumes the same paused date without replayi
     await expect.poll(() => gate.aborted && gate.lateAttempted).toBe(true);
     await expect.poll(() => page.evaluate(() => (window as Window & { __lifecycleTrack?: MediaStreamTrack }).__lifecycleTrack?.readyState)).toBe('ended');
     const dormant = { polls: sessionPolls, speech: speechRequests, calls: calls.length, draws: await page.evaluate(() => window.__mobileGLDiagnostics!.drawCalls) };
+    const canvasBefore = await page.locator('.restaurant-canvas').evaluate((node: HTMLCanvasElement) => ({ width: node.width, height: node.height }));
+    await page.setViewportSize({ width: 1000, height: 700 });
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(1000);
+    expect(await page.evaluate(() => ({ hidden: document.hidden, focused: document.hasFocus() }))).toEqual({ hidden: true, focused: false });
     await page.waitForTimeout(1800);
     expect(sessionPolls).toBe(dormant.polls); expect(speechRequests).toBe(dormant.speech); expect(calls.length).toBe(dormant.calls);
     expect(await page.evaluate(() => window.__mobileGLDiagnostics!.drawCalls)).toBe(dormant.draws);
+    expect(await page.locator('.restaurant-canvas').evaluate((node: HTMLCanvasElement) => ({ width: node.width, height: node.height }))).toEqual(canvasBefore);
     await page.bringToFront();
+    await expect.poll(() => page.locator('.restaurant-canvas').evaluate((node: HTMLCanvasElement) => `${node.width}x${node.height}`)).not.toBe(`${canvasBefore.width}x${canvasBefore.height}`);
     await expect(page.locator('#pause-dialog')).toBeVisible();
     expect((await state(page)).id).toBe(sessionId);
     await expect(page.locator('#mic-toggle')).toHaveAttribute('aria-pressed', 'false');

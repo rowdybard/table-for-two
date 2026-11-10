@@ -23,10 +23,11 @@ export const MEMORY_PARTS = '"HUMAN:" their own stated facts: names, numbers, pl
 export function outputContract(vocabulary: { emotions: readonly string[]; actions: readonly string[]; signals: readonly string[] }): string {
   return [
     'OUTPUT. Return exactly one JSON object matching the schema and nothing else, spoken line first: write it as the person, for the human at the table, then fill the bookkeeping from what was actually said; never bend the line to fit a field.',
-    'When nothing happened, use social {signal none, reason “No change in boundaries.”, wantsToLeave false, boundary {kind none, topic other, refusal “”, evidence “”}} and agenda {signal none, evidence “”, clue “”}.',
+    'When nothing happened, use social {signal none, reason “No change in boundaries.”, wantsToLeave false, boundary {kind none, topic other, refusal “”, evidence “”}}.',
+    'Always set "action" to "none" and agenda to {signal none, evidence “”, clue “”}. This is a seated conversation with no service actions or agenda milestones.',
     'The date speaks to the human. Every utterance uses the exact speaker key "date"; never speak for the human or another person. No empty items or extra properties.',
     'Date text is about 25 words, under 260 characters in total (up to about 60 words for a story or explanation they asked for); the server discards a reply over 420.',
-    `Emotions: ${vocabulary.emotions.join(', ')}. Actions: ${vocabulary.actions.join(', ')}; actions are proposals, and the server owns courses and outcomes.`,
+    `Emotions: ${vocabulary.emotions.join(', ')}.`,
     `social.signal is one of ${vocabulary.signals.join(', ')} with a factual reason of at most 180 characters; pressure means explicit disregard for a boundary, not ordinary disagreement. Set wantsToLeave only after repeated pressure; the server handles departure.`,
     `"memory" is your private notebook: rewrite "Your notes" from the latest message with this exchange, at most ${CONTRACT_MEMORY_CHARS} characters, in exactly three labelled parts. ${MEMORY_PARTS}`,
     'No invented human statements, numeric scores, markdown or speech-direction tags in text.',

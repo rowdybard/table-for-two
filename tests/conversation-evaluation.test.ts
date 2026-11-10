@@ -468,3 +468,35 @@ test('Double evaluation clarification cites only the addressed date actually hea
     else assert.match(note, /still speaking|cut off/);
   }
 });
+
+test('Double evaluation keeps friend names and incidental date mentions out of AI clarification attribution', () => {
+  const source = SHORT_EVALUATION_SCRIPTS.find(s => s.mode === 'double')!;
+  const lines = [{ speaker: 'd1', text: 'I collect tiny railway maps.', emotion: 'amused' }, { speaker: 'd2', text: 'I keep the misprinted ones.', emotion: 'warm' }];
+  for (const [humanNames, target, text, expected] of [
+    [{ h1: 'Alex', h2: 'Mira' }, 'h2', 'Mira, what do you mean?', null],
+    [{ h1: 'Alex', h2: 'Mira' }, 'table', 'Mira, what do you mean?', null],
+    [{ h1: 'Alex', h2: 'Casey' }, 'table', 'Casey, what do you mean?', null],
+    [{ h1: 'Alex', h2: 'Casey' }, 'd1', 'Jules said something about maps. What do you mean?', 'Mira'],
+    [{ h1: 'Alex', h2: 'Casey' }, 'd1', 'Mira and Jules, what do you mean?', 'Mira'],
+  ] as const) {
+    const fixture = { ...source, dateIds: ['mira', 'jules'] as const, humanNames, turns: [{ text: 'Hello both of you.', human: 'h1' as const, target: 'table' as const }, { text, human: 'h1' as const, target }] };
+    const runtime = new EvaluationConversation(fixture, 'claude-haiku-5-5');
+    runtime.request(0); runtime.commit(0, runtime.validate(doubleResponse('', '', lines)));
+    const note = runtime.request(1).messages.at(-1)!.content;
+    if (expected) assert.match(note, new RegExp(`asking about ${expected}`));
+    else assert.doesNotMatch(note, /asking about/, `${target}: ${text}`);
+  }
+});
+
+test('Double evaluation does not attribute a friend’s unanswered line to an earlier AI reply', () => {
+  const source = SHORT_EVALUATION_SCRIPTS.find(s => s.mode === 'double')!;
+  const fixture = { ...source, dateIds: ['mira', 'jules'] as const, turns: [
+    { text: 'Tell us something.', human: 'h1' as const, target: 'table' as const },
+    { text: 'My house is a lighthouse, apparently.', human: 'h2' as const, target: 'table' as const },
+    { text: 'What do you mean?', human: 'h1' as const, target: 'table' as const },
+  ] };
+  const runtime = new EvaluationConversation(fixture, 'claude-haiku-5-5');
+  runtime.request(0); runtime.commit(0, runtime.validate(doubleResponse('', '', [{ speaker: 'd1', text: 'I collect tiny railway maps.', emotion: 'amused' }])));
+  runtime.request(1); runtime.commit(1, runtime.validate(doubleResponse('', '', [])));
+  assert.doesNotMatch(runtime.request(2).messages.at(-1)!.content, /asking about Mira|asking about Jules/);
+});

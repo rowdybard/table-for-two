@@ -58,7 +58,7 @@ export function doubleOutputContract(vocabulary: { emotions: readonly string[]; 
   return [
     'OUTPUT. Return exactly one JSON object matching the schema and nothing else: "utterances" first (the spoken lines, written as the people they are, for the friends at the table), then "dateUpdates" with exactly one entry for d1 and one for d2, filled in from what was actually said; never bend a line to fit a field.',
     'Date text is about 25 words, under 260 characters (up to about 60 words for a story or explanation someone asked for); the server discards a line over 420. Only d1 and d2 may speak.',
-    'When nothing happened for a date, use social {signal none, reason “No change in boundaries.”, wantsToLeave false, boundary {kind none, topic other, refusal “”, evidence “”}} and agenda {signal none, evidence “”, clue “”}. For a date who is offstage return emotion neutral, those same empty values and an empty memory; the server ignores that entry.',
+    'When nothing happened for a date, use social {signal none, reason “No change in boundaries.”, wantsToLeave false, boundary {kind none, topic other, refusal “”, evidence “”}}. Always set each date’s agenda to {signal none, evidence “”, clue “”}; this seated conversation has no agenda milestones. For a date who is offstage return emotion neutral, those same empty values and an empty memory; the server ignores that entry.',
     `Emotions: ${vocabulary.emotions.join(', ')}. social.signal is one of ${vocabulary.signals.join(', ')} with a factual reason of at most 180 characters; pressure means explicit disregard for a boundary, not ordinary disagreement and not merely talking to the other friend. Set wantsToLeave only after repeated pressure; the server handles departure. Each date’s emotion and social update are their own.`,
     `"memory" is that date’s private notebook: rewrite their notes from the latest message with this exchange, at most ${CONTRACT_MEMORY_CHARS} characters, in exactly three labelled parts. ${MEMORY_PARTS} “HUMAN:” is what their own friend told them; add what the other friend said only when it matters to them, marked with that friend’s name.`,
     'No invented human statements, numeric scores, markdown or speech-direction tags in text.',
@@ -163,6 +163,8 @@ export function doubleConversationFlow(input: {
   lines: readonly { id: string; speaker: string; text: string }[];
   human: DoubleHumanId; target: ConversationTarget; text: string; quietSeconds: number;
   dateNames: Record<DoubleDateActorId, string>;
+  /** Raw friend names let a table-wide mention stay ambiguous when a friend and a date share one. */
+  humanNames?: readonly string[];
   available(actor: DoubleDateActorId): boolean;
   heard(lineId: string, human: DoubleHumanId): Playback;
 }): DoubleFlow {
@@ -185,13 +187,27 @@ export function doubleConversationFlow(input: {
   else if (reply.length && reply.every(line => !heardBy(line)?.completed && !heardBy(line)?.playedSeconds)) flow.keptTalking = true;
   // A quiet table is one where nobody was speaking: talking over a line or past a reply that never played is the opposite.
   if (turn.quiet >= QUIET_GAP_SECONDS && !flow.talkedOver && !flow.keptTalking) flow.quietSeconds = turn.quiet;
-  // "What do you mean?" is about the line of the date they named, else the one they were talking to, else (said to the table)
-  // whoever last spoke among the dates still in the conversation. Said to the other friend, it is about nothing a date said.
+  // A friend target is never reassigned to a date. An unambiguous vocative can
+  // refine a date target; incidental names cannot silently change the addressee.
   const heardDates = [...input.lines].reverse().filter(line => actors.includes(line.speaker as DoubleDateActorId) && input.available(line.speaker as DoubleDateActorId) && heardBy(line)?.completed);
   const lineOf = (id: string) => heardDates.find(line => line.speaker === id);
   const target = turn.request.target as string, spoken = turn.request.text.toLowerCase();
-  const named = actors.find(id => new RegExp(`(?:^|[^\\p{L}])${dateNames[id].toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}])`, 'u').test(spoken));
-  const last = named ? lineOf(named) : humans.includes(target as DoubleHumanId) ? undefined : actors.includes(target as DoubleDateActorId) ? lineOf(target) : heardDates[0];
+  const escapedName = (name: string) => name.trim().toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const addressedByName = (name: string) => new RegExp(`^(?:hey[ ,]+)?${escapedName(name)}(?:\\s*[,!?]|\\s+(?:what|why|how|can|could|would|did|do|are|is|sorry|huh)\\b)|[,!?]\\s*${escapedName(name)}[?.!\\s]*$`, 'u').test(spoken.trim());
+  const mentions = actors.filter(id => new RegExp(`(?:^|[^\\p{L}])${escapedName(dateNames[id])}(?![\\p{L}])`, 'u').test(spoken));
+  const named = mentions.length === 1 ? mentions[0] : undefined;
+  const collidesWithFriend = named && input.humanNames?.some(name => name.trim().toLowerCase() === dateNames[named].toLowerCase());
+  const vocative = named && addressedByName(dateNames[named]);
+  const addressedFriend = input.humanNames?.some(addressedByName);
+  const dateTarget = actors.includes(target as DoubleDateActorId);
+  const selected = named && !collidesWithFriend && (!dateTarget || vocative) ? named : dateTarget ? target : undefined;
+  // The incoming human line is already in live state.lines. History identifies
+  // the other person who last spoke, even when a friend got no AI reply. The
+  // speaker's own follow-up questions do not replace the line being clarified.
+  const prior = [...input.history].reverse().find(entry => entry.human && entry.human !== input.human || entry.lines?.length);
+  const priorLine = prior?.human ? undefined : prior?.lines?.at(-1);
+  const implicit = priorLine?.id === heardDates[0]?.id ? heardDates[0] : undefined;
+  const last = humans.includes(target as DoubleHumanId) || !dateTarget && addressedFriend ? undefined : selected ? lineOf(selected) : mentions.length ? undefined : implicit;
   if (last) flow.lastDateLine = { by: dateNames[last.speaker as DoubleDateActorId], text: last.text };
   return flow;
 }
