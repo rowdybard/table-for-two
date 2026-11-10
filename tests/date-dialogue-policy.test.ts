@@ -106,3 +106,19 @@ test('all supported prop families remain bounded and normalization catches forma
   assert.equal(new Set(topics).size, topics.length);
   assert.deepEqual(dialogueLoopContext([dateLine('That ＦＥＲＮ looks good.'), dateLine('Those plants look good.')], 'I wanted to discuss my plans.'), { avoidUnpromptedTopics: ['plants and foliage'] });
 });
+
+test('a thing the date keeps returning to is stopped, even when the human asks what they are talking about', () => {
+  const fern = [dateLine('That fern by the window is judging us.'), dateLine('The fern again. It has opinions about your order.'), dateLine('Oh, haha, the fern. It keeps catching my eye.')];
+  const asked = dialogueLoopContext(fern, 'What are you talking about?').avoidUnpromptedTopics;
+  assert.ok(asked.some(item => /^“fern” \(you have said it in nearly every reply: leave the word out of this one even if they mention it/.test(item)), JSON.stringify(asked));
+  const pressed = dialogueLoopContext(fern, 'Why do you keep talking about the fern?').avoidUnpromptedTopics;
+  assert.ok(pressed.some(item => item.startsWith('“fern” (you have said it in nearly every reply')), 'asking about it does not reopen it');
+
+  // Any repeated image counts, not only listed props: twice in the last three replies is held back unless the human raises it.
+  const signal = [dateLine('If I guess what the train needs, it derails. I check the signal.'), dateLine('So are you waving from the platform?'), dateLine('I verify the signal before I commit.')];
+  assert.deepEqual(dialogueLoopContext(signal, 'I like a little uncertainty.').avoidUnpromptedTopics, ['“signal”']);
+  assert.deepEqual(dialogueLoopContext(signal, 'Tell me more about the signal box.').avoidUnpromptedTopics, [], 'the human asked for it');
+  // Ordinary words and a single mention never trigger it.
+  const plain = [dateLine('I think you are right about that.'), dateLine('I really think that is something people say.'), dateLine('What do you think about tonight?')];
+  assert.deepEqual(dialogueLoopContext(plain, 'Not much.').avoidUnpromptedTopics, []);
+});
