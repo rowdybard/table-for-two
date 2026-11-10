@@ -1,6 +1,10 @@
 # Conversation depth: persistent implementation goal
 
-Status: **active**. The table-only update and continuity follow-up are merged to `main` through PR #15 (`4afdaec`) and deployed. Human quality review remains outstanding.
+Status: **active**. The table-only update and continuity follow-ups are merged through PR #16 (`2699ceb`) and deployed. Human quality review remains outstanding.
+
+Latest verification: [CI run 42863741978](https://github.com/rowdybard/table-for-two/actions/runs/42863741978) passed 620 provider-disabled unit/controller tests and 37 browser cases (one WebKit-only skip) at frozen `6b7e6c4`. Worker `dd330837-caa0-4f5a-b213-3a1f540ebe98` is live. Covered captions no longer create completed receipts, actual audio remains independent, inactive resizes defer, table-only prompts keep legacy action/agenda fields neutral, and Double clarification respects friend targets and the participant who last spoke. Captures were reviewed and 17 live public paths verified with zero model/speech calls. Offline comparison of 2,640 request pairs remains within the 600-token allowance. The original baseline bench was unchanged.
+
+Remaining acceptance evidence is absent: the 60-script matched capture is incomplete, both saved human-review packets are still unrated, and actual low-end hardware performance has not been measured. Running the offline human gate on the preserved pilot reports returns blocked for missing independent human attestations; this is not a failed conversation-quality score. The prior closed pilot caps authorize no new requests. The owner’s original phone subtitle disappearance also remains unreproduced.
 
 The latest follow-up passed 608 provider-disabled unit/controller tests and 35 browser cases (one WebKit-only skip) in [CI run 42859830760](https://github.com/rowdybard/table-for-two/actions/runs/42859830760). Worker `f918c83a-fb62-42d6-a574-53e1c59f9581` preserves the table-only flow, keys and runtime namespace. Standalone stop requests retire shared premises; Solo evaluation no longer confuses older heard replies with newer interrupted/unheard replies or adds a contradictory quiet-gap note. Three real-audio Android caption captures were reviewed, but the owner's missing-caption report remains unreproduced. No live model or speech calls were spent.
 
