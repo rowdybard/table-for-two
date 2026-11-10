@@ -1,7 +1,9 @@
 import { createServer, type Server } from 'node:http';
-import { readFile, mkdir } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { readFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { extname, resolve, sep } from 'node:path';
-import { test, expect, type Page, type Route } from '@playwright/test';
+import { chromium, test, expect, type Browser, type Page, type Route } from '@playwright/test';
 import { attachRestaurantServer, type ClaudeAdapter } from '../server/restaurant';
 import type { ClaudeModel, DinnerState, SceneTurn } from '../src/restaurant/types';
 import { captureRestaurantScene, reloadRestaurantScene, waitForRestaurantScene } from './restaurant-browser-helpers';
@@ -703,7 +705,64 @@ test('failed typed turns keep the player draft and can be retried', async ({ pag
 
 });
 
-// Playwright otherwise forces every Chromium page to report focus, even in headed mode.
+/** Attach to a real Chromium default context without Playwright's focus emulation. */
+async function openRealTabBrowser() {
+  const profile = await mkdtemp(resolve(tmpdir(), 'table-lifecycle-'));
+  const child = spawn(chromium.executablePath(), [
+    '--no-sandbox', '--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1',
+    `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
+    '--disable-background-networking', '--disable-component-update', '--disable-sync',
+    '--window-size=1280,800',
+    ...(process.env.LFS_SOFTWARE_GPU === '1' ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : []),
+    'about:blank',
+  ], { stdio: ['ignore', 'ignore', 'pipe'] });
+  let browser: Browser | undefined;
+  const waitForExit = async (ms: number) => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    await new Promise<void>(resolve => {
+      const done = () => { clearTimeout(timer); child.off('exit', done); resolve(); };
+      const timer = setTimeout(done, ms); child.once('exit', done);
+    });
+  };
+  const close = async () => {
+    if (browser) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([browser.close().catch(() => {}), new Promise<void>(resolve => { timer = setTimeout(resolve, 2000); })]);
+      clearTimeout(timer);
+    }
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGTERM');
+      await waitForExit(3000);
+      if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await waitForExit(2000); }
+    }
+    await rm(profile, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  };
+  try {
+    const endpoint = await new Promise<string>((resolve, reject) => {
+      let output = '';
+      const timeout = setTimeout(() => finish(new Error('Chromium did not expose its debugging endpoint.')), 20000);
+      const finish = (error?: Error, url?: string) => {
+        clearTimeout(timeout); child.stderr.off('data', data); child.off('error', failed); child.off('exit', exited);
+        child.stderr.resume();
+        if (error) reject(error); else resolve(url!);
+      };
+      const data = (chunk: Buffer) => {
+        output = (output + chunk.toString()).slice(-16384);
+        const match = output.match(/DevTools listening on (ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[\w-]+)/);
+        if (match) finish(undefined, match[1]);
+      };
+      const failed = (error: Error) => finish(error);
+      const exited = () => finish(new Error('Chromium exited before its debugging endpoint was ready.'));
+      child.stderr.on('data', data); child.once('error', failed); child.once('exit', exited);
+    });
+    browser = await chromium.connectOverCDP(endpoint, { noDefaults: true, timeout: 20000 });
+    const context = browser.contexts()[0], page = context?.pages()[0];
+    if (!context || !page) throw new Error('Chromium did not provide its default context and initial tab.');
+    return { page, close };
+  } catch (error) { await close(); throw error; }
+}
+
+// Assert the window identity as well as actual visibility; emulation is disabled on the default context.
 async function useRealTabFocus(...pages: Page[]) {
   const windows: number[] = [];
   for (const page of pages) {
@@ -723,9 +782,12 @@ async function openCompanionTab(page: Page) {
   return companion;
 }
 
-test('a newly opened background tab defers WebGL until it is activated', async ({ page, browserName }) => {
+test('a newly opened background tab defers WebGL until it is activated', async ({ browserName }) => {
   test.skip(browserName !== 'chromium', 'This check uses real Chromium tab visibility and focus.');
   test.setTimeout(90000);
+  const real = await openRealTabBrowser();
+  try {
+  const page = real.page;
   const background = await openCompanionTab(page);
   await background.addInitScript(() => {
     const win = window as Window & { __webglInitializations?: number };
@@ -768,10 +830,14 @@ test('a newly opened background tab defers WebGL until it is activated', async (
     await expect.poll(async () => (await state(background)).seated).toBe(true);
     await expect(background.locator('.restaurant-canvas')).toHaveCount(1);
   } finally { releaseEntry(); await background.close(); }
+  } finally { await real.close(); }
 });
 
-test('background tab stops work and resumes the same paused date without replaying a pending turn', async ({ page, browserName }) => {
+test('background tab stops work and resumes the same paused date without replaying a pending turn', async ({ browserName }) => {
   test.skip(browserName !== 'chromium', 'This check uses Chromium tab visibility and WebGL instrumentation.');
+  const real = await openRealTabBrowser();
+  try {
+  const page = real.page;
   test.setTimeout(120000); page.setDefaultTimeout(12000);
   await installMobileGLDiagnostics(page);
   await page.addInitScript(() => {
@@ -844,6 +910,7 @@ test('background tab stops work and resumes the same paused date without replayi
     await expect.poll(() => calls.length).toBe(beforeCalls + 2);
     await expect(page.locator('#conversation-log')).toContainText('A fresh turn after returning.');
   } finally { lifecycleWaitGate = undefined; await other.close(); }
+  } finally { lifecycleWaitGate = undefined; await real.close(); }
 });
 
 test('a persisted page departure returns to the same usable paused dinner', async ({ page }) => {
