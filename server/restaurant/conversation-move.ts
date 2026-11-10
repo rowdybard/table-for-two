@@ -180,7 +180,7 @@ export function conversationMove(input: MoveInput): string {
   if (has('joke') && !has('question')) out.push('They are joking around: play along or top it with something specific before you get serious.');
   if (has('disclosure')) out.push(`They told you something real: respond to the specific detail first, by name. Then ${askingLately ? 'share a small parallel of your own' : 'ask one follow-up about it or share a small parallel of your own'}; no advice unless they ask.`);
   if (has('opinion')) out.push('They gave an opinion: take a side with your own reason; agreeing is fine, and friendly friction is fun.');
-  if (has('share')) out.push(`They told you a fact about themselves: react to that exact detail with your own take or a matching piece of your life${askingLately ? ', and don’t follow it with another question' : ''}; never ask for what they just told you.`);
+  if (has('share')) out.push(`They told you a fact about themselves: react to that exact detail with your own take or a matching piece of your real life (never invent a pet, relative, job or hobby to match theirs)${askingLately ? ', and don’t follow it with another question' : ''}; never ask for what they just told you.`);
   if (has('short')) out.push(previousShort >= 1 || askingLately
     ? 'Their answers are getting short and you have been doing the asking: stop interviewing and take the lead with your own story, opinion or tease, something easy to react to.'
     : 'Short answer: pick up one thing in it and add something of your own (an opinion, a small story, a tease) so they have something easy to answer. Don’t just acknowledge it.');

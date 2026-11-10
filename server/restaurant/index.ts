@@ -156,7 +156,7 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
   const speechProvider = opts.speech && env.DATE_SPEECH_PROVIDER !== 'edge' ? 'elevenlabs' : env.DATE_SPEECH_PROVIDER === 'elevenlabs' ? 'elevenlabs' : env.DATE_SPEECH_PROVIDER === 'none' ? 'none' : 'edge';
   const speech = opts.speech ?? (speechProvider === 'edge' ? edgeSpeechAdapter() : elevenLabsAdapter(env));
   const sessionLimit = numberEnv(env, 'DATE_SESSION_LIMIT_USD', 2, .01, 100), dailyLimit = numberEnv(env, 'DATE_DAILY_LIMIT_USD', 10, .01, 1000);
-  const maxTokens = Math.floor(numberEnv(env, 'DATE_MAX_OUTPUT_TOKENS', 700, 200, 1500)), timeoutMs = opts.requestTimeoutMs ?? numberEnv(env, 'DATE_REQUEST_TIMEOUT_MS', 25_000, 1000, 60_000);
+  const maxTokens = Math.floor(numberEnv(env, 'DATE_MAX_OUTPUT_TOKENS', 700, 200, 1500)), tableMaxTokens = Math.min(1500, Math.ceil(maxTokens * 10 / 7)), timeoutMs = opts.requestTimeoutMs ?? numberEnv(env, 'DATE_REQUEST_TIMEOUT_MS', 25_000, 1000, 60_000);
   const timeoutFor = (model: ClaudeModel) => model === HORDE_MODEL ? opts.requestTimeoutMs ?? numberEnv(env, 'AI_HORDE_TIMEOUT_MS', 60_000, 1000, 120_000) : timeoutMs;
   const speechRate = speechProvider === 'edge' || speechProvider === 'none' ? 0 : numberEnv(env, 'DATE_SPEECH_COST_PER_1K', .04, .001, 10) / 1000;
   const development = opts.development ?? env.NODE_ENV !== 'production';
@@ -353,7 +353,9 @@ export async function attachRestaurantServer(_http: Server, opts: RestaurantOpti
       if (closed) throw apiError(503, 'server_closed', 'The date server is shutting down.');
       if (!status().claude) throw apiError(503, 'claude_unconfigured', 'Live conversation is unavailable. Scene interactions remain playable.');
       if (!selectableModels.includes(request.model)) throw apiError(400, 'invalid_model', 'That model is unavailable on this server.');
-      const bounded = { ...request, maxTokens: Math.min(maxTokens, Math.max(200, request.maxTokens)) };
+      // A shared-table reply carries two dates' lines and both notebooks, so it gets proportionally more room than a
+      // Solo reply (1000 at the default 700). The operator's ceiling still scales it and the reservation below uses it.
+      const bounded = { ...request, maxTokens: Math.min(tableMaxTokens, Math.max(200, request.maxTokens)) };
       const estimatedInput = Buffer.byteLength(bounded.system + JSON.stringify(bounded.messages) + (isEarnedModel(request.model) || request.model === HORDE_MODEL ? openRouterSchemaInstructions(request.outputSchema ?? TURN_SCHEMA) : ''), 'utf8') + 512;
       const amount = costOf(request.model, { inputTokens: estimatedInput, outputTokens: bounded.maxTokens, cacheReadTokens: 0, cacheWriteTokens: estimatedInput });
       const day = await reserveAccount(account, amount);
