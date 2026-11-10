@@ -17,10 +17,12 @@ import { ACTIONS, EMOTIONS, SOCIAL_SIGNALS } from '../server/restaurant/provider
 import { presetDateSheet } from '../server/double-date/table-note';
 import { DOUBLE_TURN_SCHEMA } from '../server/double-date/conversation';
 import { evaluationProvenance } from '../scripts/lib/evaluation-provenance';
-import { evaluationModelSettings } from '../scripts/lib/conversation-evaluation';
+import { evaluationModelSettings, runConversationEvaluation } from '../scripts/lib/conversation-evaluation';
 import { createBaselineHordeAdapter } from '../scripts/lib/baseline-horde-compat';
 import { hordeAdapter } from '../server/restaurant/horde';
 import { TURN_SCHEMA, type ClaudeChunk, type ClaudeRequest } from '../server/restaurant/providers';
+import { DOLPHIN_MODEL } from '../src/restaurant/types';
+import { DOLPHIN_LLM_MODEL } from '../scripts/lib/baseline-direct-model';
 
 const BASE = '05ff06a5e5727fc99d78fe64469460ab286a4d0a';
 const normalize = (text: string) => text.replace(/\r\n/g, '\n');
@@ -83,14 +85,41 @@ test('baseline report provenance resolves the frozen evaluated code independentl
   assert.equal(hash(current(manifest.instrumentationPatch)), manifest.instrumentationSha256);
   for (const [path, expected] of Object.entries(manifest.copiedHarnessSha256)) assert.equal(hash(current(path)), expected, `${path} differs from the captured harness`);
   for (const [path, expected] of Object.entries(manifest.originalCopiedHarnessSha256)) assert.equal(hash(normalize(git('show', `${manifest.originalCopiedHarnessRevision}:${path}`))), expected, `${path} original harness differs`);
+  for (const [path, expected] of Object.entries(manifest.previousDolphinHarnessSha256)) assert.equal(hash(normalize(git('show', `${manifest.previousDolphinHarnessRevision}:${path}`))), expected, `${path} pre-Dolphin harness differs`);
+  assert.equal(manifest.previousCorpusFileSha256, manifest.previousDolphinHarnessSha256['src/restaurant/evaluation-fixtures.ts']);
   assert.equal(hash(current(manifest.bridgeCompatibility.originalAdapterPath)), manifest.bridgeCompatibility.originalAdapterSha256);
   assert.equal(hash(current(manifest.bridgeCompatibility.shimPath)), manifest.bridgeCompatibility.shimSha256);
   assert.equal(hash(normalize(git('show', `${manifest.bridgeCompatibility.previousShimRevision}:${manifest.bridgeCompatibility.shimPath}`))), manifest.bridgeCompatibility.previousShimSha256);
+  assert.equal(hash(current(manifest.openRouterCompatibility.originalAdapterPath)), manifest.openRouterCompatibility.originalAdapterSha256);
+  assert.equal(current(manifest.openRouterCompatibility.originalAdapterPath), original(manifest.openRouterCompatibility.originalAdapterPath), 'the OpenRouter adapter remains frozen');
+  assert.equal(hash(current(manifest.directCompatibility.adapterPath)), manifest.directCompatibility.adapterSha256);
+  assert.equal(hash(current(manifest.directCompatibility.modelPath)), manifest.directCompatibility.modelSha256);
+  const directSource = current(manifest.directCompatibility.adapterPath)
+    .replace("from '../../server/restaurant/providers'", "from './providers'")
+    .replace("from '../../server/restaurant/openrouter'", "from './openrouter'")
+    .replace("from './baseline-direct-model'", "from '../../src/restaurant/types'");
+  assert.equal(hash(directSource), manifest.directCompatibility.candidateAdapterSha256, 'the bench adapter changes only import paths');
   assert.equal(hash(current('src/restaurant/evaluation-fixtures.ts')), manifest.corpusFileSha256);
+  assert.equal(hash(JSON.stringify(EVALUATION_SCRIPTS)), manifest.selectedScriptsSha256, 'all 66 scripts remain unchanged');
+  const fixture = current('src/restaurant/evaluation-fixtures.ts')
+    .replace("import { DOLPHIN_MODEL, type ClaudeModel, type DateId, type TurnVia } from './types';\nimport { DOLPHIN_LLM_MODEL } from '../../scripts/lib/baseline-direct-model';", "import type { ClaudeModel, DateId, TurnVia } from './types';")
+    .replace("'claude-sonnet-5-5', 'ai-horde', DOLPHIN_MODEL, DOLPHIN_LLM_MODEL]", "'claude-sonnet-5-5', 'ai-horde']");
+  assert.equal(fixture, normalize(git('show', `${manifest.previousDolphinHarnessRevision}:src/restaurant/evaluation-fixtures.ts`)), 'only the evaluation model selection changed');
   const runtime = current('src/restaurant/evaluation-runtime.ts');
   assert.equal((runtime.match(/clampMemory\(turn\.memory, view\.memory\)/g) ?? []).length, 2);
   const restored = runtime.replaceAll('clampMemory(turn.memory, view.memory)', 'clampMemory(turn.memory, view.memory, input.text)');
   assert.equal(hash(restored), manifest.candidateRuntimeSha256, 'The compatibility adaptation must change only the two baseline memory calls.');
+});
+
+test('direct baseline capture uses the frozen earned prompt and changes only outgoing model identity', async () => {
+  const requests: ClaudeRequest[] = [];
+  const adapter = { async *stream(request: ClaudeRequest): AsyncGenerator<ClaudeChunk> { requests.push(request); throw new Error('offline fixture'); } };
+  for (const model of [DOLPHIN_MODEL, DOLPHIN_LLM_MODEL]) {
+    await runConversationEvaluation({ scripts: [EVALUATION_SCRIPTS[0]], models: [model], budgetUSD: 1, adapters: { [model]: adapter } });
+  }
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].model, DOLPHIN_MODEL); assert.equal(requests[1].model, DOLPHIN_LLM_MODEL);
+  assert.deepEqual({ ...requests[1], model: DOLPHIN_MODEL }, requests[0]);
 });
 
 test('bench bridge changes only context fit and response format and reports its actual route settings', async () => {

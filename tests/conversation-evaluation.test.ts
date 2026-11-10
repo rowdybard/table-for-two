@@ -12,6 +12,8 @@ import { DateApiError, TURN_SCHEMA, type ClaudeAdapter, type ClaudeRequest } fro
 import { DOUBLE_TURN_SCHEMA } from '../server/double-date/conversation';
 import { evaluationModelSettings, evaluationPreview, evaluationReservation, parseEvaluationOptions, runConversationEvaluation } from '../scripts/lib/conversation-evaluation';
 import { DEFAULT_HORDE_MODEL } from '../server/restaurant/horde';
+import { DOLPHIN_MODEL } from '../src/restaurant/types';
+import { DOLPHIN_LLM_MODEL } from '../scripts/lib/baseline-direct-model';
 
 const none = () => ({ signal: 'none', reason: 'No change in boundaries.', wantsToLeave: false, boundary: { kind: 'none', topic: 'other', refusal: '', evidence: '' } });
 const agenda = () => ({ signal: 'none', evidence: '', clue: '' });
@@ -197,8 +199,10 @@ test('all 660 authored turns execute through stateful production builders with i
 });
 
 test('the CI provider guard prevents a request before network access and fails even when the application catches it', () => {
-  const result = spawnSync(process.execPath, ['--import', new URL('./fixtures/evaluation-network-guard.mjs', import.meta.url).href, '--eval', "Promise.resolve().then(() => fetch('https://api.anthropic.com/v1/messages')).catch(() => {});"], { encoding: 'utf8', timeout: 5000 });
-  assert.equal(result.status, 86);
+  for (const url of ['https://api.anthropic.com/v1/messages', 'https://dolphinllm.com/v1/chat/completions']) {
+    const result = spawnSync(process.execPath, ['--import', new URL('./fixtures/evaluation-network-guard.mjs', import.meta.url).href, '--eval', `Promise.resolve().then(() => fetch('${url}')).catch(() => {});`], { encoding: 'utf8', timeout: 5000 });
+    assert.equal(result.status, 86);
+  }
 });
 
 test('report provenance is injected and baseline comparison remains explicitly unrated', async () => {
@@ -228,9 +232,13 @@ test('model settings record requested Horde identities and transport caps withou
   assert.equal(bridge.upstreamModel, 'fictional/configured-model'); assert.equal(bridge.transport, 'horde-openai');
   assert.equal(bridge.maxTokens, 700); assert.equal(bridge.effectiveMaxTokens, 512);
   assert.deepEqual(bridge.routingConfig?.requestedModels, ['fictional/configured-model']); assert.equal(bridge.routingConfig?.actualWorkerObserved, false);
+  assert.equal(bridge.routingConfig?.contextFit, 'grow');
+  assert.equal(bridge.routingConfig?.responseFormat, 'json_schema'); assert.equal(bridge.routingConfig?.schemaStrict, true);
   assert.equal(evaluationModelSettings(['ai-horde'])[0].upstreamModel, DEFAULT_HORDE_MODEL);
   const native = evaluationModelSettings(['ai-horde'], { ...env, AI_HORDE_TRANSPORT: 'native', AI_HORDE_TIMEOUT_MS: '999999' })[0];
   assert.equal(native.transport, 'horde-native'); assert.equal(native.providerTimeoutMs, 120000); assert.equal(native.upstreamModel, bridge.upstreamModel);
+  assert.equal(native.routingConfig?.contextFit, 'reject');
+  assert.equal('responseFormat' in native.routingConfig!, false); assert.equal('schemaStrict' in native.routingConfig!, false);
   const pool = evaluationModelSettings(['ai-horde'], { AI_HORDE_TRANSPORT: 'native' })[0];
   assert.equal(pool.upstreamModel, null); assert.equal(pool.routingConfig?.selection, 'reviewed-native-pool'); assert.equal(pool.routingConfig?.requestedModels, null);
   assert.ok(!JSON.stringify([bridge, native, pool]).includes('private-'));
@@ -249,4 +257,79 @@ test('baseline Solo and Double acceptance retain the original notebook clamp beh
     assert.match(runtime.views.h1.memory, /recommend a book next time/);
     if (original.mode === 'double') { assert.ok(runtime.views.h2.memory.includes('shared premise:')); assert.match(runtime.views.h2.memory, /recommend a book next time/); }
   }
+});
+
+
+test('Venice selection uses priced OpenRouter settings and keeps zero-budget runs free', async () => {
+  assert.deepEqual(parseEvaluationOptions([]).models, ['claude-haiku-5-5', 'claude-sonnet-5-5']);
+  assert.deepEqual(parseEvaluationOptions(['--models', 'venice']).models, [DOLPHIN_MODEL]);
+  assert.deepEqual(parseEvaluationOptions(['--models', 'dolphin']).models, [DOLPHIN_LLM_MODEL]);
+  assert.throws(() => parseEvaluationOptions(['--run', '--models', 'dolphin', '--budget', '0']), /only --models horde/);
+  assert.throws(() => parseEvaluationOptions(['--models', 'dolphin,imaginary-model']), /distinct models/);
+  let calls = 0;
+  const adapter: ClaudeAdapter = { async *stream() { calls++; throw new Error('unexpected'); } };
+  await assert.rejects(runConversationEvaluation({ scripts: [script], models: [DOLPHIN_MODEL], budgetUSD: 0, adapters: { [DOLPHIN_MODEL]: adapter } }), /zero budget/);
+  assert.equal(calls, 0);
+  const setting = evaluationModelSettings([DOLPHIN_MODEL], { OPENROUTER_API_KEY: 'secret-fixture' })[0];
+  assert.equal(setting.upstreamModel, DOLPHIN_MODEL); assert.equal(setting.transport, 'openrouter-chat-completions');
+  assert.equal(setting.maxTokens, 700); assert.equal(setting.effectiveMaxTokens, 700);
+  assert.deepEqual(setting.routingConfig, { selection: 'fixed-model', requestedModels: [DOLPHIN_MODEL], responseFormat: 'json_object', allowFallbacks: false, requireParameters: true });
+  assert.ok(!JSON.stringify(setting).includes('secret-fixture'));
+});
+
+test('Dolphin evaluation carries actual prior responses and notebook, prices usage, and does not fall back', async () => {
+  const requests: ClaudeRequest[] = [];
+  const adapter: ClaudeAdapter = { async *stream(request) {
+    requests.push(request);
+    yield { type: 'text', text: response('HUMAN: shares fries\nTOLD THEM: prefers honesty\nOPEN: ask about music') };
+    yield { type: 'usage', usage: { inputTokens: 100, outputTokens: 40 } };
+  } };
+  const report = await runConversationEvaluation({ scripts: [script], models: [DOLPHIN_MODEL], budgetUSD: 1, adapters: { [DOLPHIN_MODEL]: adapter } });
+  assert.equal(requests.length, 8); assert.equal(report.results[0].status, 'complete');
+  assert.equal(requests[0].model, DOLPHIN_MODEL); assert.equal(requests[0].maxTokens, 700);
+  const next = requests[1].messages.map(message => message.content).join('\n');
+  assert.match(next, /HUMAN: shares fries/); assert.match(next, /I would like to hear your actual answer/);
+  assert.equal(report.results[0].turns[0].reportedCostUSD, (100 * .20 + 40 * .90) / 1e6);
+  assert.equal(report.automaticRetries, 0); assert.equal(report.providerCallsPerHumanTurn, 1);
+  let fallbackCalls = 0, failedCalls = 0;
+  const failed: ClaudeAdapter = { async *stream() { failedCalls++; throw new Error('offline'); } };
+  const fallback: ClaudeAdapter = { async *stream() { fallbackCalls++; yield { type: 'text', text: response() }; } };
+  const failure = await runConversationEvaluation({ scripts: [script], models: [DOLPHIN_MODEL], budgetUSD: 1, adapters: { [DOLPHIN_MODEL]: failed, 'ai-horde': fallback } });
+  assert.equal(failedCalls, 1); assert.equal(fallbackCalls, 0); assert.equal(failure.results[0].status, 'failed');
+});
+
+test('direct Dolphin uses its own route, alias, explicit budget and input/output prices', async () => {
+  const setting = evaluationModelSettings([DOLPHIN_LLM_MODEL], { DOLPHIN_LLM_API_KEY: 'secret-fixture' })[0];
+  assert.equal(setting.upstreamModel, 'uncensored'); assert.equal(setting.transport, 'dolphinllm-chat-completions');
+  assert.deepEqual(setting.routingConfig, { selection: 'fixed-endpoint-and-model-alias', requestedModels: ['uncensored'], endpoint: 'https://dolphinllm.com/v1/chat/completions', responseFormat: 'json_object', temperature: .8, actualBaseModelObserved: false, actualProviderObserved: false });
+  assert.ok(!JSON.stringify(setting).includes('secret-fixture'));
+  const calls: ClaudeRequest[] = [];
+  const adapter: ClaudeAdapter = { async *stream(request) { calls.push(request); yield { type: 'text', text: response() }; yield { type: 'usage', usage: { inputTokens: 100, outputTokens: 40 } }; } };
+  const report = await runConversationEvaluation({ scripts: [script], models: [DOLPHIN_LLM_MODEL], budgetUSD: 1, adapters: { [DOLPHIN_LLM_MODEL]: adapter } });
+  assert.equal(calls.length, 8); assert.equal(report.results[0].status, 'complete');
+  assert.equal(report.results[0].turns[0].reportedCostUSD, (100 * .15 + 40 * .50) / 1e6);
+  assert.equal(report.automaticRetries, 0); assert.equal(report.providerCallsPerHumanTurn, 1);
+});
+
+test('Dolphin CLI checks only the selected provider credentials after dry run', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'date-dolphin-eval-'));
+  const cli = resolve('scripts/compare-date-models.ts');
+  const launch = (env: NodeJS.ProcessEnv, ...args: string[]) => spawnSync(process.execPath, ['--import', import.meta.resolve('tsx'), '--import', new URL('./fixtures/evaluation-network-guard.mjs', import.meta.url).href, cli, '--scripts', script.id, ...args], { cwd: directory, env, encoding: 'utf8', timeout: 20000 });
+  try {
+    const empty = { ...process.env, ANTHROPIC_API_KEY: '', OPENROUTER_API_KEY: '', DOLPHIN_LLM_API_KEY: '', DATE_HAIKU_MODEL: 'unpriced-alias' };
+    const dry = launch(empty, '--models', 'venice'); assert.equal(dry.status, 0, dry.stderr); assert.match(dry.stdout, /zero API calls/);
+    const missing = launch(empty, '--models', 'venice', '--run', '--budget', '1'); assert.notEqual(missing.status, 0); assert.match(missing.stderr, /OPENROUTER_API_KEY is missing/);
+    const funded = launch({ ...empty, OPENROUTER_API_KEY: 'synthetic-key' }, '--models', 'venice', '--run', '--budget', '.0000001');
+    assert.equal(funded.status, 0, funded.stderr); const report = JSON.parse(await readFile(join(directory, '.qa', 'date-model-comparison.json'), 'utf8'));
+    assert.equal(report.requests, 0); assert.equal(report.results[0].status, 'budget_exhausted'); assert.ok(!JSON.stringify(report).includes('synthetic-key'));
+    const anthropic = launch({ ...empty, OPENROUTER_API_KEY: 'synthetic-key' }, '--models', 'haiku', '--run', '--budget', '1');
+    assert.notEqual(anthropic.status, 0); assert.match(anthropic.stderr, /ANTHROPIC_API_KEY is missing/);
+    const unpriced = launch({ ...empty, ANTHROPIC_API_KEY: 'synthetic-key' }, '--models', 'haiku', '--run', '--budget', '1');
+    assert.notEqual(unpriced.status, 0); assert.match(unpriced.stderr, /Custom model aliases are not covered/);
+    const missingDirect = launch({ ...empty, OPENROUTER_API_KEY: 'synthetic-key' }, '--models', 'dolphin', '--run', '--budget', '1');
+    assert.notEqual(missingDirect.status, 0); assert.match(missingDirect.stderr, /DOLPHIN_LLM_API_KEY is missing/);
+    const direct = launch({ ...empty, DOLPHIN_LLM_API_KEY: 'synthetic-key' }, '--models', 'dolphin', '--run', '--budget', '.0000001');
+    assert.equal(direct.status, 0, direct.stderr); const directReport = JSON.parse(await readFile(join(directory, '.qa', 'date-model-comparison.json'), 'utf8'));
+    assert.equal(directReport.requests, 0); assert.equal(directReport.results[0].status, 'budget_exhausted');
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });

@@ -10,14 +10,14 @@
     "server/restaurant/index.ts"
   ],
   "instrumentationPatch": "docs/conversation-baseline-instrumentation.patch",
-  "corpusFileSha256": "c23e5c9527147fbbf7fd7f48eb849ea6ae11edbe21f9ac3b4ea33444a21d6f4f",
+  "corpusFileSha256": "b22ed946c4157d489bdfd6e143400fa6496e167f19b064b26df8f670eb60b60b",
   "copiedHarnessSha256": {
     "src/restaurant/evaluation.ts": "ef82ff8973909025988789eaba326ee5638b7ef153c6ff879182e3863d98a1a4",
-    "src/restaurant/evaluation-fixtures.ts": "c23e5c9527147fbbf7fd7f48eb849ea6ae11edbe21f9ac3b4ea33444a21d6f4f",
-    "scripts/compare-date-models.ts": "3f5b1cd79bc1aa00b8dc749a2ac260d7f1ff4e82acc6a2781c042a42efd32eeb",
-    "scripts/lib/conversation-evaluation.ts": "87fb9e0d817b47dc2bc27f9c6f558da2ce6d74b03ac2e2c738c06f57a0e0c138",
-    "scripts/lib/evaluation-provenance.ts": "18fe850a5579a35f96767197a564c85014263422cfedfa01519f93c0ac80b935",
-    "tests/fixtures/evaluation-network-guard.mjs": "53f3b40ea9581edb4b25bb75e3e3ad4cb85e7c44048b9021b071c53c1a4f7fff"
+    "src/restaurant/evaluation-fixtures.ts": "b22ed946c4157d489bdfd6e143400fa6496e167f19b064b26df8f670eb60b60b",
+    "scripts/compare-date-models.ts": "6ca783fe5386544ec5ef51d46e3992a8fc1d6ae2e4babb1560eb134e4a797e79",
+    "scripts/lib/conversation-evaluation.ts": "350cd0d677beb09560c4bb808c61dec0342ba13265e46b1ca5c89c95331e8344",
+    "scripts/lib/evaluation-provenance.ts": "19b27b196c5ca16f0e7fbe0fd9b2840099e4fe6639708c46f62a8d3e7dee5338",
+    "tests/fixtures/evaluation-network-guard.mjs": "bce5e6658132a5aebe2105fd13b59dacb14f9cf365e0949dfd3557c44e6499ea"
   },
   "runtimeCompatibility": "The identical evaluation runtime calls the baseline two-argument clampMemory at both acceptance sites. All other runtime lines are copied unchanged. Baseline content, prompts, notes, transcripts and controllers are retained.",
   "verification": "Mock-only corpus and source-extraction parity tests. No live outputs, quality ratings, server, browser, synthesis or deployment.",
@@ -49,5 +49,37 @@
     },
     "previousShimSha256": "56ab857680b1a4c4872a1013507df74d9c695471d56bd0d0d0a2e998d62e4bfd",
     "previousShimRevision": "27a2f8c2cea7edd0cc81030aebcbf7b4ea04eb76"
+  },
+  "previousDolphinHarnessRevision": "124f0572ea53de86205001819c4ca537b6b2c78e",
+  "previousDolphinHarnessSha256": {
+    "src/restaurant/evaluation-fixtures.ts": "c23e5c9527147fbbf7fd7f48eb849ea6ae11edbe21f9ac3b4ea33444a21d6f4f",
+    "scripts/compare-date-models.ts": "3f5b1cd79bc1aa00b8dc749a2ac260d7f1ff4e82acc6a2781c042a42efd32eeb",
+    "scripts/lib/conversation-evaluation.ts": "87fb9e0d817b47dc2bc27f9c6f558da2ce6d74b03ac2e2c738c06f57a0e0c138"
+  },
+  "previousCorpusFileSha256": "c23e5c9527147fbbf7fd7f48eb849ea6ae11edbe21f9ac3b4ea33444a21d6f4f",
+  "selectedScriptsSha256": "6e05e434488de1f5ff02b2f8c494cf390f21e9d4302b67b465a72518b816cfe9",
+  "openRouterCompatibility": {
+    "scope": "baseline benchmark CLI uses frozen production OpenRouter adapter",
+    "originalAdapterPath": "server/restaurant/openrouter.ts",
+    "originalAdapterSha256": "713e5d3de7879123d2707e34f8b4396a4d91af0bb9420c99bedcb6e788aeed8f",
+    "shim": false
+  },
+  "preDirectPreparedHarnessSha256": {
+    "src/restaurant/evaluation-fixtures.ts": "197b83e7d353c6ca2f4019f32998dbfa81e937708ecad70fa2e04373438a26e8",
+    "scripts/compare-date-models.ts": "827c852b7a3c49e4c2ddfd6d45bbb98137bd1f7de197a4d94965a060383335fd",
+    "scripts/lib/conversation-evaluation.ts": "4c29ff6e093dfa78fa8d424ffdccff1475820e2be697146094419af9bbbf6f09",
+    "scripts/lib/evaluation-provenance.ts": "18fe850a5579a35f96767197a564c85014263422cfedfa01519f93c0ac80b935",
+    "tests/fixtures/evaluation-network-guard.mjs": "53f3b40ea9581edb4b25bb75e3e3ad4cb85e7c44048b9021b071c53c1a4f7fff"
+  },
+  "directCompatibility": {
+    "scope": "baseline benchmark only; direct adapter copies candidate implementation with imports adapted, old earned prompt identity for prompt construction only",
+    "adapterPath": "scripts/lib/baseline-dolphin-llm.ts",
+    "adapterSha256": "0cb22f95939d2171f6a0e881c1f1f197bf05d7424df790599dac2dc5d97f7669",
+    "modelPath": "scripts/lib/baseline-direct-model.ts",
+    "modelSha256": "74692ff392f3e855577fcfef8a6a701f72f6b24b5f79f5b51824f939e71eff95",
+    "candidateAdapterSha256": "29e9ad2b2aef09d041d12ea7dfc683b836c9a280c6d1cb8135d353ee9e8d3636",
+    "requestedModel": "uncensored",
+    "actualBaseModelObserved": false,
+    "actualProviderObserved": false
   }
 }

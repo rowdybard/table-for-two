@@ -3,7 +3,7 @@
 import http from 'node:http';
 import https from 'node:https';
 import { syncBuiltinESMExports } from 'node:module';
-const provider = /(?:^|\.)(?:anthropic\.com|openrouter\.ai|aihorde\.net|elevenlabs\.io|msedgeservices\.com|speech\.platform\.bing\.com)$/i;
+const provider = /(?:^|\.)(?:anthropic\.com|openrouter\.ai|dolphinllm\.com|aihorde\.net|dolphinllm\.com|elevenlabs\.io|msedgeservices\.com|speech\.platform\.bing\.com)$/i;
 const blocked = new Set();
 function check(input) {
   let host = '';

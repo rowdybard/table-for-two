@@ -35,6 +35,17 @@ test('baseline provenance separates evaluated code from its clean harness and re
     await writeFile(join(directory, 'scripts', 'lib', 'baseline-horde-compat.ts'), 'changed\n');
     assert.throws(() => evaluationProvenance(directory), /bridge compatibility differs/);
     await writeFile(join(directory, 'scripts', 'lib', 'baseline-horde-compat.ts'), shim);
+    const direct = "import {} from '../../server/restaurant/providers';\nimport {} from '../../server/restaurant/openrouter';\nimport {} from './baseline-direct-model';\n";
+    const directOriginal = direct.replace("from '../../server/restaurant/providers'", "from './providers'").replace("from '../../server/restaurant/openrouter'", "from './openrouter'").replace("from './baseline-direct-model'", "from '../../src/restaurant/types'");
+    const model = 'export const model = true;\n';
+    await writeFile(join(directory, 'scripts', 'lib', 'baseline-dolphin-llm.ts'), direct);
+    await writeFile(join(directory, 'scripts', 'lib', 'baseline-direct-model.ts'), model);
+    const directCompatibility = { adapterPath: 'scripts/lib/baseline-dolphin-llm.ts', adapterSha256: digest(direct), candidateAdapterSha256: digest(directOriginal), modelPath: 'scripts/lib/baseline-direct-model.ts', modelSha256: digest(model) };
+    await writeFile(join(directory, 'docs', 'conversation-baseline-bench.json'), JSON.stringify({ ...manifest, bridgeCompatibility, directCompatibility }));
+    assert.equal(evaluationProvenance(directory).evaluatedSourceRevision, evaluatedSourceRevision);
+    await writeFile(join(directory, 'scripts', 'lib', 'baseline-direct-model.ts'), 'changed\n');
+    assert.throws(() => evaluationProvenance(directory), /direct-provider compatibility differs/);
+    await writeFile(join(directory, 'scripts', 'lib', 'baseline-direct-model.ts'), model);
     await writeFile(join(directory, 'server', 'behavior.ts'), 'export const unrelatedBehaviorChange = true;\n');
     assert.throws(() => evaluationProvenance(directory), /outside the reviewed instrumentation/);
     await rm(join(directory, 'server', 'behavior.ts'));

@@ -53,5 +53,16 @@ export function evaluationProvenance(directory = process.cwd()): EvaluationProve
     const shim = digest(readFileSync(join(directory, compat.shimPath), 'utf8'));
     if (adapter !== frozen || adapter !== compat.originalAdapterSha256.toLowerCase() || shim !== compat.shimSha256.toLowerCase()) throw new Error('Baseline bridge compatibility differs from its reviewed manifest; no requests were sent.');
   }
+  if (value.directCompatibility !== undefined) {
+    const compat = value.directCompatibility as Record<string, unknown> | null;
+    if (!compat || compat.adapterPath !== 'scripts/lib/baseline-dolphin-llm.ts' || compat.modelPath !== 'scripts/lib/baseline-direct-model.ts'
+      || typeof compat.adapterSha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(compat.adapterSha256)
+      || typeof compat.modelSha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(compat.modelSha256)
+      || typeof compat.candidateAdapterSha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(compat.candidateAdapterSha256)) throw new Error('Invalid baseline direct-provider compatibility manifest; no requests were sent.');
+    const digest = (text: string) => createHash('sha256').update(text.replace(/\r\n/g, '\n')).digest('hex');
+    const adapter = readFileSync(join(directory, compat.adapterPath), 'utf8').replace(/\r\n/g, '\n');
+    const restored = adapter.replace("from '../../server/restaurant/providers'", "from './providers'").replace("from '../../server/restaurant/openrouter'", "from './openrouter'").replace("from './baseline-direct-model'", "from '../../src/restaurant/types'");
+    if (digest(adapter) !== compat.adapterSha256.toLowerCase() || digest(readFileSync(join(directory, compat.modelPath), 'utf8')) !== compat.modelSha256.toLowerCase() || digest(restored) !== compat.candidateAdapterSha256.toLowerCase()) throw new Error('Baseline direct-provider compatibility differs from its reviewed manifest; no requests were sent.');
+  }
   return { ...result, evaluatedSourceRevision: revision, instrumentationSha256: hash };
 }
