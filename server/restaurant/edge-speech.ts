@@ -81,6 +81,9 @@ function edgeAttempt(createSocket: (url: URL, options: ClientOptions) => WebSock
     } catch (error) {
       if (signal.aborted) throw interrupted();
       if (error instanceof DateApiError) throw error;
+      // The pinned client reports its stream deadline as an ordinary Error.
+      // Preserve that distinction so the outer quick retry cannot double it.
+      if (error instanceof Error && error.message === 'Timed out waiting for Edge TTS') throw new DateApiError(503, 'edge_speech', 'The free voice service timed out. Device voices and captions remain available.');
       throw new DateApiError(503, 'edge_speech', 'The free voice service is unavailable. Device voices and captions remain available.');
     } finally { signal.removeEventListener('abort', abort); if (socket && socket.readyState !== WebSocket.CLOSED) socket.terminate(); }
   };

@@ -91,3 +91,25 @@ test('hand beats ride speech peaks and never happen in silence or reduced motion
   const still = run(new FacialPerformance(4), 10, 0, input({ speaking: true, amplitude: .9, reducedMotion: true }));
   assert.ok(still.every(f => f.beat < .01), 'reduced motion keeps hands at rest');
 });
+
+test('a new delivered line refreshes the same emotion while a stable cue does not restart it', () => {
+  const face = new FacialPerformance(2);
+  run(face, 6, 0, input({ emotion: 'surprised', deliveryId: 'one' }));
+  const settledJaw = face.pose.jaw;
+  run(face, .5, 6, input({ emotion: 'surprised', deliveryId: 'two' }));
+  assert.ok(face.pose.jaw > settledJaw + .2, 'a second surprise has its own reaction envelope');
+  run(face, 6, 6.5, input({ emotion: 'surprised', deliveryId: 'two' }));
+  assert.ok(face.pose.jaw < .05, 'the stable cue does not retrigger every frame');
+});
+
+test('delivery accents wait for actual presentation, cancel with it, and respect reduced motion', () => {
+  const waiting = new FacialPerformance(4), delivered = new FacialPerformance(4);
+  run(waiting, 4, 0, input({ deliveryId: null })); run(delivered, 4, 0, input({ deliveryId: null }));
+  run(waiting, .35, 4, input({ deliveryId: null }));
+  run(delivered, .35, 4, input({ deliveryId: 'actual' }));
+  assert.ok(delivered.pose.browLift > waiting.pose.browLift + .0004);
+  run(delivered, 1, 4.35, input({ deliveryId: null }));
+  assert.ok(delivered.pose.browLift < .0001);
+  const still = new FacialPerformance(4);
+  assert.ok(run(still, 1, 0, input({ deliveryId: 'actual', reducedMotion: true })).every(pose => pose.browLift === 0));
+});

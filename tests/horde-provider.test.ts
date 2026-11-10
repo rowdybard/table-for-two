@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { validateTurn } from '../server/restaurant';
+import { DOUBLE_TURN_SCHEMA, validateDoubleTurn } from '../server/double-date/conversation';
 import { DEFAULT_HORDE_MODEL, hordeAdapter } from '../server/restaurant/horde';
 import { DateApiError, TURN_SCHEMA, type ClaudeChunk, type ClaudeRequest } from '../server/restaurant/providers';
 import { HORDE_MODEL } from '../src/restaurant/types';
@@ -32,8 +33,8 @@ test('Horde sends one anonymous JSON-mode request, preserves the schema and caps
     assert.equal(body.stream, true);
     assert.equal(body.reasoning_effort, 'none');
     assert.deepEqual(body.stream_options, { include_usage: true });
-    assert.deepEqual(body.response_format, { type: 'json_object' });
-    assert.deepEqual(body.horde, { conformance: 'best_effort', include_reasoning: false, context_fit: 'reject', trusted_workers: true, validated_backends: true, availability_mode: 'fail_fast' });
+    assert.deepEqual(body.response_format, { type: 'json_schema', json_schema: { name: 'date_turn', schema, strict: true } });
+    assert.deepEqual(body.horde, { conformance: 'best_effort', include_reasoning: false, context_fit: 'grow', trusted_workers: true, validated_backends: true, availability_mode: 'fail_fast' });
     assert.ok(body.messages[0].content.startsWith('Keep the date conversational.'));
     assert.ok(body.messages[0].content.includes(JSON.stringify(schema)));
     assert.ok(body.messages[0].content.includes('server validates'));
@@ -45,6 +46,62 @@ test('Horde sends one anonymous JSON-mode request, preserves the schema and caps
   assert.equal(validateTurn(JSON.parse(chunks.filter(chunk => chunk.type === 'text').map(chunk => chunk.text).join(''))).utterances[0].text, validTurn.utterances[0].text);
   assert.deepEqual(schema, before);
   assert.equal(calls, 1);
+});
+
+test('Solo and Double schemas satisfy strict object structure and reach the bridge unchanged', async () => {
+  const inspect = (node: Record<string, any>) => {
+    if (node.type === 'object') {
+      assert.equal(node.additionalProperties, false);
+      assert.deepEqual([...node.required].sort(), Object.keys(node.properties).sort());
+      for (const child of Object.values(node.properties)) inspect(child as Record<string, any>);
+    } else if (node.type === 'array') inspect(node.items);
+  };
+  inspect(TURN_SCHEMA); inspect(DOUBLE_TURN_SCHEMA);
+  const doubleSchema = structuredClone(DOUBLE_TURN_SCHEMA);
+  doubleSchema.properties.utterances.items.properties.speaker.enum = ['d2', 'waiter', 'diner'];
+  const before = structuredClone(doubleSchema);
+  const messages: ClaudeRequest['messages'] = [{ role: 'user', content: 'Sam asks Jules a question.' }];
+  let calls = 0;
+  const adapter = hordeAdapter(env, (async (_url: unknown, init: RequestInit) => {
+    const body = JSON.parse(init.body as string);
+    const expected = calls++ === 0 ? TURN_SCHEMA : doubleSchema;
+    assert.deepEqual(body.response_format, { type: 'json_schema', json_schema: { name: 'date_turn', schema: expected, strict: true } });
+    assert.ok(body.messages[0].content.includes(JSON.stringify(expected)));
+    assert.deepEqual(body.messages.slice(1), messages);
+    return response(textEvent('{}', 'stop') + done);
+  }) as typeof fetch);
+  await collect(adapter.stream(request({ messages }), new AbortController().signal));
+  await collect(adapter.stream(request({ messages, outputSchema: doubleSchema }), new AbortController().signal));
+  assert.equal(calls, 2); assert.deepEqual(doubleSchema, before);
+});
+
+test('a worker returning an object as memory is rejected without coercion for Solo and Double', () => {
+  assert.throws(() => validateTurn({ ...validTurn, memory: { player: 'a detail' } }));
+  const update = (actorId: string) => ({ actorId, emotion: 'warm', memory: 'A detail', social: { signal: 'none', reason: '', wantsToLeave: false }, agenda: { signal: 'none', evidence: '', clue: '' } });
+  const turn = { utterances: [], dateUpdates: [update('d1'), update('d2')] };
+  assert.doesNotThrow(() => validateDoubleTurn(JSON.stringify(turn)));
+  turn.dateUpdates[0].memory = { player: 'a detail' } as unknown as string;
+  assert.throws(() => validateDoubleTurn(JSON.stringify(turn)));
+});
+
+test('Horde grows context without truncating or reordering conversation messages', async () => {
+  const messages: ClaudeRequest['messages'] = [
+    { role: 'user', content: 'Remember the radio I repaired in Leeds. '.repeat(600) },
+    { role: 'assistant', content: 'You repaired a radio in Leeds.' },
+    { role: 'user', content: 'What did I repair?' },
+  ];
+  let calls = 0;
+  const adapter = hordeAdapter(env, (async (_url: unknown, init: RequestInit) => {
+    calls++;
+    const body = JSON.parse(init.body as string);
+    assert.equal(body.horde.context_fit, 'grow');
+    assert.equal('max_context_length' in body.horde, false);
+    assert.deepEqual(body.messages.slice(1), messages);
+    return response(textEvent('{}', 'stop') + done);
+  }) as typeof fetch);
+  const before = structuredClone(messages);
+  await collect(adapter.stream(request({ messages }), new AbortController().signal));
+  assert.deepEqual(messages, before); assert.equal(calls, 1);
 });
 
 test('server-only Horde credentials and model override remain out of the request messages', async () => {
@@ -73,7 +130,7 @@ test('split SSE bytes and heartbeats preserve response text and reported termina
 
 test('HTTP and streamed Horde failures are sanitized, specific and never retried', async () => {
   for (const [status, upstreamCode, code, resultStatus] of [
-    [400, 'UnsupportedChatParameter', 'horde_request', 502], [401, 'InvalidAPIKey', 'horde_auth', 502],
+    [400, 'UnsupportedChatParameter', 'horde_request', 502], [400, 'PromptExceedsContext', 'horde_context', 503], [401, 'InvalidAPIKey', 'horde_auth', 502],
     [403, 'KudosUpfront', 'horde_kudos', 503], [403, 'PermissionDenied', 'horde_access', 502],
     [404, 'no_worker_supports_features', 'horde_model', 503], [503, 'no_eligible_worker', 'horde_model', 503],
     [429, 'TooManyPrompts', 'horde_rate_limit', 429], [408, 'ChatRequestTimeout', 'horde_timeout', 504],

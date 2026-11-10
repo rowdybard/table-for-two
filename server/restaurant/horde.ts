@@ -1,9 +1,13 @@
 import { HORDE_MODEL } from '../../src/restaurant/types';
 import { hordeNativeAdapter } from './horde-native';
 import { openRouterSchemaInstructions } from './openrouter';
-import { DateApiError, type ClaudeAdapter, type ClaudeChunk, type ClaudeRequest, type TokenUsage } from './providers';
+import { DateApiError, TURN_SCHEMA, type ClaudeAdapter, type ClaudeChunk, type ClaudeRequest, type TokenUsage } from './providers';
 
 export const DEFAULT_HORDE_MODEL = 'koboldcpp/G4-MeroMero-26B-A4B-it-uncensored-heretic';
+/** Grow to an eligible worker's context limit without dropping conversation turns. */
+export const HORDE_BRIDGE_CONTEXT_FIT = 'grow';
+export const HORDE_BRIDGE_RESPONSE_FORMAT = 'json_schema';
+export const HORDE_BRIDGE_SCHEMA_STRICT = true;
 const endpoint = 'https://oai.aihorde.net/v1/chat/completions';
 const maxFrameCharacters = 64 * 1024;
 const maxStreamBytes = 4 * 1024 * 1024;
@@ -33,6 +37,7 @@ function providerError(status: number, error?: unknown): DateApiError {
   if (code === 'KudosUpfront') return new DateApiError(503, 'horde_kudos', 'AI Horde needs more queue priority for this request. Please try another turn later.');
   if (status === 429 || ['TooManyPrompts', 'TimeoutIP', 'rate_limit_exceeded'].includes(code)) return new DateApiError(429, 'horde_rate_limit', 'AI Horde is busy or rate limited. Please try another turn shortly.');
   if (status === 408 || status === 504 || ['ChatRequestTimeout', 'wait_budget_exceeded', 'request_timeout'].includes(code)) return new DateApiError(504, 'horde_timeout', 'AI Horde took too long to respond. Please try another turn.');
+  if (code === 'PromptExceedsContext') return new DateApiError(503, 'horde_context', 'AI Horde could not fit this conversation within an available worker’s context. Try a shorter message or another model.');
   if (status === 404 || ['model_not_found', 'no_eligible_worker', 'no_worker_supports_features'].includes(code)) return new DateApiError(503, 'horde_model', 'No AI Horde worker can serve the configured model and response settings right now.');
   if (status === 400 || status === 422) return new DateApiError(502, 'horde_request', 'AI Horde rejected the request settings. The server configuration needs attention.');
   if (status === 403) return new DateApiError(502, 'horde_access', 'AI Horde denied this request. Check the server account settings.');
@@ -54,8 +59,8 @@ export function hordeAdapter(env: NodeJS.ProcessEnv = process.env, fetcher: type
       response = await fetcher(endpoint, { method: 'POST', signal,
         headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json', 'X-Title': 'Table for Two' },
         body: JSON.stringify({ model, max_tokens: Math.min(512, request.maxTokens), stream: true,
-          stream_options: { include_usage: true }, response_format: { type: 'json_object' }, reasoning_effort: 'none',
-          horde: { conformance: 'best_effort', include_reasoning: false, context_fit: 'reject', trusted_workers: true, validated_backends: true, availability_mode: 'fail_fast' },
+          stream_options: { include_usage: true }, response_format: { type: HORDE_BRIDGE_RESPONSE_FORMAT, json_schema: { name: 'date_turn', schema: request.outputSchema ?? TURN_SCHEMA, strict: HORDE_BRIDGE_SCHEMA_STRICT } }, reasoning_effort: 'none',
+          horde: { conformance: 'best_effort', include_reasoning: false, context_fit: HORDE_BRIDGE_CONTEXT_FIT, trusted_workers: true, validated_backends: true, availability_mode: 'fail_fast' },
           messages: [{ role: 'system', content: `${request.system}\n${openRouterSchemaInstructions(request.outputSchema)}` }, ...request.messages] }) });
     } catch {
       if (signal.aborted) throw interrupted();

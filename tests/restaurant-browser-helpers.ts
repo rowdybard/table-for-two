@@ -1,6 +1,10 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
+import { writeFile } from 'node:fs/promises';
 import type { DinnerState } from '../src/restaurant/types';
 import type { RestaurantScenarioState } from '../src/restaurant/scenario-types';
+
+/** Software rendering needs time for real UI/caption delivery while the authored evening advances. */
+export const RESTAURANT_BROWSER_STORY_RATE = process.env.LFS_SOFTWARE_GPU === '1' ? 5 : 30;
 
 /** DOM menus remain usable before this gate; movement and scene assertions wait. */
 export async function waitForRestaurantScene(page: Page) {
@@ -9,9 +13,44 @@ export async function waitForRestaurantScene(page: Page) {
   await expect(page.locator('#scene-loading')).toBeHidden({ timeout: Math.max(1, deadline - Date.now()) });
 }
 
-export async function captureRestaurantScene(page: Page, path: string) {
+/** Navigation commit starts the reload; scene readiness gates the app independently of load-event timing. */
+export async function reloadRestaurantScene(page: Page) {
+  await page.reload({ waitUntil: 'commit', timeout: 30000 });
   await waitForRestaurantScene(page);
-  if (process.env.RESTAURANT_CAPTURE_SCREENSHOTS === '1') await page.screenshot({ path });
+}
+
+/** Play again can navigate asynchronously to the same URL after leaving a room. */
+export async function playAgainRestaurantScene(page: Page) {
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: 'commit', timeout: 30000 }),
+    page.locator('#new-date').click({ noWaitAfter: true }),
+  ]);
+  await waitForRestaurantScene(page);
+}
+
+export async function captureRestaurantScene(page: Page, path: string) {
+  if (process.env.RESTAURANT_CAPTURE_SCREENSHOTS === '1') await page.bringToFront();
+  await waitForRestaurantScene(page);
+  // Software CI PNG readbacks measured 7–15 seconds; artifact capture has its own bounded budget.
+  if (process.env.RESTAURANT_CAPTURE_SCREENSHOTS === '1') {
+    // Read the opt-in HUD before PNG readback can stall rendering. Tests without
+    // ?stats explicitly record null rather than inventing performance numbers.
+    const snapshot = await page.evaluate(() => {
+      const canvas = document.querySelector<HTMLCanvasElement>('.restaurant-canvas');
+      const rect = canvas?.getBoundingClientRect();
+      return {
+        perfText: document.querySelector('#perf-stats')?.textContent ?? null,
+        canvas: canvas ? { width: canvas.width, height: canvas.height, cssWidth: rect?.width ?? 0, cssHeight: rect?.height ?? 0 } : null,
+        devicePixelRatio: window.devicePixelRatio,
+        visibility: document.visibilityState,
+      };
+    });
+    const started = performance.now();
+    await page.screenshot({ path, timeout: 30_000 });
+    const screenshotReadbackMs = performance.now() - started;
+    const statsPath = /\.png$/i.test(path) ? path.replace(/\.png$/i, '.stats.json') : `${path}.stats.json`;
+    await writeFile(statsPath, JSON.stringify({ ...snapshot, screenshotReadbackMs }, null, 2) + '\n');
+  }
 }
 
 export function restaurantEvening(state: DinnerState) {
@@ -22,6 +61,14 @@ export function restaurantScenario(state: DinnerState): RestaurantScenarioState 
 }
 export function restaurantInterrupted(state: DinnerState) {
   return !!restaurantEvening(state).incident || restaurantScenario(state)?.phase === 'active';
+}
+
+/** Activate the visible numbered choice through its supported keyboard control. */
+export async function activateDisplayedChoice(page: Page, control: Locator, timeout = 5000) {
+  await expect(control).toBeVisible({ timeout }); await expect(control).toBeEnabled({ timeout });
+  const shortcut = (await control.locator('kbd').innerText()).trim();
+  expect(shortcut).toMatch(/^[1-4]$/);
+  await page.keyboard.press(shortcut);
 }
 
 /** Finish each visible story beat; a second choice must never be treated as already resolved. */
@@ -36,7 +83,7 @@ export async function resolveRestaurantScenario(page: Page, read: () => Promise<
     await openActions();
     const button = page.locator(`[data-scenario="${choice.id}"]`);
     await expect(button).toBeVisible();
-    try { await button.click({ timeout: 5000 }); }
+    try { await activateDisplayedChoice(page, button); }
     catch (error) {
       const next = restaurantScenario(await read());
       if (next?.phase === 'active' && next.id === current.id && next.beat === current.beat && (next.decisions?.length ?? 0) === decisions) throw error;

@@ -17,6 +17,8 @@ import { tableActionForTarget, tabletopActionAvailability } from './tabletop';
 import { isInspectionTarget, type InspectionTarget } from './TabletopInspector';
 import { diningOffsetZ } from './dining-space';
 import { scenePresenceAvailable } from './scenario-care';
+import { createDrawCadence } from './FrameCap';
+import { SeatingSpeechFacing, facingPlayerYaw } from './render/SeatingSpeechFacing';
 
 type InteractionTarget = Extract<DinnerCommand, { type: 'interact' }>['target'];
 export interface RestaurantInteraction { target: InteractionTarget; label: string; actorId?: ConversationTarget }
@@ -30,7 +32,9 @@ export class RestaurantRenderer {
   readonly canvas: HTMLCanvasElement;
   private readonly renderer: THREE.WebGLRenderer;
   /** Replaced after a WebGL context restore, when the old render target's texture is gone. */
-  private characterEnvironment: THREE.WebGLRenderTarget;
+  private characterEnvironment: THREE.WebGLRenderTarget | null;
+  private readonly drawCadence = createDrawCadence(30);
+  private drawCount = 0;
   private readonly set: RestaurantSet;
   private readonly table = new EveningTable();
   private readonly placeSettingShadows = createPlaceSettingShadows();
@@ -65,6 +69,7 @@ export class RestaurantRenderer {
   private pitch = -.025;
   private time = 0;
   private lastSeated = false;
+  private readonly seatingSpeechFacing = new SeatingSpeechFacing();
   private lastRoom = '';
   private lastDiningOffset = 0;
   private disposed = false;
@@ -108,7 +113,8 @@ export class RestaurantRenderer {
   /** Numbers for the opt-in ?stats readout. */
   diagnostics() {
     const { calls, triangles } = this.renderer.info.render;
-    return { gpu: this.gpuName, tier: this.quality.tier, pixelRatio: this.renderer.getPixelRatio(), width: this.canvas.width, height: this.canvas.height, calls, triangles };
+    return { gpu: this.gpuName, tier: this.quality.tier, pixelRatio: this.renderer.getPixelRatio(), width: this.canvas.width, height: this.canvas.height, calls, triangles,
+      software: this.quality.software, pixelBudget: this.quality.pixelBudget, shadows: this.renderer.shadowMap.enabled, reflections: !!this.characterEnvironment, maxDrawFPS: this.quality.tier === 'low' ? 30 : 60, drawCount: this.drawCount };
   }
 
   setInspectionTarget(target: InspectionTarget | null) {
@@ -138,9 +144,9 @@ export class RestaurantRenderer {
     try {
       // The old target's GL objects died with the lost context; let it be collected rather than
       // deleting stale handles on the new context.
-      this.characterEnvironment = createCharacterEnvironment(this.renderer);
+      this.characterEnvironment = this.quality.tier === 'high' ? createCharacterEnvironment(this.renderer) : null;
       for (const actor of [this.date, this.waiter, this.diner, this.otherDate, this.friend]) {
-        if (actor) prepareCharacterLighting(actor.root, this.characterEnvironment.texture);
+        if (actor) prepareCharacterLighting(actor.root, this.characterEnvironment?.texture ?? null, this.quality);
       }
     } catch (error) {
       console.warn('Cast reflections could not be rebuilt after the WebGL context returned.', error);
@@ -151,6 +157,7 @@ export class RestaurantRenderer {
   private requestWarmup() {
     if (this.disposed) return;
     ++this.warmupRevision;
+    this.drawCadence.reset();
     this.ready = false; this.compiled = false; this.canvas.setAttribute('aria-busy', 'true');
     if (!this.parallelCompile) { this.compiled = true; return; }
     if (this.warmupTask) return;
@@ -176,8 +183,10 @@ export class RestaurantRenderer {
   }
 
   private renderScene() {
+    if (this.ready && this.quality.tier === 'low' && !this.drawCadence.shouldDraw(performance.now())) return;
     this.faceFill.position.copy(this.faceFillOffset).applyQuaternion(this.camera.quaternion).add(this.camera.position);
     this.renderer.render(this.scene, this.camera);
+    this.drawCount++;
     this.sceneMatricesFresh = true;
     if (!this.ready && this.compiled && !this.disposed) { this.ready = true; this.canvas.setAttribute('aria-busy', 'false'); }
   }
@@ -239,11 +248,11 @@ export class RestaurantRenderer {
     this.parallelCompile = this.renderer.extensions.has('KHR_parallel_shader_compile');
     // Software WebGL (hardware acceleration off) gets the phone tier: fewer lights, no shadow map, lower resolution.
     this.gpuName = readGpuName(this.renderer.getContext());
-    this.quality = detectRenderQuality({ ...readRenderQualityEnvironment(), softwareRenderer: isSoftwareRenderer(this.gpuName) });
+    this.quality = detectRenderQuality({ ...readRenderQualityEnvironment(), gpuName: this.gpuName, softwareRenderer: isSoftwareRenderer(this.gpuName) });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.10;
-    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.enabled = this.quality.tier === 'high';
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     // three orders opaque draws by material id, so ~25 programs alternate and every switch re-uploads all
     // light uniforms. Grouping by the program each material last used keeps the same pixels with far fewer switches.
@@ -252,7 +261,7 @@ export class RestaurantRenderer {
     this.renderer.setOpaqueSort((a: RenderItem, b: RenderItem) => a.groupOrder - b.groupOrder || a.renderOrder - b.renderOrder
       || programOf(a) - programOf(b) || a.material.id - b.material.id || a.materialVariant - b.materialVariant || a.z - b.z || a.id - b.id);
     this.renderer.setClearColor('#172536');
-    this.characterEnvironment = createCharacterEnvironment(this.renderer);
+    this.characterEnvironment = this.quality.tier === 'high' ? createCharacterEnvironment(this.renderer) : null;
     this.canvas = this.renderer.domElement;
     this.canvas.addEventListener('webglcontextrestored', this.restoreCharacterEnvironment);
     this.canvas.className = 'restaurant-canvas';
@@ -267,14 +276,18 @@ export class RestaurantRenderer {
     this.camera.position.set(...RESTAURANT.spawn);
 
     this.scene.add(this.roomLights);
-    this.roomLights.add(this.farewellLight);
+    if (this.quality.tier === 'high') this.roomLights.add(this.farewellLight);
+    this.faceFill.name = 'view-face-fill';
+    if (this.quality.tier === 'low') this.faceFill.intensity = .8;
     this.roomLights.add(this.faceFill);
     // A cool rim from the window side lifts a seated date off the dark booth.
-    const rim = new THREE.DirectionalLight('#b7c7f0', .5);
-    rim.position.set(-1.6, 2.6, -4.8);
-    rim.target.position.set(0, 1.1, -1.4);
-    this.roomLights.add(rim, rim.target);
-    this.set = createRestaurantScene();
+    if (this.quality.tier === 'high') {
+      const rim = new THREE.DirectionalLight('#b7c7f0', .5);
+      rim.position.set(-1.6, 2.6, -4.8);
+      rim.target.position.set(0, 1.1, -1.4);
+      this.roomLights.add(rim, rim.target);
+    }
+    this.set = createRestaurantScene(this.quality);
     this.scene.add(this.set.root);
     this.scene.add(this.table.root, this.placeSettingShadows.mesh);
     this.date = new RestaurantActor(dateId);
@@ -288,7 +301,7 @@ export class RestaurantRenderer {
     this.diner.root.position.set(-3.5, 0, -4.6);
     this.diner.setSeated(true);
     this.scene.add(this.diner.root);
-    for (const actor of [this.date, this.waiter, this.diner]) prepareCharacterLighting(actor.root, this.characterEnvironment.texture);
+    for (const actor of [this.date, this.waiter, this.diner]) prepareCharacterLighting(actor.root, this.characterEnvironment?.texture ?? null, this.quality);
     this.lighting = createRestaurantLighting({ renderer: this.renderer, scene: this.scene, camera: this.camera, roomLights: this.roomLights, set: this.set, quality: this.quality,
       setResolutionScale: scale => { this.resolutionScale = scale; this.resize(); } });
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -387,13 +400,13 @@ export class RestaurantRenderer {
       if (this.otherDate) { this.scene.remove(this.otherDate.root); this.disposeTarget(this.otherDateTarget); this.otherDate.dispose(); }
       this.otherDate = new RestaurantActor(otherDate.dateId); this.otherDateId = otherDate.dateId;
       this.otherDateTarget = this.createActorTarget(this.otherDate, otherDate.id);
-      prepareCharacterLighting(this.otherDate.root, this.characterEnvironment.texture);
+      prepareCharacterLighting(this.otherDate.root, this.characterEnvironment?.texture ?? null, this.quality);
       this.scene.add(this.otherDate.root);
       this.requestWarmup();
     }
     if (!this.friend) {
       this.friend = new RestaurantActor('friend'); this.friendTarget = this.createActorTarget(this.friend);
-      prepareCharacterLighting(this.friend.root, this.characterEnvironment.texture);
+      prepareCharacterLighting(this.friend.root, this.characterEnvironment?.texture ?? null, this.quality);
       this.scene.add(this.friend.root);
       this.requestWarmup();
     }
@@ -436,7 +449,7 @@ export class RestaurantRenderer {
       // The friend's date has their own glass, plate and interest on the other side of the table.
       const otherX = otherDate.humanId === 'h1' ? -.57 : .57, otherView = double.otherView;
       const table = !preview && seated && otherView ? this.dateTable(otherView, otherX, true, diningOffsetZ(state), false, this.tableScratch.otherGlass, this.tableScratch.otherPlate) : undefined;
-      actor.update(this.time, dt, speaking ? playback.emotion : resting, speaking, speaking ? playback.amplitude : 0, speaking || listening ? this.camera.position : speakerPosition ? gazeAt : partnerGaze, speed, { stance: otherDate.stance, attentive: !!listening, reducedMotion: this.reducedMotion.matches, table });
+      actor.update(this.time, dt, speaking ? playback.emotion : resting, speaking, speaking ? playback.amplitude : 0, speaking || listening ? this.camera.position : speakerPosition ? gazeAt : partnerGaze, speed, { stance: otherDate.stance, attentive: !!listening, reducedMotion: this.reducedMotion.matches, table, deliveryId: speaking ? playback.deliveryId : null });
       if (!preview) this.applyDateProps(actor, otherX, true);
     }
     if (otherHuman && this.friend) {
@@ -466,7 +479,7 @@ export class RestaurantRenderer {
     this.disposeTarget(this.dateTarget);
     old.dispose();
     this.date = new RestaurantActor(dateId);
-    prepareCharacterLighting(this.date.root, this.characterEnvironment.texture);
+    prepareCharacterLighting(this.date.root, this.characterEnvironment?.texture ?? null, this.quality);
     this.date.root.position.copy(position);
     this.date.root.rotation.y = rotation;
     this.date.setSeated(this.lastSeated);
@@ -491,6 +504,11 @@ export class RestaurantRenderer {
 
   update(dt: number, state: DinnerState, playback: AudioPlayback) {
     if (this.disposed) return;
+    if (document.visibilityState === 'hidden') {
+      this.drawCadence.reset();
+      this.lighting.update(state, 0, this.time, this.reducedMotion.matches, false);
+      return;
+    }
     dt = Math.min(Math.max(dt, 0), .1);
     this.time += dt;
     this.sceneMatricesFresh = false;
@@ -584,9 +602,16 @@ export class RestaurantRenderer {
     const motionX = this.date.root.position.x - previousDateX;
     const motionZ = this.date.root.position.z - previousDateZ;
     const walkingSpeed = dt > 0 && state.phase === 'playing' && !dateSeated ? Math.hypot(motionX, motionZ) / dt : 0;
-    const facing = dateSeated ? 0 : walkingSpeed > .12 ? Math.atan2(motionX, motionZ) : Math.atan2(this.camera.position.x - this.date.root.position.x, this.camera.position.z - this.date.root.position.z);
-    const delta = Math.atan2(Math.sin(facing - this.date.root.rotation.y), Math.cos(facing - this.date.root.rotation.y));
-    this.date.root.rotation.y += delta * (1 - Math.exp(-dt * 5));
+    const dateSpeaking = playback.actorId ? playback.actorId === localDoubleDate?.id : playback.speaker === 'date';
+    const playerFacing = facingPlayerYaw(this.date.root.position.x, this.date.root.position.z, this.camera.position.x, this.camera.position.z);
+    const faceDuringSeating = this.seatingSpeechFacing.update(state.id, state.seated, dateSeated, dateSpeaking,
+      state.phase === 'playing' && !takingBreak && evening.stance !== 'leaving' && !evening.farewell.ending && this.date.root.visible && state.doubleDate?.role !== 'wingman');
+    if (faceDuringSeating) this.date.root.rotation.y = playerFacing;
+    else {
+      const facing = dateSeated ? 0 : walkingSpeed > .12 ? Math.atan2(motionX, motionZ) : playerFacing;
+      const delta = Math.atan2(Math.sin(facing - this.date.root.rotation.y), Math.cos(facing - this.date.root.rotation.y));
+      this.date.root.rotation.y += delta * (1 - Math.exp(-dt * 5));
+    }
     this.dateTarget.position.y = dateSeated ? 1.15 : 1.4;
     this.gaze.copy(this.camera.position);
     if (state.doubleDate) {
@@ -597,7 +622,6 @@ export class RestaurantRenderer {
       else if (otherHuman) this.gaze.set(otherHuman.position[0], 1.3, otherHuman.position[2]);
     }
     const restingEmotion = evening.stance === 'hurt' ? 'embarrassed' : evening.stance === 'guarded' ? 'defensive' : (evening.stance === 'comfortable' || (evening.interest?.level ?? 0) >= 65) && state.emotion === 'neutral' ? 'warm' : state.emotion;
-    const dateSpeaking = playback.actorId ? playback.actorId === localDoubleDate?.id : playback.speaker === 'date';
     const listening = this.listeningFor(localDoubleDate?.id ?? 'date', state, playback, restingEmotion, evening.stance);
     if (listening) this.gaze.copy(this.camera.position);
     // A compliment from someone they are not into gets a polite face, not a blush.
@@ -608,7 +632,7 @@ export class RestaurantRenderer {
     if (override.force) { this.date.playGesture(override.force as Parameters<RestaurantActor['playGesture']>[0]); override.force = undefined; }
     const pairX = state.doubleDate ? (state.doubleDate.localHumanId === 'h1' ? -.57 : .57) : 0;
     const table = this.dateTable(state, pairX, !!state.doubleDate, diningOffset, override.thinking ?? (this.dateThinking && !dateSpeaking), this.tableScratch.glass, this.tableScratch.plate);
-    this.date.update(this.time, dt, dateSpeaking ? playback.emotion : firstImpression, dateSpeaking, dateSpeaking ? playback.amplitude : 0, this.gaze, walkingSpeed, { stance: evening.stance, shared: evening.sharedActivities.length > 0, attentive: override.listening ?? !!listening, reducedMotion: this.reducedMotion.matches, table: dateSeated ? table : undefined });
+    this.date.update(this.time, dt, dateSpeaking ? playback.emotion : firstImpression, dateSpeaking, dateSpeaking ? playback.amplitude : 0, this.gaze, walkingSpeed, { stance: evening.stance, shared: evening.sharedActivities.length > 0, attentive: override.listening ?? !!listening, reducedMotion: this.reducedMotion.matches, table: dateSeated ? table : undefined, deliveryId: dateSpeaking ? playback.deliveryId : null });
     this.applyDateProps(this.date, pairX, !!state.doubleDate);
     if (state.doubleDate) this.updateDoubleActors(dt, state, playback);
     const scenarioService = (state.doubleDate?.scenario ?? evening.scenario)?.effects.service;
@@ -635,9 +659,9 @@ export class RestaurantRenderer {
     const waiterFacing = waiterDistance > .06 ? Math.atan2(waiterDirection.x, waiterDirection.z) : Math.atan2(this.gaze.x - this.waiter.root.position.x, this.gaze.z - this.waiter.root.position.z);
     this.waiter.root.rotation.y += Math.atan2(Math.sin(waiterFacing - this.waiter.root.rotation.y), Math.cos(waiterFacing - this.waiter.root.rotation.y)) * (1 - Math.exp(-dt * 4));
     const waiterEmotion = playback.speaker === 'waiter' ? playback.emotion : serviceEvening.incident?.event === 'spilled-drink' ? 'embarrassed' : 'neutral';
-    this.waiter.update(this.time, dt, waiterEmotion, playback.speaker === 'waiter', playback.amplitude, this.gaze, dt > 0 ? waiterStep / dt : 0, { shared: serving, reducedMotion: this.reducedMotion.matches });
+    this.waiter.update(this.time, dt, waiterEmotion, playback.speaker === 'waiter', playback.amplitude, this.gaze, dt > 0 ? waiterStep / dt : 0, { shared: serving, reducedMotion: this.reducedMotion.matches, deliveryId: playback.speaker === 'waiter' ? playback.deliveryId : null });
     const phoneActive = serviceEvening.incident?.event === 'disruptive-diner';
-    this.diner.update(this.time, dt, playback.speaker === 'diner' ? playback.emotion : phoneActive ? 'annoyed' : 'neutral', playback.speaker === 'diner', playback.amplitude, this.gaze, 0, { phoneActive, reducedMotion: this.reducedMotion.matches });
+    this.diner.update(this.time, dt, playback.speaker === 'diner' ? playback.emotion : phoneActive ? 'annoyed' : 'neutral', playback.speaker === 'diner', playback.amplitude, this.gaze, 0, { phoneActive, reducedMotion: this.reducedMotion.matches, deliveryId: playback.speaker === 'diner' ? playback.deliveryId : null });
     this.table.update(state);
     const windowTarget = this.table.targets.find(target => target.userData.target === 'window');
     if (windowTarget) windowTarget.position.z = -.8 - diningOffset;
@@ -756,6 +780,7 @@ export class RestaurantRenderer {
 
   resize() {
     if (this.disposed) return;
+    this.drawCadence.reset();
     const rect = this.container.getBoundingClientRect();
     const width = Math.max(1, Math.round(rect.width || window.innerWidth));
     const height = Math.max(1, Math.round(rect.height || window.innerHeight));
@@ -783,7 +808,7 @@ export class RestaurantRenderer {
     this.placeSettingShadows.dispose();
     this.lighting.dispose();
     const renderer = this.renderer, pending = this.warmupTask;
-    const disposeRenderer = () => { this.characterEnvironment.dispose(); renderer.dispose(); };
+    const disposeRenderer = () => { this.characterEnvironment?.dispose(); renderer.dispose(); };
     if (pending) void pending.then(disposeRenderer); else disposeRenderer();
     this.canvas.removeEventListener('webglcontextrestored', this.restoreCharacterEnvironment);
     this.canvas.remove();

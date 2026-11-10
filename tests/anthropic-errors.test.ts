@@ -19,7 +19,7 @@ test('wire schemas omit unsupported array bounds without weakening the original 
   let payload: Record<string, any> | undefined;
   const adapter = anthropicAdapter({ ANTHROPIC_API_KEY: 'private-server-secret' }, (async (_url: unknown, init: RequestInit) => {
     payload = JSON.parse(init.body as string);
-    return new Response('data: {"type":"message_stop"}\n\n');
+    return new Response('data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\ndata: {"type":"message_stop"}\n\n');
   }) as typeof fetch);
   for await (const _chunk of adapter.stream({ model: 'claude-haiku-5-5', system: '', messages: [], maxTokens: 500, outputSchema: source }, new AbortController().signal)) {}
   assert.deepEqual(payload?.output_config.format.schema, converted);

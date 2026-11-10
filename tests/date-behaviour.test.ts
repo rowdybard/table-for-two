@@ -80,3 +80,39 @@ test('reduced motion and standing up stop table business', () => {
   const standing = new DateBehaviour(7);
   assert.equal(run(standing, 0, 30, base({ seated: false, interest: 10, quietFor: 40 })).seen.size, 0);
 });
+
+test('actual consecutive amused deliveries refresh the laugh without retriggering every frame', () => {
+  const behaviour = new DateBehaviour(1);
+  assert.equal(behaviour.update(0, 1 / 30, base({ emotion: 'amused', speaking: true, deliveryId: 'line-1' })).gesture, 'laugh');
+  run(behaviour, 0, 2, base({ emotion: 'amused', speaking: true, deliveryId: 'line-1' }));
+  assert.equal(behaviour.output.gesture, null, 'one delivery does not keep restarting the gesture');
+  assert.equal(behaviour.update(2, 1 / 30, base({ emotion: 'amused', speaking: true, deliveryId: 'line-2' })).gesture, 'laugh');
+  behaviour.update(2.4, .1, base({ emotion: 'amused', speaking: true, deliveryId: 'line-2' }));
+  assert.ok(behaviour.output.arms[0].weight > .9);
+  behaviour.update(2.5, .1, base({ emotion: 'amused', deliveryId: null }));
+  assert.equal(behaviour.output.gesture, null, 'clearing the delivery stops its old reaction');
+  assert.ok(behaviour.output.arms.every(arm => arm.weight === 0));
+});
+
+test('an undelivered emotion does not start a reply gesture when delivery cues are enabled', () => {
+  const behaviour = new DateBehaviour(1);
+  assert.equal(behaviour.update(0, .1, base({ emotion: 'amused', thinking: true, deliveryId: null })).gesture, 'think');
+  assert.equal(behaviour.update(1, .1, base({ emotion: 'amused', speaking: true, deliveryId: 'heard' })).gesture, 'laugh');
+});
+
+test('listening and reply preparation release distracting table business and suppress new idles', () => {
+  for (const context of [{ listening: true }, { thinking: true }, { speaking: true }]) {
+    for (const kind of ['bite', 'sip', 'phone', 'hair', 'fidget'] as const) {
+      const behaviour = new DateBehaviour(6);
+      behaviour.force(kind, 0);
+      behaviour.update(.9, .1, base({ mainServed: true }));
+      const before = behaviour.output.arms.reduce((sum, arm) => sum + arm.weight, 0);
+      behaviour.update(1, .1, base({ mainServed: true, ...context }));
+      behaviour.update(1.15, .1, base({ mainServed: true, ...context }));
+      assert.ok(behaviour.output.arms.reduce((sum, arm) => sum + arm.weight, 0) <= before, `${kind} yields smoothly`);
+      run(behaviour, 1.4, 25, base({ interest: 10, quietFor: 40, mainServed: true, ...context }));
+      assert.ok(behaviour.output.gesture === null || behaviour.output.gesture === 'think', `${kind} does not restart over conversation`);
+      assert.equal(behaviour.output.glass.weight, 0);
+    }
+  }
+});

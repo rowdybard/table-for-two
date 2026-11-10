@@ -126,6 +126,9 @@ export class DateAgendaDirector {
   /** This date said a quiet stretch is fine, so a long pause is not read as lost interest. */
   get likesQuiet(): boolean { return this.agenda.goal.startsWith('Feel comfortable with pauses'); }
 
+  /** Reuse existing own-listener delivery evidence for a factual authored callback, never a new clue or point. */
+  hasHeardLine(text: string): boolean { return this.heardLines.some(line => line.text === text); }
+
   finish(): void {
     if (this.finished) return;
     this.finished = true; this.pendingClues = [];

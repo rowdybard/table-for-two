@@ -21,6 +21,90 @@ function environment(fetcher: typeof fetch) {
 async function until(predicate: () => boolean) { for (let i = 0; i < 100; i++) { if (predicate()) return; await delay(5); } throw new Error('Client did not reach expected state.'); }
 const callbacks = (extra: Partial<ConstructorParameters<typeof DoubleDateClient>[0]> = {}) => ({ onState() {}, onLines() {}, onGeneration() {}, onSignals() {}, onConnection() {}, onError() {}, ...extra });
 
+test('a stalled table command expires without losing the private seat and the next command works', async () => {
+  let stalled = true;
+  const env = environment(async (input, init) => {
+    if (String(input).endsWith('/rooms') && init?.method === 'POST') return json(membership, 201);
+    if (String(input).endsWith('/command') && stalled) return new Promise<Response>((_resolve, reject) => {
+      init!.signal!.addEventListener('abort', () => reject(init!.signal!.reason), { once: true });
+    });
+    return json({ state: room, signals: [] });
+  });
+  const client = new DoubleDateClient(callbacks(), { requestTimeoutMs: 20 });
+  try {
+    await client.create('Alex', 'claude-haiku-5-5', 2);
+    await assert.rejects(client.command({ type: 'reset-model' }), /too long/);
+    assert.equal(client.credentials?.token, membership.token); assert.equal(client.active, true);
+    stalled = false; await client.command({ type: 'reset-model' });
+    assert.equal(client.state?.id, room.id);
+  } finally { client.dispose(); env.restore(); }
+});
+
+test('a stalled leave settles on its deadline and forgets the old seat without another frame', async () => {
+  let signal: AbortSignal | null | undefined, keepalive: boolean | undefined, authorization = '';
+  const env = environment(async (input, init) => {
+    if (String(input).endsWith('/leave')) {
+      signal = init?.signal; keepalive = init?.keepalive;
+      authorization = (init?.headers as Record<string, string>).Authorization;
+      return new Promise<Response>(() => {}); // Deliberately ignore abort too.
+    }
+    return init?.method === 'POST' ? json(membership, 201) : json({ state: room, signals: [] });
+  });
+  const client = new DoubleDateClient(callbacks(), { requestTimeoutMs: 20 });
+  try {
+    await client.create('Alex', 'claude-haiku-5-5', 2);
+    await Promise.race([client.leave(), delay(1000).then(() => { throw new Error('Leave did not settle.'); })]);
+    assert.ok(signal instanceof AbortSignal && signal.aborted);
+    assert.equal(keepalive, true); assert.equal(authorization, `Bearer ${membership.token}`);
+    assert.equal(client.active, false); assert.equal(env.stored.has(storageKey), false);
+  } finally { client.dispose(); env.restore(); }
+});
+
+test('a stalled page-departure leave preserves the private seat for restore', async () => {
+  let signal: AbortSignal | null | undefined;
+  const env = environment(async (input, init) => {
+    if (String(input).endsWith('/leave')) { signal = init?.signal; return new Promise<Response>(() => {}); }
+    return init?.method === 'POST' ? json(membership, 201) : json({ state: room, signals: [] });
+  });
+  const client = new DoubleDateClient(callbacks(), { requestTimeoutMs: 20 });
+  try {
+    await client.create('Alex', 'claude-haiku-5-5', 2);
+    await Promise.race([client.leave(false), delay(1000).then(() => { throw new Error('Leave did not settle.'); })]);
+    assert.ok(signal instanceof AbortSignal && signal.aborted);
+    assert.equal(client.credentials?.token, membership.token);
+    assert.equal(JSON.parse(env.stored.get(storageKey)!).token, membership.token);
+  } finally { client.dispose(); env.restore(); }
+});
+
+test('an old leave cannot clear or stop a replacement seat, whether it responds or times out', async () => {
+  for (const finishOld of [true, false]) {
+    const replacementRoom = { ...room, id: 'new-table' };
+    const replacement = { ...membership, roomId: replacementRoom.id, token: 'new-private-seat-token', state: replacementRoom };
+    let creates = 0, release!: (response: Response) => void, pollsNew = 0;
+    const env = environment(async (input, init) => {
+      const path = String(input);
+      if (path.endsWith('/leave')) return new Promise<Response>(resolve => { release = resolve; });
+      if (init?.method === 'POST') return json(++creates === 1 ? membership : replacement, 201);
+      if (path.includes('/new-table')) { pollsNew++; return json({ state: replacementRoom, signals: [] }); }
+      return json({ state: room, signals: [] });
+    });
+    const client = new DoubleDateClient(callbacks(), { requestTimeoutMs: 30 });
+    try {
+      await client.create('Alex', 'claude-haiku-5-5', 2);
+      const leaving = client.leave();
+      await client.create('Sam', 'claude-haiku-5-5', 2);
+      if (finishOld) release(json({ state: room }));
+      await Promise.race([leaving, delay(1000).then(() => { throw new Error('Old leave did not settle.'); })]);
+      if (!finishOld) release(json({ state: room }));
+      assert.equal(client.credentials?.token, replacement.token); assert.equal(client.state?.id, replacementRoom.id);
+      assert.equal(JSON.parse(env.stored.get(storageKey)!).token, replacement.token);
+      const before = pollsNew;
+      await until(() => pollsNew > before);
+      assert.equal(client.active, true);
+    } finally { client.dispose(); env.restore(); }
+  }
+});
+
 test('terminal poll 401/404 clears the private seat and stops retries with one expiry callback', async () => {
   for (const status of [401, 404]) {
     let polls = 0; const messages: string[] = [], connections: boolean[] = [];

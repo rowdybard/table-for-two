@@ -33,7 +33,7 @@ function heldProvider() {
 async function boot(claude: ClaudeAdapter, options: RestaurantOptions = {}, blind = false) {
   let clock = 1000;
   const http = createServer((req, res) => { if (!app.handle(req, res)) res.writeHead(404).end(); });
-  const app = await attachRestaurantServer(http, { env: {}, ledgerPath: false, now: () => clock, autoTick: true, claude, requestTimeoutMs: 5000, scenarioId: 'family-visit', ...options });
+  const app = await attachRestaurantServer(http, { env: {}, ledgerPath: false, now: () => clock, autoTick: true, claude, speech: { async *stream() { yield Buffer.from('mock-authored-speech'); } }, requestTimeoutMs: 5000, scenarioId: 'family-visit', ...options });
   await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${(http.address() as { port: number }).port}`;
   const created = await fetch(base + '/api/date/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(blind ? { mode: 'blind-date', seed: 'authored-interruption' } : { dateId: 'mira' }) }).then(response => response.json());
@@ -167,5 +167,7 @@ test('Eli’s routine nudge waits for the date to finish answering instead of ca
   const after = await api.snapshot();
   assert.equal(after.memory, staleTurn.memory);
   const nudge = after.evening.cues.find(cue => cue.key === 'order-nudge')!.utterances[0];
-  assert.equal((await api.request('/speech', { generation: after.generation, utterance: nudge })).status === 409, false, 'Eli’s line still belongs to the live generation');
+  const voice = await api.request('/speech', { generation: after.generation, utterance: nudge });
+  assert.equal(voice.status, 200, 'Eli’s line still belongs to the live generation');
+  assert.equal(await voice.text(), 'mock-authored-speech');
 });

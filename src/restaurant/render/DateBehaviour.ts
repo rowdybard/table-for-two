@@ -28,6 +28,8 @@ export interface DateBehaviourInput {
   /** Seconds since anybody at the table last said anything. */
   quietFor: number;
   reducedMotion: boolean;
+  /** Unique actual speech/caption presentation; null clears an interrupted or completed delivery. */
+  deliveryId?: string | number | null;
   /** The date's own glass, in the actor's space, when it is on the table in reach. */
   glass: THREE.Vector3 | null;
   /** Centre of the date's plate in the actor's space. */
@@ -69,7 +71,7 @@ export interface DateBehaviourOutput {
   interest: number;
 }
 
-interface Clip { kind: DateGesture; start: number; duration: number; side: 0 | 1 }
+interface Clip { kind: DateGesture; start: number; duration: number; side: 0 | 1; releasing?: number; delivery?: boolean }
 
 /** Durations in seconds. Holds (chin, think) have no fixed end and fade when their reason ends. */
 const DURATION: Record<DateGesture, number> = { bite: 2.3, sip: 3.1, hair: 1.7, laugh: 1.2, phone: 4.8, chin: Infinity, think: Infinity, fidget: 2.6 };
@@ -94,6 +96,7 @@ export class DateBehaviour {
   private interest = -1;
   private lastBites = -1;
   private lastEmotion: Emotion = 'neutral';
+  private lastDelivery: string | number | null | undefined;
   private nextIdle = 0;
   private lastPhone = -1000;
   private lastSip = -1000;
@@ -113,15 +116,30 @@ export class DateBehaviour {
     const interest = out.interest = this.interest;
     const cold = input.stance === 'guarded' || input.stance === 'hurt' || input.stance === 'leaving';
     const free = input.seated && !input.reducedMotion;
+    const newDelivery = input.deliveryId != null && input.deliveryId !== this.lastDelivery;
+    if ((input.deliveryId === null && this.lastDelivery != null) || newDelivery) {
+      // A new line owns the performance; no phone, bite or old reply survives it.
+      this.clip = null; this.hold = null;
+      this.nextIdle = Math.max(this.nextIdle, time + 3);
+    }
+    if (input.deliveryId !== undefined) this.lastDelivery = input.deliveryId;
+    const occupied = input.speaking || input.listening || input.thinking || input.deliveryId != null;
+    if (this.clip && occupied && !this.clip.delivery) this.clip.releasing ??= time;
+    if (this.clip?.releasing !== undefined && time - this.clip.releasing >= .3) this.clip = null;
 
     // Bites follow the server's count, so both friends at a shared table see the same plate.
     if (this.lastBites < 0) this.lastBites = input.dateBites;
-    if (input.dateBites > this.lastBites && input.mainServed && free && !input.speaking) this.play('bite', time, 1);
+    if (input.dateBites > this.lastBites && input.mainServed && free && !occupied) this.play('bite', time, 1);
     this.lastBites = input.dateBites;
     // A laugh catches the hand on its way to the mouth.
-    if (input.emotion !== this.lastEmotion && input.emotion === 'amused' && free && (!this.clip || this.clip.kind === 'fidget') && this.rand() < .7) this.play('laugh', time, 0);
+    const reaction = input.deliveryId === undefined ? input.emotion !== this.lastEmotion : newDelivery;
+    if (reaction && input.emotion === 'amused' && free && (!this.clip || this.clip.kind === 'fidget') && (newDelivery || this.rand() < .7)) {
+      this.play('laugh', time, 0, true);
+    }
     // A flirtatious line is often finished with a tuck of the hair.
-    if (input.emotion !== this.lastEmotion && input.emotion === 'flirtatious' && free && !this.clip && this.rand() < .6) this.play('hair', time + .4, 0);
+    if (reaction && input.emotion === 'flirtatious' && free && !this.clip && (newDelivery || this.rand() < .6)) {
+      this.play('hair', time + .4, 0, true);
+    }
     this.lastEmotion = input.emotion;
 
     // Holds: chin on a hand while really listening and interested; a hand at the chin while working out a reply.
@@ -132,7 +150,7 @@ export class DateBehaviour {
     if (!this.hold && !this.clip && (wantsThink || wantsChin)) this.hold = { kind: wantsThink ? 'think' : 'chin', start: time, side: this.rand() < .5 ? 0 : 1, releasing: -1 };
 
     // Idle business between lines: a sip now and then, fiddling when unsure, the phone when bored.
-    if (free && !this.clip && !this.hold && !input.speaking && time >= this.nextIdle) {
+    if (free && !this.clip && !this.hold && !occupied && time >= this.nextIdle) {
       const bored = interest < .25 && input.quietFor > 12 && !input.listening;
       if (bored && time - this.lastPhone > 40) { this.play('phone', time, 1); this.lastPhone = time; }
       else if (input.glass && time - this.lastSip > 26 && this.rand() < .55) { this.play('sip', time, 0); this.lastSip = time; }
@@ -142,7 +160,6 @@ export class DateBehaviour {
     }
     if (this.clip && time - this.clip.start >= this.clip.duration) this.clip = null;
     if (this.clip && (!input.seated || input.reducedMotion)) this.clip = null;
-    if (this.clip?.kind === 'phone' && (input.speaking || input.listening)) this.clip.duration = Math.min(this.clip.duration, time - this.clip.start + .5);
 
     // Posture from interest: leaning in and an easy smile when it is going well, sitting back when it is not.
     const leanFromInterest = (interest - .4) * .07;
@@ -174,7 +191,8 @@ export class DateBehaviour {
     }
     if (this.clip) {
       const clip = this.clip, age = time - clip.start, d = clip.duration, arm = out.arms[clip.side], side = clip.side ? 1 : -1;
-      const p = age / d, w = envelope(age, d, .4);
+      const release = clip.releasing === undefined ? 1 : 1 - smooth((time - clip.releasing) / .3);
+      const p = age / d, w = envelope(age, d, .4) * release;
       if (clip.kind === 'bite' && input.plate) {
         // Fork to the near side of the plate, then up to the mouth and back down.
         const plate = this.scratch.copy(input.plate).add(new THREE.Vector3(side * .05, .035, -.11));
@@ -187,7 +205,7 @@ export class DateBehaviour {
         arm.weight = w;
         out.lean += .05 * (1 - lift) * w;
         // The fork is picked up off the rim when the hand gets there and put back the same way.
-        if (p > .26 && p < .86) out.fork = 'hand';
+        if (p > .26 && p < .86 && w > .15) out.fork = 'hand';
       } else if (clip.kind === 'sip' && input.glass) {
         // The hand meets the glass, lifts it to the lips, tips it, and sets it back where it was.
         const reach = smooth(p / .2), lift = smooth((p - .2) / .25) * (1 - smooth((p - .72) / .2));
@@ -197,9 +215,9 @@ export class DateBehaviour {
         arm.orientation.copy(q(-.15 - lift * .25, side * -1.45, side * -.05));
         arm.bend = this.elbow[clip.side].set(side * .55, -.6, .1 + lift * .5);
         arm.weight = Math.min(w, Math.max(reach, lift));
-        out.glass.weight = lift;
+        out.glass.weight = lift * release;
         out.glass.position.copy(arm.target).add(new THREE.Vector3(0, -.06, .02));
-        out.glass.tilt = smooth((p - .38) / .12) * (1 - smooth((p - .62) / .12)) * .75;
+        out.glass.tilt = smooth((p - .38) / .12) * (1 - smooth((p - .62) / .12)) * .75 * release;
         out.lean += .04 * w;
       } else if (clip.kind === 'hair') {
         const brush = Math.sin(Math.min(1, p) * Math.PI);
@@ -232,9 +250,9 @@ export class DateBehaviour {
     return out;
   }
 
-  private play(kind: DateGesture, start: number, side: 0 | 1) {
+  private play(kind: DateGesture, start: number, side: 0 | 1, delivery = false) {
     if (this.hold?.kind === 'think' && kind !== 'laugh') return;
     this.hold = null;
-    this.clip = { kind, start, duration: DURATION[kind], side };
+    this.clip = { kind, start, duration: DURATION[kind], side, delivery };
   }
 }

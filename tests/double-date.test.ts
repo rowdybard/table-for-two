@@ -14,6 +14,7 @@ import type { SocialResponse } from '../src/restaurant/types';
 import { stepScenarioEffects } from '../server/restaurant/scenario-effects';
 import { doubleNote, humanTurnOf } from './helpers/double-note';
 import { tableFacts } from '../server/restaurant/table-facts';
+import { STORY_CUE_ALTERNATIVES } from '../src/restaurant/story';
 
 const encode = JSON.stringify;
 const neutral: SocialResponse = { signal: 'none', reason: 'No change in boundaries.', wantsToLeave: false };
@@ -473,6 +474,11 @@ async function seatBoth(api: Awaited<ReturnType<typeof boot>>, h1: DoubleRoomRes
 }
 
 test('the question a date was waiting on reaches the model even though the friend’s own turn answers it', async t => {
+  // Pin this fixture to an authored question. The test checks delivery/clearing,
+  // not whether every welcome variation happens to contain a question.
+  const welcomes = STORY_CUE_ALTERNATIVES.jules.welcome;
+  STORY_CUE_ALTERNATIVES.jules.welcome = [welcomes[0], welcomes[0], welcomes[0]];
+  t.after(() => { STORY_CUE_ALTERNATIVES.jules.welcome = welcomes; });
   const requests: ClaudeRequest[] = []; const api = await boot({ claude: claude(request => requests.push(request)) }); t.after(() => api.close()); const { h1, h2 } = await api.pair();
   await seatBoth(api, h1, h2);
   const state = await api.poll(h2);

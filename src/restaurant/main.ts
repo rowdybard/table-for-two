@@ -1,6 +1,7 @@
 import './style.css';
 import { DATES, EVENT_COPY, getDate } from './content';
 import type { AudioPlayback, ClaudeModel, DateId, DinnerCommand, DinnerState, ProviderStatus, SceneUtterance, TurnEvent, TurnVia } from './types';
+import { DOLPHIN_LLM_MODEL, DOLPHIN_MODEL } from './types';
 import { markup } from './ui';
 import { RestaurantRenderer } from './RestaurantRenderer';
 import { LocalRecognition } from './LocalRecognition';
@@ -25,6 +26,10 @@ import { diningOffsetZ } from './dining-space';
 import { InterestCue } from './InterestCue';
 import { createPerfStats } from './PerfStats';
 import { createFrameCap } from './FrameCap';
+import { consumeTurnResponse, replyDeadlineMs } from './conversation-stream';
+import { captionReadingMs, waitForCaptionPaint, waitForCaptionReading } from './caption-delivery';
+import { WalkingView } from './WalkingView';
+import { MovementSendGate } from './MovementSendGate';
 
 document.title = 'Table for Two';
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = markup;
@@ -39,7 +44,7 @@ const preferences: Preferences = { model: 'claude-haiku-5-5', sessionLimit: 2, s
 try {
   const saved = JSON.parse(localStorage.getItem('table-for-two-settings') || '{}') as Partial<Preferences>;
   preferences.model = savedConversationModel(saved);
-  if (saved.modelSource === 'chat-command') preferences.modelSource = 'chat-command';
+  if (saved.modelSource === 'chat-command' && saved.model === preferences.model) preferences.modelSource = 'chat-command';
   if (typeof saved.sessionLimit === 'number' && saved.sessionLimit >= .05 && saved.sessionLimit <= 20) preferences.sessionLimit = saved.sessionLimit;
   if (typeof saved.speech === 'boolean') preferences.speech = saved.speech;
   if (typeof saved.captions === 'boolean') preferences.captions = saved.captions;
@@ -63,6 +68,7 @@ let softwareNoticeShown = false;
 let providers: ProviderStatus | undefined;
 let playback: AudioPlayback = { speaker: null, amplitude: 0, emotion: 'neutral', caption: '' };
 let busy = false, activeGeneration = 0, generationEpoch = 0, turnAbort: AbortController | undefined;
+let captionReadAbort: AbortController | undefined;
 let speechQueue: Promise<void> = Promise.resolve(), pendingSpeeches = 0;
 let interruption: Promise<void> = Promise.resolve();
 let interruptPending = false;
@@ -72,6 +78,8 @@ let pollTimer: ReturnType<typeof setTimeout> | undefined, commandEpoch = 0;
 let micEnabled = false, disposed = false, settingsPaused = false, menuPaused = false;
 let microphoneAttempt = 0;
 let pausePending = false;
+let menuOpening: Promise<void> = Promise.resolve(), menuClosing = false;
+let settingsOpening: Promise<void> = Promise.resolve(), settingsClosing = false;
 let startingDinner = false, typedSubmissionPending = false, pageSuspended = false;
 let typedSubmissionEpoch = 0, modelResetEpoch = 0, modelResetPending = false;
 let modelControlQueue: Promise<void> = Promise.resolve();
@@ -81,13 +89,15 @@ let connectionTimer: ReturnType<typeof setTimeout> | undefined;
 let mobile: MobileControls | undefined;
 let tabletopInspector: TabletopInspector | undefined;
 let turnStartedAt = 0, firstAudioMs: number | null = null, presentedEvents = new Set<string>();
-let lastFrame = performance.now(), lastMove = 0, movePending = false, lastMovement = false;
+let lastFrame = performance.now();
 let lastPartial = '', dragging = false, pointerX = 0, pointerY = 0;
 let pointerTravel = 0;
 let currentSpeechGeneration = 0;
 let tableAttention: { actor: 'h1' | 'h2'; until: number } | undefined;
 let hadPointerLock = false, intentionalPointerRelease = false;
 const keys = new Set<string>();
+const walkingView = new WalkingView();
+const movementSendGate = new MovementSendGate();
 const listeningPreview = new ListeningPreviewController();
 let listeningTarget: ListeningPreviewTarget = null;
 const money = (value: number) => '$' + value.toFixed(3);
@@ -168,7 +178,7 @@ function renderUsage() {
 function renderProviders() {
   if (!providers) return;
   const voiceStatus = providers.speechProvider === 'edge' ? 'Free Edge neural voices' : providers.speechProvider === 'elevenlabs' ? (providers.speech ? 'ElevenLabs configured' : 'ElevenLabs key is missing') : providers.cachedSpeech ? 'Reusable voice clips' : 'Captions only';
-  el('provider-status').textContent = `Anthropic: ${(providers.anthropic ?? providers.claude) ? 'key configured' : 'key missing'}. ${providers.horde ? `AI Horde: ${providers.defaultModel === 'ai-horde' ? 'free conversation' : 'available via /model horde'}. Community hosts process messages and may read or save them; replies can wait in a queue.` : `Dolphin: ${providers.dolphin ? 'available after mutual chemistry' : 'key not configured'}.`} Voice: ${voiceStatus}. Recognition runs locally.`;
+  el('provider-status').textContent = `Anthropic: ${(providers.anthropic ?? providers.claude) ? 'key configured' : 'key missing'}. Dolphin: ${providers.models.includes(DOLPHIN_LLM_MODEL) ? 'available via /model dolphin' : 'direct provider unavailable'}.${providers.models.includes(DOLPHIN_MODEL) ? ' Dolphin Venice via OpenRouter is also configured.' : ''} Voice: ${voiceStatus}. Recognition runs locally.`;
   el('developer-settings').hidden = !providers.development;
   input('session-limit').max = String(Math.min(20, providers.sessionLimit));
   if (!providers.models.includes(preferences.model)) { preferences.model = providers.defaultModel; delete preferences.modelSource; }
@@ -204,7 +214,7 @@ function applyState(next: DinnerState) {
     if (state.phase === 'playing') {
       if (cue.key.startsWith('ending-')) {
         // Let a farewell take the floor rather than wait behind earlier table chatter.
-        generationEpoch++; turnAbort?.abort(); speech.stop(); speechQueue = Promise.resolve(); pendingSpeeches = 0; busy = false; btn('send-turn').disabled = false;
+        generationEpoch++; turnAbort?.abort(); captionReadAbort?.abort(); speech.stop(); speechQueue = Promise.resolve(); pendingSpeeches = 0; busy = false; btn('send-turn').disabled = false;
       }
       ambience.cue(cue.key);
       // Routine pacing waits for a human who is mid-sentence; health, boundary, incident and farewell cues keep the floor.
@@ -242,10 +252,13 @@ async function request<T>(path: string, body?: unknown, options: { signal?: Abor
 const sessionPath = () => '/api/date/sessions/' + encodeURIComponent(state.id);
 async function command(body: DinnerCommand, quiet = false) {
   if (!joined) return false;
+  const sessionId = state.id, sessionToken = token;
   commandEpoch++;
   try {
     if (doubleClient.active) { await doubleClient.command({ type: 'scene', command: body }); return true; }
-    const result = await request<{ state: DinnerState }>(sessionPath() + '/command', body); applyState(result.state);
+    const result = await request<{ state: DinnerState }>(sessionPath() + '/command', body);
+    if (!joined || doubleClient.active || state.id !== sessionId || token !== sessionToken) return false;
+    applyState(result.state);
     return true;
   }
   catch (error) { if (!quiet) toast((error as Error).message); return false; }
@@ -327,7 +340,7 @@ tabletopInspector = new TabletopInspector(el('restaurant-app'), {
   async use(target) { await useTableTarget(target); },
   async command(body) { await command(body); },
   releasePointer,
-  changed() { keys.clear(); recognition.setPaused(state.phase !== 'playing' || visibleModal() || !doubleClient.active && !scenePresenceAvailable(state)); },
+  changed() { clearWalkingKeys(); recognition.setPaused(state.phase !== 'playing' || visibleModal() || !doubleClient.active && !scenePresenceAvailable(state)); },
 });
 
 function saveSessionReference() {
@@ -345,6 +358,7 @@ function updateMic() {
 }
 function cancelLocalPlayback() {
   generationEpoch++;
+  captionReadAbort?.abort(); captionReadAbort = undefined;
   turnAbort?.abort(); turnAbort = undefined;
   speech.stop(); busy = false; pendingSpeeches = 0; speechQueue = Promise.resolve();
   playback = { speaker: null, amplitude: 0, emotion: 'neutral', caption: '' };
@@ -366,6 +380,23 @@ async function interrupt() {
 async function humanHasFloor(epoch: number) {
   await waitWhile(() => epoch === generationEpoch && micEnabled && recognition.holdsHumanSpeech());
 }
+let captionDeliverySequence = 0;
+async function presentCaption(utterance: SceneUtterance, generation: number, epoch: number) {
+  if (epoch !== generationEpoch || !joined || state.phase !== 'playing' || !preferences.captions || document.hidden) return;
+  const controller = new AbortController(); captionReadAbort?.abort(); captionReadAbort = controller;
+  const deliveryId = `caption:${++captionDeliverySequence}`;
+  caption(utterance);
+  playback = { speaker: utterance.speaker, amplitude: 0, emotion: utterance.emotion, caption: utterance.text, actorId: utterance.actorId, deliveryId };
+  const readable = () => !document.hidden && !el('caption').hidden && preferences.captions;
+  const painted = await waitForCaptionPaint(controller.signal, document, readable, { request: callback => requestAnimationFrame(callback), cancel: id => cancelAnimationFrame(id) });
+  const completed = painted && await waitForCaptionReading(captionReadingMs(utterance.text), controller.signal, document, readable);
+  if (captionReadAbort === controller) captionReadAbort = undefined;
+  // A readable caption is real delivery. Enqueueing it, or interrupting it early, is not.
+  if (epoch === generationEpoch && joined && state.phase === 'playing' && playback.deliveryId === deliveryId) {
+    playback = { speaker: null, amplitude: 0, emotion: 'neutral', caption: '', deliveryId: null };
+    clearCaptionLater(1000); recordDelivery(generation, utterance, completed, 0);
+  }
+}
 function queueUtterance(utterance: SceneUtterance, generation: number, epoch: number, logLine = true, yieldToHuman = false) {
   if (logLine) log(speakerName(utterance.speaker, utterance.actorId), utterance.text);
   pendingSpeeches++;
@@ -380,17 +411,18 @@ function queueUtterance(utterance: SceneUtterance, generation: number, epoch: nu
       if (!current || current.interrupted) return;
     }
     if (!preferences.speech || (!providers?.speech && !providers?.cachedSpeech)) {
-      caption(utterance);
-      await new Promise(resolve => setTimeout(resolve, Math.min(9000, 1200 + utterance.text.length * 28)));
-      if (epoch === generationEpoch) {
-        clearCaptionLater(1000);
-        recordDelivery(generation, utterance, true, 0);
-      }
+      await presentCaption(utterance, generation, epoch);
       return;
     }
     currentSpeechGeneration = generation;
     await speech.play(utterance, signal => doubleClient.active && utterance.lineId ? doubleClient.speech(utterance.lineId, generation, signal) : fetch(sessionPath() + '/speech', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ generation, utterance }), signal }));
-  }).catch(error => { if (epoch === generationEpoch && (error as Error).name !== 'AbortError') { caption(utterance); clearCaptionLater(6000); toast((error as Error).message); } }).finally(() => { if (epoch === generationEpoch) pendingSpeeches = Math.max(0, pendingSpeeches - 1); });
+  }).catch(async error => {
+    if (epoch !== generationEpoch || (error as Error).name === 'AbortError') return;
+    toast((error as Error).message);
+    const status = (error as { status?: number }).status;
+    if (status !== undefined && status >= 400 && status < 500 && status !== 429) return;
+    await presentCaption(utterance, generation, epoch);
+  }).finally(() => { if (epoch === generationEpoch) pendingSpeeches = Math.max(0, pendingSpeeches - 1); });
 }
 async function sendTurn(raw: string, explicitTarget?: ConversationTarget, via: TurnVia = 'typed') {
   const text = raw.trim();
@@ -421,44 +453,58 @@ async function sendTurn(raw: string, explicitTarget?: ConversationTarget, via: T
     finally { doubleTurnSubmissions.delete(submitted); }
   }
   const epoch = ++generationEpoch;
-  turnAbort = new AbortController();
+  const controller = new AbortController(); turnAbort = controller;
   busy = true; updateTypedSubmit();
   log('You', text); el('turn-status').textContent = `${getDate(state.dateId)!.name} is listening…`;
   turnStartedAt = performance.now(); firstAudioMs = null;
-  let accepted = false, serverFailed = false;
+  let accepted = false, serverFailed = false, deadlineExpired = false, streamComplete = false;
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  const armDeadline = (model?: ClaudeModel) => {
+    clearTimeout(deadline);
+    deadline = setTimeout(() => { deadlineExpired = true; controller.abort(); }, Math.max(1, replyDeadlineMs(providers, model) - (performance.now() - turnStartedAt)));
+  };
+  armDeadline();
+  const waitingNotice = setTimeout(() => { if (epoch === generationEpoch && busy) el('turn-status').textContent = 'Still waiting for a reply… You can pause to cancel.'; }, 10000);
   try {
-    const response = await fetch(sessionPath() + '/turn', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ turnId: crypto.randomUUID(), text, model: preferences.model, via }), signal: turnAbort.signal });
+    const response = await fetch(sessionPath() + '/turn', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ turnId: crypto.randomUUID(), text, model: preferences.model, via }), signal: controller.signal });
     if (!response.ok) {
       const error = await response.json().catch(() => ({})) as { error?: string; message?: string };
       throw new Error(error.error || error.message || `Conversation unavailable (${response.status})`);
     }
     accepted = true;
-    if (!response.body) throw new Error('The conversation stream was empty. Please try again.');
-    const reader = response.body.getReader(), decoder = new TextDecoder(); let buffer = '';
-    const consume = (line: string) => {
-      if (!line.trim() || epoch !== generationEpoch) return;
-      const event = JSON.parse(line) as TurnEvent;
-      if (event.type === 'start') activeGeneration = event.generation;
-      else if (event.type === 'utterance') { activeGeneration = event.generation; queueUtterance(event.utterance, event.generation, epoch); }
+    await consumeTurnResponse(response, controller.signal, event => {
+      if (epoch !== generationEpoch) return;
+      if (event.type === 'start') {
+        activeGeneration = event.generation; armDeadline(event.model);
+        el('turn-status').textContent = event.model === 'ai-horde' ? 'Waiting for a community reply…' : `${getDate(state.dateId)!.name} is thinking…`;
+      }
+      else if (event.type === 'utterance') { clearTimeout(waitingNotice); activeGeneration = event.generation; queueUtterance(event.utterance, event.generation, epoch); }
       else if (event.type === 'state') applyState(event.state);
-      else if (event.type === 'error') { serverFailed = true; throw new Error(event.message); }
-    };
-    while (true) {
-      const result = await reader.read(); buffer += decoder.decode(result.value, { stream: !result.done });
-      const lines = buffer.split('\n'); buffer = lines.pop() || ''; lines.forEach(consume);
-      if (result.done) { consume(buffer); break; }
-    }
+      // Keep consuming the terminal snapshot and done after a provider failure.
+      // The stream helper reports its recorded error once those events are applied.
+      else if (event.type === 'error') serverFailed = true;
+    });
+    streamComplete = true;
     if (epoch === generationEpoch) el('turn-status').textContent = '';
     return true;
   } catch (error) {
+    if (deadlineExpired && epoch === generationEpoch) {
+      void interrupt();
+      const message = 'The reply took too long. You can keep playing and try another turn.';
+      toast(message, 10000); el('turn-status').textContent = 'Reply timed out · you can try again'; log('Connection', message, true);
+      return !serverFailed && accepted;
+    }
     if ((error as Error).name !== 'AbortError' && epoch === generationEpoch) {
-      // The server drops a failed reply's lines and cuts their audio. Stop them here too, so the cut
-      // stream reads as a cancellation rather than a voice outage that switches to the device voice.
-      if (serverFailed) { generationEpoch++; speech.stop(); pendingSpeeches = 0; speechQueue = Promise.resolve(); playback = { speaker: null, amplitude: 0, emotion: 'neutral', caption: '' }; busy = false; turnAbort = undefined; updateTypedSubmit(); }
+      // A failed or incomplete reply no longer owns delivery. Stop both queued
+      // captions and audio, including device fallback, without resetting dinner.
+      cancelLocalPlayback();
       toast((error as Error).message, 10000); el('turn-status').textContent = 'Conversation paused · you can try again'; log('Connection', (error as Error).message, true);
+      return false;
     }
     return !serverFailed && ((error as Error).name === 'AbortError' || epoch !== generationEpoch) ? accepted : false;
   } finally {
+    clearTimeout(deadline); clearTimeout(waitingNotice);
+    if (!streamComplete) controller.abort();
     if (epoch === generationEpoch) { busy = false; turnAbort = undefined; updateTypedSubmit(); }
   }
 }
@@ -521,9 +567,39 @@ function showEnding() {
   eveningUI.closeDialogs(); eveningUI.renderEnding(state); ambience.cue('ending');
   try { sessionStorage.removeItem('table-for-two-session'); } catch { /* Optional. */ }
 }
+function walkingInput() {
+  const touchBlocked = !!mobile?.enabled && (mobile.portrait || !!mobile.menuScope);
+  const controlsBlocked = menuInputOpen() || !el('conversation-form').hidden || pageSuspended || document.hidden;
+  const typing = controlsBlocked || touchBlocked || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+  const analog = mobile?.movement ?? { horizontal: 0, forward: 0 };
+  const horizontal = !typing ? Math.max(-1, Math.min(1, Number(keys.has('d') || keys.has('arrowright')) - Number(keys.has('a') || keys.has('arrowleft')) + analog.horizontal)) : 0;
+  const forward = !typing ? Math.max(-1, Math.min(1, Number(keys.has('w') || keys.has('arrowup')) - Number(keys.has('s') || keys.has('arrowdown')) + analog.forward)) : 0;
+  const canWalk = renderer.isReady && joined && state.phase === 'playing' && !state.seated && !pageSuspended && !document.hidden;
+  const moving = canWalk && !!(horizontal || forward);
+  const vector = renderer.getMovement(moving ? horizontal : 0, moving ? forward : 0);
+  const magnitude = Math.max(1, Math.hypot(vector.x, vector.z));
+  return { touchBlocked, controlsBlocked, horizontal, forward, canWalk, moving, moveX: vector.x / magnitude, moveZ: vector.z / magnitude };
+}
+function sendWalkingInput(now = performance.now()) {
+  const intent = walkingInput();
+  if (joined && state.phase === 'playing') {
+    const room = state.id, membership = doubleClient.credentials, sessionToken = token;
+    const yaw = renderer.getYaw();
+    movementSendGate.submit(room, now, intent.moving, intent.horizontal, intent.forward, complete => {
+      // The old request may finish after leaving or rejoining a different seat.
+      if (!joined || state.id !== room || doubleClient.credentials !== membership || token !== sessionToken || state.phase !== 'playing') { complete(); return; }
+      void command({ type: 'move', x: intent.moveX, z: intent.moveZ, yaw }, true).finally(complete);
+    });
+  }
+  return intent;
+}
+function clearWalkingKeys() {
+  if (!keys.size) return;
+  keys.clear(); sendWalkingInput();
+}
 function releasePointer() {
   keys.clear(); dragging = false; mobile?.clear();
-  if (joined && lastMovement) { lastMovement = false; void command({ type: 'move', x: 0, z: 0, yaw: renderer.getYaw() }, true); }
+  sendWalkingInput();
   if (document.pointerLockElement) { intentionalPointerRelease = true; document.exitPointerLock(); }
 }
 async function resumeDinner(after?: () => void) {
@@ -611,12 +687,41 @@ function inspectTableAt(x?: number, y?: number) {
   tabletopInspector!.open(hit.target); return true;
 }
 async function openMenu() {
-  if (!joined || state.phase !== 'playing') return;
+  if (!joined || state.phase !== 'playing' || menuClosing || !el('menu-dialog').hidden) return;
   tabletopInspector?.close();
   closeTypedInput();
   document.querySelectorAll<HTMLButtonElement>('[data-order]').forEach(button => { button.disabled = !!state.order; });
-  releasePointer(); menuPaused = !doubleClient.active; el('menu-dialog').hidden = false; recognition.setPaused(true);
-  if (!doubleClient.active) { await interrupt(); await command({ type: 'pause', paused: true }); }
+  releasePointer(); menuPaused = false; el('menu-dialog').hidden = false; recognition.setPaused(true);
+  const sessionId = state.id;
+  menuOpening = (async () => {
+    if (!doubleClient.active) {
+      await interrupt();
+      if (joined && state.id === sessionId && state.phase !== 'ended') menuPaused = await command({ type: 'pause', paused: true });
+    }
+  })();
+  await menuOpening;
+}
+async function closeMenu(choice?: string) {
+  if (el('menu-dialog').hidden || menuClosing) return;
+  menuClosing = true;
+  const sessionId = state.id;
+  const controls = el('menu-dialog').querySelectorAll<HTMLButtonElement>('button');
+  controls.forEach(control => { control.disabled = true; });
+  try {
+    // Opening is visible immediately, but its pause must land before resume/order.
+    await menuOpening;
+    if (!joined || state.id !== sessionId) return;
+    if (menuPaused && state.phase !== 'ended' && !await command({ type: 'pause', paused: false })) return;
+    menuPaused = false; el('menu-dialog').hidden = true;
+    if (choice && state.phase === 'playing') {
+      const accepted = await command({ type: 'interact', target: 'menu', choice });
+      if (accepted && state.order === choice) log('Dinner', `You ordered ${choice}.`, true);
+    }
+  } finally {
+    menuClosing = false;
+    controls.forEach(control => { control.disabled = !!control.dataset.order && !!state.order; });
+    recognition.setPaused(state.phase !== 'playing' || visibleModal() || !doubleClient.active && !scenePresenceAvailable(state));
+  }
 }
 function rebuildRenderer() {
   tabletopInspector?.close();
@@ -701,6 +806,7 @@ const doubleClient = new DoubleDateClient({
     else doubleLobby.hide();
     btn('back-to-table').hidden = room.phase === 'ended' || room.views[localId].phase !== 'ended';
     busy = !!room.processing;
+    updateTypedSubmit();
     if (busy) el('turn-status').textContent = 'Listening…';
     else if (el('turn-status').textContent === 'Listening…') el('turn-status').textContent = '';
     const target = el<HTMLSelectElement>('conversation-target');
@@ -776,16 +882,16 @@ mobile = new MobileControls(el('restaurant-app'), {
 async function restoreSession() {
   if (await doubleClient.restore()) return;
   const invite = new URL(location.href).searchParams.get('invite');
-  if (invite) { el('arrival-screen').hidden = true; doubleLobby.setInviteCode(invite); doubleLobby.show('join'); return; }
+  if (invite) { el('arrival-screen').hidden = true; doubleLobby.setInviteCode(invite); doubleLobby.show('join'); menuNavigation.refresh('gameplay'); return; }
   await resumeStoredDinner();
 }
 
 btn('title-start').addEventListener('click', () => { userEnteredMenu = true; el('arrival-screen').dataset.screen = 'mode'; menuNavigation.focusInitial(); });
-btn('mode-solo').addEventListener('click', () => { doubleLobby.hide(); state = preview(selectedDate); renderer.setDate(selectedDate); el('arrival-screen').dataset.screen = 'select'; });
+btn('mode-solo').addEventListener('click', () => { doubleLobby.hide(); state = preview(selectedDate); renderer.setDate(selectedDate); el('arrival-screen').dataset.screen = 'select'; menuNavigation.focusInitial(); });
 btn('mode-double').addEventListener('click', () => { el('arrival-screen').hidden = true; doubleLobby.show('entry'); menuNavigation.focusInitial(); });
 btn('mode-blind').addEventListener('click', () => void startDinner(true));
-btn('mode-back').addEventListener('click', () => { el('arrival-screen').dataset.screen = 'title'; });
-btn('select-back').addEventListener('click', () => { el('arrival-screen').dataset.screen = 'mode'; });
+btn('mode-back').addEventListener('click', () => { el('arrival-screen').dataset.screen = 'title'; menuNavigation.focusInitial(); });
+btn('select-back').addEventListener('click', () => { el('arrival-screen').dataset.screen = 'mode'; menuNavigation.focusInitial(); });
 document.querySelectorAll<HTMLButtonElement>('[data-date]').forEach(card => card.addEventListener('click', () => {
   selectedDate = card.dataset.date as DateId; state = preview(selectedDate); renderer.setDate(selectedDate);
   document.querySelector<HTMLElement>('.selection-stage-label strong')!.textContent = getDate(selectedDate)!.name;
@@ -827,7 +933,7 @@ async function applyModelChatCommand(command: ModelChatCommand, controlEpoch: nu
     } catch (error) { toast((error as Error).message); }
     return;
   }
-  if (!providers.models.includes(command.model)) { toast('That model is unavailable on this server.'); return; }
+  if (!providers.models.includes(command.model)) { toast(command.model === DOLPHIN_LLM_MODEL ? 'Dolphin direct is unavailable on this server.' : 'That model is unavailable on this server.'); return; }
   try {
     if (doubleClient.active) await doubleClient.command({ type: 'set-model', model: command.model });
     if (controlEpoch !== modelResetEpoch) return;
@@ -888,13 +994,9 @@ btn('back-to-table').addEventListener('click', async () => { if (!doubleClient.a
 btn('new-date').addEventListener('click', async () => { if (doubleClient.active) await doubleClient.leave(true); location.href = '/'; });
 btn('journal-toggle').addEventListener('click', () => { const open = el('journal').hidden; el('journal').hidden = !open; btn('journal-toggle').setAttribute('aria-expanded', String(open)); if (open) { releasePointer(); closeTypedInput(); } });
 btn('journal-close').addEventListener('click', () => { el('journal').hidden = true; btn('journal-toggle').setAttribute('aria-expanded', 'false'); });
-btn('menu-close').addEventListener('click', async () => { el('menu-dialog').hidden = true; if (menuPaused) await command({ type: 'pause', paused: false }); menuPaused = false; recognition.setPaused(false); });
+btn('menu-close').addEventListener('click', () => void closeMenu());
 document.querySelectorAll<HTMLButtonElement>('[data-order]').forEach(button => button.addEventListener('click', async () => {
-  el('menu-dialog').hidden = true;
-  if (menuPaused) await command({ type: 'pause', paused: false });
-  menuPaused = false; recognition.setPaused(false);
-  const accepted = await command({ type: 'interact', target: 'menu', choice: button.dataset.order });
-  if (accepted && state.order === button.dataset.order) log('Dinner', `You ordered ${button.dataset.order}.`, true);
+  await closeMenu(button.dataset.order);
 }));
 input('speech-enabled').checked = preferences.speech; input('captions-enabled').checked = preferences.captions;
 const ambientSetting = document.createElement('label'); ambientSetting.className = 'setting-row';
@@ -912,9 +1014,17 @@ interestSetting.append(interestCopy, interestToggle); ambientSetting.insertAdjac
 interestToggle.addEventListener('change', () => { preferences.interestCue = interestToggle.checked; interestCue.update(state, preferences.interestCue); savePreferences(); });
 input('voice-volume').value = String(preferences.volume); input('session-limit').value = String(preferences.sessionLimit);
 btn('settings-open').addEventListener('click', async () => {
-  releasePointer(); closeTypedInput(); settingsPaused = joined && state.phase === 'playing' && !doubleClient.active; el('settings-dialog').hidden = false;
+  if (settingsClosing || !el('settings-dialog').hidden) return;
+  const sessionId = state.id, shouldPause = joined && state.phase === 'playing' && !doubleClient.active;
+  releasePointer(); closeTypedInput(); settingsPaused = false; el('settings-dialog').hidden = false;
   recognition.setPaused(true); renderUsage(); renderProviders();
-  if (settingsPaused) { await interrupt(); await command({ type: 'pause', paused: true }); }
+  settingsOpening = (async () => {
+    if (shouldPause) {
+      await interrupt();
+      if (joined && state.id === sessionId && state.phase !== 'ended') settingsPaused = await command({ type: 'pause', paused: true });
+    }
+  })();
+  await settingsOpening;
 });
 btn('pause-settings').addEventListener('click', () => btn('settings-open').click());
 for (const [id, action] of [
@@ -924,9 +1034,17 @@ for (const [id, action] of [
   await resumeDinner(action);
 });
 btn('settings-close').addEventListener('click', async () => {
-  el('settings-dialog').hidden = true;
-  if (settingsPaused && state.phase !== 'ended') await command({ type: 'pause', paused: false });
-  settingsPaused = false; recognition.setPaused(state.phase !== 'playing' || visibleModal() || !doubleClient.active && !scenePresenceAvailable(state));
+  if (settingsClosing || el('settings-dialog').hidden) return;
+  settingsClosing = true; btn('settings-close').disabled = true;
+  const sessionId = state.id;
+  try {
+    await settingsOpening;
+    if (joined && state.id === sessionId && settingsPaused && state.phase !== 'ended' && !await command({ type: 'pause', paused: false })) return;
+    settingsPaused = false; el('settings-dialog').hidden = true;
+  } finally {
+    settingsClosing = false; btn('settings-close').disabled = false;
+    recognition.setPaused(state.phase !== 'playing' || visibleModal() || !doubleClient.active && !scenePresenceAvailable(state));
+  }
 });
 btn('settings-save').addEventListener('click', async () => {
   const value = Number(input('session-limit').value);
@@ -936,7 +1054,13 @@ btn('settings-save').addEventListener('click', async () => {
   el('settings-saved').textContent = 'Saved. The limit applies to a new dinner.';
 });
 input('speech-enabled').addEventListener('change', () => { preferences.speech = input('speech-enabled').checked; if (!preferences.speech) speech.stop(); savePreferences(); });
-input('captions-enabled').addEventListener('change', () => { preferences.captions = input('captions-enabled').checked; el('caption').hidden = !preferences.captions || !el('caption-text').textContent; savePreferences(); });
+input('captions-enabled').addEventListener('change', () => {
+  preferences.captions = input('captions-enabled').checked;
+  // Re-enabling captions cannot make an interrupted reading interval continuous.
+  if (!preferences.captions) captionReadAbort?.abort();
+  el('caption').hidden = !preferences.captions || !el('caption-text').textContent;
+  savePreferences();
+});
 input('voice-volume').addEventListener('input', () => { preferences.volume = Number(input('voice-volume').value); speech.setVolume(preferences.volume); savePreferences(); });
 document.addEventListener('mousemove', event => {
   if (mobile?.enabled || !joined || menuInputOpen() || state.phase !== 'playing') return;
@@ -948,14 +1072,14 @@ document.addEventListener('pointerlockchange', () => {
   const locked = document.pointerLockElement === renderer.canvas, lost = hadPointerLock && !locked;
   hadPointerLock = locked;
   el('capture-pointer').hidden = locked || !joined || visibleModal();
-  if (!locked) keys.clear();
+  if (!locked) clearWalkingKeys();
   if (lost && !intentionalPointerRelease && joined && state.phase === 'playing' && !visibleModal()) void pauseDinner();
   intentionalPointerRelease = false;
 });
 document.addEventListener('keydown', event => {
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((event.target as HTMLElement)?.tagName);
   if (event.key === 'Escape') {
-    event.preventDefault(); keys.clear();
+    event.preventDefault(); clearWalkingKeys();
     if (event.repeat) return;
     if (!el('ending-screen').hidden) return;
     if (tabletopInspector?.isOpen) { tabletopInspector.close(); return; }
@@ -970,22 +1094,27 @@ document.addEventListener('keydown', event => {
     else void pauseDinner();
     return;
   }
-  if (menuNavigation.handle(event)) { keys.clear(); return; }
+  if (menuNavigation.handle(event)) { clearWalkingKeys(); return; }
   if (startingDinner || typing || !joined || visibleModal() || state.phase !== 'playing' || (mobile?.enabled && mobile.portrait) || mobile?.menuScope) return;
   const key = event.key.toLowerCase();
   if (key === 'j' && !event.repeat) { event.preventDefault(); btn('journal-toggle').click(); return; }
   if (!el('journal').hidden) return;
   if (key === 'm' && !event.repeat) { event.preventDefault(); btn('mic-toggle').click(); return; }
   if (/^[1-4]$/.test(key) && !event.repeat && el('conversation-form').hidden) {
-    if (eveningUI.chip(Number(key))) { event.preventDefault(); keys.clear(); }
+    if (eveningUI.chip(Number(key))) { event.preventDefault(); clearWalkingKeys(); }
     return;
   }
-  if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) { keys.add(key); event.preventDefault(); }
+  if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
+    if (!keys.has(key)) { keys.add(key); sendWalkingInput(); }
+    event.preventDefault();
+  }
   if (key === 'e' && !event.repeat) { event.preventDefault(); void interact(); }
   if (key === 'r' && !event.repeat) { event.preventDefault(); inspectTableAt(); }
   if (key === 't' && !event.repeat) { event.preventDefault(); showTypedInput(); }
 });
-document.addEventListener('keyup', event => keys.delete(event.key.toLowerCase()));
+document.addEventListener('keyup', event => {
+  if (keys.delete(event.key.toLowerCase())) sendWalkingInput();
+});
 window.addEventListener('blur', () => releasePointer());
 function suspendPage() {
   releasePointer(); cancelLocalPlayback(); microphoneAttempt++;
@@ -1036,12 +1165,16 @@ function frame(now: number) {
     else renderer.setListeningPreview(cue);
   }
   renderer.setDateThinking(busy && !playback.speaker);
-  renderer.update(dt, state, playback);
+  // Keyboard events use the same ordered sender without waiting for this frame.
+  const { touchBlocked, controlsBlocked, canWalk, moveX, moveZ } = sendWalkingInput(now);
+  const humanIndex = state.participants.findIndex(participant => participant.kind === 'human');
+  const human = state.participants[humanIndex];
+  const viewPosition = human && walkingView.sample(state.id, human.position, canWalk, moveX, moveZ, dt);
+  const renderState = viewPosition ? { ...state, participants: state.participants.map((participant, index) => index === humanIndex ? { ...participant, position: viewPosition } : participant) } : state;
+  renderer.update(dt, renderState, playback);
   if (tabletopInspector?.target && !renderer.hasTableTarget(tabletopInspector.target)) tabletopInspector.close();
   el('scene-loading').hidden = renderer.isReady;
   el('prompt-line').classList.toggle('prompt-quiet', !joined || state.phase !== 'playing' || visibleModal() || !el('conversation-form').hidden);
-  const touchBlocked = !!mobile?.enabled && (mobile.portrait || !!mobile.menuScope);
-  const controlsBlocked = menuInputOpen() || !el('conversation-form').hidden || pageSuspended || document.hidden;
   const touchHit = !controlsBlocked && !touchBlocked && renderer.isReady && joined && state.phase === 'playing' ? renderer.getInteraction(state) : null;
   tabletopInspector?.update(state, touchHit && isInspectionTarget(touchHit.target) ? { target: touchHit.target, label: touchHit.label } : null);
   if (tabletopInspector?.isOpen && (otherModalOpen() || !el('journal').hidden || !el('conversation-form').hidden || pageSuspended || document.hidden || touchBlocked)) tabletopInspector.close();
@@ -1052,20 +1185,11 @@ function frame(now: number) {
     el('interaction').hidden = !hit;
     if (hit) el('interaction-label').textContent = hit.label;
     el('capture-pointer').hidden = !!mobile?.enabled || blocked || !!document.pointerLockElement || document.activeElement === input('conversation-input');
-    const typing = blocked || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
-    const analog = mobile?.movement ?? { horizontal: 0, forward: 0 };
-    const horizontal = !typing ? Math.max(-1, Math.min(1, Number(keys.has('d') || keys.has('arrowright')) - Number(keys.has('a') || keys.has('arrowleft')) + analog.horizontal)) : 0;
-    const forward = !typing ? Math.max(-1, Math.min(1, Number(keys.has('w') || keys.has('arrowup')) - Number(keys.has('s') || keys.has('arrowdown')) + analog.forward)) : 0;
-    const moving = !!(horizontal || forward) && !state.seated;
-    if (!movePending && now - lastMove > 80 && (moving || lastMovement)) {
-      lastMove = now; lastMovement = moving; movePending = true;
-      const vector = renderer.getMovement(moving ? horizontal : 0, moving ? forward : 0);
-      const magnitude = Math.max(1, Math.hypot(vector.x, vector.z));
-      void command({ type: 'move', x: vector.x / magnitude, z: vector.z / magnitude, yaw: renderer.getYaw() }, true).finally(() => { movePending = false; });
-    }
   } else { el('interaction').hidden = true; el('capture-pointer').hidden = true; }
   perfStats?.sample(now, performance.now() - frameStart);
 }
+// The DOM menus are ready before shader preparation or the first rendered frame.
+menuNavigation.refresh('gameplay');
 requestAnimationFrame(frame);
 async function connectRestaurant(attempt = 0) {
   try {

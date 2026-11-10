@@ -2,7 +2,9 @@
 // with names, and a short per-turn note written as prose. Everything here is deterministic server code: it adds no
 // model call, no provider and no spend. The stored history keeps its structured form (routing reads it); it is
 // rendered for the model at send time.
-import type { DinnerState, SceneUtterance, TurnVia } from '../../src/restaurant/types';
+import type { DateId, DinnerState, SceneUtterance, TurnVia } from '../../src/restaurant/types';
+import { getDate } from '../../src/restaurant/content';
+import { CHARACTER_STORIES } from '../../src/restaurant/story';
 import type { ConversationTarget, DoubleDateActorId, DoubleHumanId } from '../../src/restaurant/double-date-types';
 import { DATE_DIALOGUE_INSTRUCTIONS, MEMORY_PARTS, CONTRACT_MEMORY_CHARS, SPOKEN_REGISTER, TRIMMED_NOTE, VOICE_REMINDER, alternatingMessages, dateShapeHint, humanLengthHint, humanVoice, tableNow } from '../restaurant/dialogue-policy';
 import { SKEPTICISM_INSTRUCTIONS } from '../restaurant/skepticism';
@@ -10,6 +12,7 @@ import { AGENDA_INSTRUCTIONS } from '../restaurant/agendas';
 import { BOUNDARY_INSTRUCTIONS } from '../restaurant/boundaries';
 import { NOTES_EMPTY, agendaLine, asksAboutLine, boundaryLines, clean, heardPrefix, hintTurn, lastQuestion, quote, serviceFacts } from '../restaurant/turn-note';
 import type { AgendaPrompt, BoundaryPrompt } from '../restaurant/turn-note';
+import { conversationContentNote } from '../../src/restaurant/conversation-content';
 
 type Entry = { role: 'user' | 'assistant'; content: string };
 
@@ -32,6 +35,14 @@ export interface DateSheet {
   date: { name: string; age: number; pronouns: string; personality: string; preferences: string; boundaries: string };
   /** Biography with the voice habits split out; preferences, dishes and the dinner arc stay in the data. */
   life: unknown; voiceHabits: string;
+}
+
+/** The same cast sheet is used by the live director and text-only evaluation fixtures. */
+export function presetDateSheet(actorId: DoubleDateActorId, humanId: DoubleHumanId, dateId: DateId): DateSheet {
+  const date = getDate(dateId);
+  if (!date) throw new Error('Unknown date in table conversation prompt.');
+  const { voiceHabits, dinnerArc: _arc, preferences: _preferences, preferredMain: _main, preferredDessert: _dessert, occupation: _job, ...life } = CHARACTER_STORIES[dateId];
+  return { actorId, humanId, date, life, voiceHabits };
 }
 
 const TABLE_RULES = [
@@ -178,6 +189,16 @@ export function doubleTurnNote(input: DoubleNoteInput): string {
 
   for (const couple of couples) {
     if (couple.available) out.push(`${couple.dateName}’s notes (rewrite them into ${couple.dateName}’s "memory"):\n${couple.memory.trim() || NOTES_EMPTY}`);
+  }
+  // One table request has one content budget, even though it may write for two dates.
+  const directed = target === 'd1' || target === 'd2';
+  if (directed || target === 'table') for (const couple of couples) {
+    if (!couple.available || directed && couple.actorId !== target) continue;
+    const material = conversationContentNote({ dateId: couple.view.dateId, latestHumanText: input.humanText, memory: couple.memory,
+      recentDateLines: couple.recentOwn.filter(line => line.speaker === 'date').map(line => line.text),
+      personalDisclosureAllowed: couple.view.evening.stance === 'comfortable', stoppedTopics: couple.avoid,
+      maxSeeds: directed ? 2 : 1, maxEstimatedTokens: directed ? 570 : 270 });
+    if (material) out.push(`Private material for ${couple.dateName} only:\n${material}`);
   }
 
   const say = (couple: Couple) => (text: string) => humanVoice(text, couple.dateName, couple.humanName);

@@ -1,10 +1,10 @@
 import { createServer, type Server } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type Route } from '@playwright/test';
 import { attachRestaurantServer, type ClaudeAdapter } from '../server/restaurant';
 import type { ClaudeModel, DinnerState, SceneTurn } from '../src/restaurant/types';
-import { captureRestaurantScene, waitForRestaurantScene } from './restaurant-browser-helpers';
+import { captureRestaurantScene, reloadRestaurantScene, waitForRestaurantScene } from './restaurant-browser-helpers';
 import { createBlindDate } from '../src/restaurant/blind-date';
 
 let http: Server, app: Awaited<ReturnType<typeof attachRestaurantServer>>, base = '';
@@ -18,11 +18,13 @@ const claude: ClaudeAdapter = { async *stream(request, signal) {
   for (let i = 0; i < json.length; i += 25) { if (signal.aborted) return; yield { type: 'text', text: json.slice(i, i + 25) }; await new Promise(resolve => setTimeout(resolve, 5)); }
   yield { type: 'usage', usage: { outputTokens: 100 } };
 } };
-type HordeWaitGate = { marker: string; started: boolean; aborted: boolean; lateAttempted: boolean };
-let hordeWaitGate: HordeWaitGate | undefined;
-const cancelledHordeLine = 'The cancelled violet comet should never answer.';
-const horde: ClaudeAdapter = { async *stream(request, signal) {
-  const content = request.messages.at(-1)!.content, gate = hordeWaitGate;
+type DolphinWaitGate = { marker: string; started: boolean; aborted: boolean; lateAttempted: boolean };
+let dolphinWaitGate: DolphinWaitGate | undefined;
+let dolphinCalls = 0;
+const cancelledDolphinLine = 'The cancelled violet comet should never answer.';
+const dolphinLlm: ClaudeAdapter = { async *stream(request, signal) {
+  dolphinCalls++;
+  const content = request.messages.at(-1)!.content, gate = dolphinWaitGate;
   if (!gate || !content.includes(gate.marker)) { yield* claude.stream(request, signal); return; }
   calls.push({ model: request.model, text: content });
   gate.started = true;
@@ -33,13 +35,13 @@ const horde: ClaudeAdapter = { async *stream(request, signal) {
   });
   // Model a provider's final packet racing with cancellation. It must not play.
   gate.lateAttempted = true;
-  yield { type: 'text', text: JSON.stringify({ utterances: [{ speaker: 'date', text: cancelledHordeLine, emotion: 'neutral' }], emotion: 'neutral', action: 'none', memory: 'A cancelled response.' } satisfies SceneTurn) };
+  yield { type: 'text', text: JSON.stringify({ utterances: [{ speaker: 'date', text: cancelledDolphinLine, emotion: 'neutral' }], emotion: 'neutral', action: 'none', memory: 'A cancelled response.' } satisfies SceneTurn) };
 } };
 const state = (page: Page) => page.evaluate(() => (window as unknown as Window & { __restaurantState: DinnerState }).__restaurantState);
-const licensedAssets = [
-  ...['black_walnut_veneer_01', 'white_plaster_02', 'terlenka'].flatMap(material => ['albedo.jpg', 'roughness.jpg', 'normal-gl.jpg'].map(map => `/environment-assets/${material}/${map}`)),
-  '/restaurant-props/potted_plant_02.glb',
-];
+const plantAsset = '/restaurant-props/potted_plant_02.glb';
+const surfaceAssets = ['black_walnut_veneer_01', 'white_plaster_02', 'terlenka']
+  .flatMap(material => ['albedo.jpg', 'roughness.jpg', 'normal-gl.jpg'].map(map => `/environment-assets/${material}/${map}`));
+const licensedAssets = [...surfaceAssets, plantAsset];
 
 async function openSettingsFromPause(page: Page) {
   await page.route('**/api/date/sessions/*/interrupt', async route => {
@@ -47,13 +49,37 @@ async function openSettingsFromPause(page: Page) {
     await new Promise(resolve => setTimeout(resolve, 250));
     await route.fulfill({ response });
   }, { times: 1 });
-  await page.keyboard.press('Escape');
-  await expect(page.locator('#pause-dialog')).toBeVisible();
-  await expect(page.locator('#pause-settings')).toBeDisabled();
-  await expect(page.locator('#pause-talk')).toBeDisabled();
-  await expect(page.locator('#resume-date')).toBeEnabled();
-  await expect(page.locator('#resume-date')).toBeFocused();
-  for (let step = 0; step < 4; step++) await page.keyboard.press('ArrowDown');
+  // Navigate before the next game frame, then verify that its delayed menu
+  // refresh does not steal focus from the control the guest selected.
+  await page.evaluate(() => {
+    const win = window as typeof window & { __testMenuRaf?: { original: typeof requestAnimationFrame; pending: FrameRequestCallback[] } };
+    const original = window.requestAnimationFrame.bind(window), pending: FrameRequestCallback[] = [];
+    win.__testMenuRaf = { original, pending };
+    window.requestAnimationFrame = callback => { pending.push(callback); return -pending.length; };
+  });
+  try {
+    await page.evaluate(() => new Promise<void>(resolve => {
+      const gate = (window as typeof window & { __testMenuRaf: { original: typeof requestAnimationFrame } }).__testMenuRaf;
+      gate.original(() => gate.original(() => resolve()));
+    }));
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#pause-dialog')).toBeVisible();
+    await expect(page.locator('#pause-settings')).toBeDisabled();
+    await expect(page.locator('#pause-talk')).toBeDisabled();
+    await expect(page.locator('#resume-date')).toBeEnabled();
+    await expect(page.locator('#resume-date')).toBeFocused();
+    for (const id of ['pause-talk', 'pause-journal', 'pause-settings']) {
+      await page.keyboard.press('ArrowDown');
+      await expect(page.locator(`#${id}`)).toBeFocused();
+    }
+  } finally {
+    await page.evaluate(() => {
+      const win = window as typeof window & { __testMenuRaf?: { original: typeof requestAnimationFrame; pending: FrameRequestCallback[] } };
+      const gate = win.__testMenuRaf;
+      if (gate) { window.requestAnimationFrame = gate.original; gate.pending.forEach(callback => gate.original(callback)); delete win.__testMenuRaf; }
+    });
+  }
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   await expect(page.locator('#pause-settings')).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(page.locator('#settings-dialog')).toBeVisible();
@@ -84,7 +110,7 @@ test.beforeAll(async () => {
     if (!file.startsWith(root + sep)) { res.writeHead(403).end(); return; }
     void readFile(file).then(data => { res.setHeader('Content-Type', ({ '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.wasm': 'application/wasm', '.woff2': 'font/woff2', '.jpg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json' } as Record<string, string>)[extname(file)] || 'application/octet-stream'); res.end(data); }).catch(() => res.writeHead(404).end());
   });
-  app = await attachRestaurantServer(http, { env: { DATE_SPEECH_PROVIDER: 'none' }, claude, horde, development: true, ledgerPath: false });
+  app = await attachRestaurantServer(http, { env: { DATE_SPEECH_PROVIDER: 'none', DATE_ALLOW_MODEL_SELECTION: '1' }, claude, dolphinLlm, development: true, ledgerPath: false });
   await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${(http.address() as { port: number }).port}`;
   await mkdir('.qa', { recursive: true });
@@ -96,8 +122,11 @@ test('solo restaurant: roster, real movement, seat, order, streamed cast, privat
   page.setDefaultTimeout(8000);
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   const environmentResponses = new Map<string, number>();
+  const environmentRequests = new Set<string>();
+  page.on('request', request => { const path = new URL(request.url()).pathname; if (licensedAssets.includes(path)) environmentRequests.add(path); });
   page.on('response', response => { const path = new URL(response.url()).pathname; if (licensedAssets.includes(path)) environmentResponses.set(path, response.status()); });
-  await page.goto(base);
+  // The existing opt-in diagnostic reports the actual chosen tier, including software WebGL.
+  await page.goto(base + '/?stats');
   await expect(page.locator('#arrival-title')).toBeVisible();
   await expect(page.locator('#arrival-title')).not.toHaveText('');
   await expect(page.locator('#restaurant-app')).toHaveAttribute('data-input-mode', 'title');
@@ -121,8 +150,12 @@ test('solo restaurant: roster, real movement, seat, order, streamed cast, privat
   await expect(page.locator('[data-date="jules"]')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.date-card.selected')).toHaveAttribute('data-date', 'jules');
   await expect(page.locator('.selection-stage-label strong')).toHaveText('Jules');
-  await expect.poll(() => licensedAssets.filter(path => !environmentResponses.has(path)), { timeout: 15000 }).toEqual([]);
-  expect(licensedAssets.map(path => environmentResponses.get(path))).toEqual(licensedAssets.map(() => 200));
+  await expect(page.locator('#perf-stats')).toContainText(/\b(?:high|low) tier\b/, { timeout: 15000 });
+  const tier = /\b(high|low) tier\b/.exec(await page.locator('#perf-stats').innerText())![1];
+  const expectedAssets = tier === 'high' ? licensedAssets : surfaceAssets;
+  await expect.poll(() => expectedAssets.filter(path => !environmentResponses.has(path)), { timeout: 15000 }).toEqual([]);
+  expect(expectedAssets.map(path => environmentResponses.get(path))).toEqual(expectedAssets.map(() => 200));
+  if (tier === 'low') expect(environmentRequests.has(plantAsset)).toBe(false);
   await captureRestaurantScene(page, '.qa/restaurant-arrival.png');
   await page.keyboard.press('Enter');
   await expect(page.locator('#arrival-screen')).toBeHidden();
@@ -165,15 +198,49 @@ test('solo restaurant: roster, real movement, seat, order, streamed cast, privat
   await waitForRestaurantScene(page);
   const before = (await state(page)).participants[0].position[2];
   await page.locator('#conversation-input').blur();
-  for (let i = 0; i < 20 && (await state(page)).participants[0].position[2] > 1.4; i++) {
-    await page.keyboard.down('w'); await page.waitForTimeout(220); await page.keyboard.up('w');
+  // Hold animation callbacks to verify keyboard movement and release do not
+  // depend on another rendered frame, then restore all queued callbacks.
+  const movementResponse = (moving: boolean) => page.waitForResponse(response => {
+    const request = response.request();
+    if (request.method() !== 'POST' || !new URL(request.url()).pathname.endsWith('/command')) return false;
+    const command = request.postDataJSON();
+    return command.type === 'move' && (Math.hypot(command.x, command.z) > 0) === moving;
+  }, { timeout: 15000 });
+  await page.evaluate(() => {
+    const win = window as typeof window & { __testRafGate?: { original: typeof requestAnimationFrame; pending: FrameRequestCallback[] } };
+    const original = window.requestAnimationFrame.bind(window), pending: FrameRequestCallback[] = [];
+    win.__testRafGate = { original, pending };
+    window.requestAnimationFrame = callback => { pending.push(callback); return -pending.length; };
+  });
+  try {
+    // Let any frame already queued before interception finish; new frames stay held.
+    await page.evaluate(() => new Promise<void>(resolve => {
+      const gate = (window as typeof window & { __testRafGate: { original: typeof requestAnimationFrame } }).__testRafGate;
+      gate.original(() => gate.original(() => resolve()));
+    }));
+    await expect.poll(() => page.evaluate(() => (window as typeof window & { __testRafGate?: { pending: FrameRequestCallback[] } }).__testRafGate!.pending.length), { timeout: 15000 }).toBeGreaterThan(0);
+    const start = movementResponse(true);
+    await page.keyboard.down('w');
+    expect((await start).status()).toBe(200);
+    const stop = movementResponse(false);
+    await page.keyboard.up('w');
+    expect((await stop).status()).toBe(200);
+  } finally {
+    await page.keyboard.up('w');
+    await page.evaluate(() => {
+      const win = window as typeof window & { __testRafGate?: { original: typeof requestAnimationFrame; pending: FrameRequestCallback[] } };
+      const gate = win.__testRafGate;
+      if (gate) { window.requestAnimationFrame = gate.original; gate.pending.forEach(callback => gate.original(callback)); delete win.__testRafGate; }
+    });
   }
-  expect((await state(page)).participants[0].position[2]).toBeLessThan(before - 2);
-  // Real mouse-look points at the physical chair/table, then E performs the interaction.
+  // Aim at the real chair, walk to its interaction, and sit before releasing W.
   await page.mouse.move(640, 400); await page.mouse.down(); await page.mouse.move(640, 610, { steps: 8 }); await page.mouse.up();
-  await expect(page.locator('#interaction')).toBeVisible();
-  await expect(page.locator('#interaction')).toContainText(/seat/i);
-  await page.keyboard.press('e');
+  await page.keyboard.down('w');
+  try {
+    await expect.poll(async () => (await state(page)).participants[0].position[2], { timeout: 15000 }).toBeLessThan(before - 2);
+    await expect(page.locator('#interaction').filter({ hasText: /seat/i })).toBeVisible({ timeout: 15000 });
+    await page.keyboard.press('e');
+  } finally { await page.keyboard.up('w'); }
   await expect.poll(async () => (await state(page)).seated).toBe(true);
   await expect.poll(async () => {
     const date = (await state(page)).participants.find(participant => participant.kind === 'ai')!;
@@ -205,12 +272,67 @@ test('solo restaurant: roster, real movement, seat, order, streamed cast, privat
   await expect.poll(async () => (await state(page)).phase).toBe('playing');
   await page.keyboard.up('Escape');
   await expect(page.locator('.restaurant-canvas')).toHaveAttribute('aria-label', 'First-person view of Table for Two restaurant');
-  await menuChip.click();
-  await expect(page.locator('#menu-dialog')).toBeVisible();
-  await page.locator('[data-order="Wild mushroom risotto"]').focus();
-  await page.keyboard.press('Enter');
-  await expect.poll(async () => (await state(page)).order).toBe('Wild mushroom risotto');
+  // Deliberately hold the second menu's pause: ordering immediately must wait for
+  // the pause before resuming and submitting the order, even on a slow connection.
+  let releaseMenuPause!: () => void, pauseHeld = false;
+  const menuPauseReleased = new Promise<void>(resolve => { releaseMenuPause = resolve; });
+  const menuCommands: string[] = [];
+  const holdMenuPause = async (route: Route) => {
+    const command = route.request().postDataJSON();
+    if (command.type === 'pause') {
+      menuCommands.push(command.paused ? 'pause' : 'resume');
+      if (command.paused) { pauseHeld = true; await menuPauseReleased; }
+    } else if (command.type === 'interact' && command.target === 'menu') menuCommands.push('order');
+    await route.continue();
+  };
+  const commandRoute = '**/api/date/sessions/*/command';
+  await page.route(commandRoute, holdMenuPause);
+  try {
+    await menuChip.click();
+    await expect(page.locator('#menu-dialog')).toBeVisible();
+    await expect.poll(() => pauseHeld).toBe(true);
+    await page.locator('[data-order="Wild mushroom risotto"]').focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('[data-order="Wild mushroom risotto"]')).toBeDisabled();
+    expect(menuCommands).toEqual(['pause']);
+    releaseMenuPause();
+    await expect.poll(async () => (await state(page)).order).toBe('Wild mushroom risotto');
+    expect(menuCommands).toEqual(['pause', 'resume', 'order']);
+  } finally {
+    releaseMenuPause();
+    await page.unroute(commandRoute, holdMenuPause);
+  }
   await expect(page.locator('.restaurant-canvas')).toHaveAttribute('aria-label', 'First-person view of Table for Two restaurant');
+
+  // Exercise the settings handler while playing. The visible settings entry is
+  // normally under Pause, so invoke the same button handler directly here.
+  let releaseSettingsPause!: () => void, settingsPauseHeld = false;
+  const settingsPauseReleased = new Promise<void>(resolve => { releaseSettingsPause = resolve; });
+  const settingsCommands: string[] = [];
+  const holdSettingsPause = async (route: Route) => {
+    const command = route.request().postDataJSON();
+    if (command.type === 'pause') {
+      settingsCommands.push(command.paused ? 'pause' : 'resume');
+      if (command.paused) { settingsPauseHeld = true; await settingsPauseReleased; }
+    }
+    await route.continue();
+  };
+  await page.route(commandRoute, holdSettingsPause);
+  try {
+    await page.locator('#settings-open').evaluate((button: HTMLButtonElement) => button.click());
+    await expect(page.locator('#settings-dialog')).toBeVisible();
+    await expect.poll(() => settingsPauseHeld).toBe(true);
+    await page.locator('#settings-close').click();
+    await expect(page.locator('#settings-close')).toBeDisabled();
+    expect(settingsCommands).toEqual(['pause']);
+    releaseSettingsPause();
+    await expect(page.locator('#settings-dialog')).toBeHidden();
+    await expect.poll(async () => (await state(page)).phase).toBe('playing');
+    expect(settingsCommands).toEqual(['pause', 'resume']);
+  } finally {
+    releaseSettingsPause();
+    await page.unroute(commandRoute, holdSettingsPause);
+  }
 
   await openSettingsFromPause(page);
   await expect(page.locator('#model-select')).toHaveCount(0);
@@ -244,8 +366,8 @@ test('solo restaurant: roster, real movement, seat, order, streamed cast, privat
   expect((await state(page)).elapsed).toBeCloseTo(frozen, 1);
   await page.locator('#resume-date').click();
   await expect.poll(async () => (await state(page)).phase).toBe('playing');
-  await page.reload();
-  await expect(page.locator('#pause-dialog')).toBeVisible();
+  await reloadRestaurantScene(page);
+  await expect(page.locator('#pause-dialog')).toBeVisible({ timeout: 15000 });
   await expect(page.locator('#dinner-hud')).toBeHidden();
   await expect(page.locator('#conversation-form')).toBeHidden();
   await page.locator('#resume-date').click();
@@ -288,7 +410,7 @@ test('menus and rapid date changes stay usable during warmup, including disposal
   });
   let releaseAssets!: () => void, heldRequests = 0;
   const assetsReleased = new Promise<void>(resolve => { releaseAssets = resolve; });
-  await page.route('**/restaurant-props/potted_plant_02.glb', async route => {
+  await page.route('**/environment-assets/black_walnut_veneer_01/albedo.jpg*', async route => {
     heldRequests++; await assetsReleased; await route.continue().catch(() => {});
   });
   const seed = Array.from({ length: 32 }, (_, index) => `warmup-disposal-${index}`).find(value => createBlindDate(value).dateId !== 'dev')!;
@@ -298,32 +420,42 @@ test('menus and rapid date changes stay usable during warmup, including disposal
     await route.continue(body.mode === 'blind-date' ? { postData: JSON.stringify({ ...body, seed }) } : {});
   });
   const callsBeforeWarmup = calls.length;
+  async function expectWarmupState() {
+    const parallel = await page.locator('.restaurant-canvas').evaluate(canvas => !!(canvas as HTMLCanvasElement).getContext('webgl2')?.getExtension('KHR_parallel_shader_compile'));
+    if (parallel) {
+      await expect(page.locator('.restaurant-canvas')).toHaveAttribute('aria-busy', 'true');
+      await expect(page.locator('#scene-loading')).toBeVisible();
+    } else {
+      // The existing serial fallback renders normally instead of awaiting assets in compileAsync.
+      await waitForRestaurantScene(page);
+    }
+    return parallel;
+  }
   try {
     await page.goto(base);
     await expect(page.locator('#title-start')).toBeFocused({ timeout: 15000 });
     await page.keyboard.press('Enter'); await expect(page.locator('#mode-menu')).toBeVisible();
     await page.locator('#mode-solo').click();
     await expect.poll(() => heldRequests).toBeGreaterThan(0);
-    await expect(page.locator('.restaurant-canvas')).toHaveAttribute('aria-busy', 'true');
-    await expect(page.locator('#scene-loading')).toBeVisible();
+    await expectWarmupState();
     for (const dateId of ['jules','mira','dev']) await page.locator(`[data-date="${dateId}"]`).click();
     await expect(page.locator('[data-date="dev"]')).toHaveAttribute('aria-pressed', 'true');
     await expect(page.locator('.selection-stage-label strong')).toHaveText('Dev');
     const previousCanvas = await page.locator('.restaurant-canvas').elementHandle();
     await page.locator('#select-back').click(); await page.locator('#mode-blind').click();
-    await expect(page.locator('#dinner-hud')).toBeVisible();
+    await expect(page.locator('#dinner-hud')).toBeVisible({ timeout: 15000 });
     await expect.poll(async () => (await state(page)).mode).toBe('blind-date');
     expect((await state(page)).dateId).toBe(expected.dateId); expect(expected.dateId).not.toBe('dev');
     expect(await previousCanvas!.evaluate(canvas => canvas.isConnected)).toBe(false);
     await expect(page.locator('.restaurant-canvas')).toHaveCount(1);
-    await expect(page.locator('.restaurant-canvas')).toHaveAttribute('aria-busy', 'true');
-    await expect(page.locator('#scene-loading')).toBeVisible();
-    const before = (await state(page)).participants[0].position;
-    await page.keyboard.down('w'); await page.keyboard.press('e');
-    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-    await page.keyboard.up('w');
+    if (await expectWarmupState()) {
+      const before = (await state(page)).participants[0].position;
+      await page.keyboard.down('w'); await page.keyboard.press('e');
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      await page.keyboard.up('w');
+      (await state(page)).participants[0].position.forEach((coordinate, index) => expect(coordinate).toBeCloseTo(before[index], 5));
+    }
     expect(inputCommands).toEqual([]);
-    (await state(page)).participants[0].position.forEach((coordinate, index) => expect(coordinate).toBeCloseTo(before[index], 5));
     releaseAssets();
     await waitForRestaurantScene(page);
     expect((await state(page)).dateId).toBe(expected.dateId);
@@ -339,6 +471,8 @@ test('menus and rapid date changes stay usable during warmup, including disposal
 async function beginNewSolo(page: Page) {
   page.setDefaultTimeout(12000);
   await page.goto(base);
+  await expect(page.locator('#restaurant-app')).toHaveAttribute('data-input-mode', 'title', { timeout: 12000 });
+  await expect(page.locator('#title-start')).toBeFocused();
   await page.locator('#title-start').click();
   await page.locator('#mode-solo').click();
   await page.locator('#start-date').click();
@@ -378,6 +512,10 @@ test('Haiku is the default, private model commands survive reload and reset rest
   await expect(page.locator('#toast')).toHaveText('Conversation model: Haiku.');
   await modelCommand(page, '/model nonexistent');
   await expect(page.locator('#toast')).toHaveText('That model command is not valid.');
+  await modelCommand(page, '/model horde');
+  await expect(page.locator('#toast')).toHaveText('That model command is not valid.');
+  await modelCommand(page, '/model ai-horde');
+  await expect(page.locator('#toast')).toHaveText('That model command is not valid.');
   expect(turnPosts).toEqual([]); expect(calls.length).toBe(before);
   expect((await state(page)).usage.claudeRequests).toBe(0);
 
@@ -398,8 +536,8 @@ test('Haiku is the default, private model commands survive reload and reset rest
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('table-for-two-settings')!))).toMatchObject({ model: 'claude-sonnet-5-5', modelSource: 'chat-command' });
   await speak('Where would you travel next?', 'claude-sonnet-5-5', 2);
 
-  await page.reload();
-  await expect(page.locator('#pause-dialog')).toBeVisible();
+  await reloadRestaurantScene(page);
+  await expect(page.locator('#pause-dialog')).toBeVisible({ timeout: 15000 });
   await page.locator('#resume-date').click();
   await expect.poll(async () => (await state(page)).phase).toBe('playing');
   await waitForRestaurantScene(page);
@@ -414,23 +552,24 @@ test('Haiku is the default, private model commands survive reload and reset rest
   expect(turnPosts.map(turn => turn.model)).toEqual(['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']);
   // Every one of these was typed, and the client says so (spoken turns say "voice"). Added with the turn-provenance work; not run in the authoring environment.
   expect(turnPosts.map(turn => turn.via)).toEqual(['typed', 'typed', 'typed', 'typed']);
-  const beforeHordeCost = (await state(page)).usage.claudeCost;
-  await modelCommand(page, '/model horde');
-  await expect(page.locator('#toast')).toHaveText('AI Horde selected for the next turn.');
+  const directBefore = dolphinCalls;
+  await modelCommand(page, '/model dolphin');
+  await expect(page.locator('#toast')).toHaveText('Dolphin selected for the next turn.');
   expect(calls.length).toBe(before + 4);
   await modelCommand(page, '/model');
-  await expect(page.locator('#toast')).toHaveText('Conversation model: AI Horde (next turn).');
-  await speak('Tell me what makes a first date feel exciting.', 'ai-horde', 5);
-  expect((await state(page)).usage.claudeCost).toBe(beforeHordeCost);
-  await page.reload();
-  await expect(page.locator('#pause-dialog')).toBeVisible();
+  await expect(page.locator('#toast')).toHaveText('Conversation model: Dolphin (next turn).');
+  await speak('Tell me what makes a first date feel exciting.', 'dolphinllm/uncensored', 5);
+  expect(dolphinCalls).toBe(directBefore + 1);
+  await reloadRestaurantScene(page);
+  await expect(page.locator('#pause-dialog')).toBeVisible({ timeout: 15000 });
   await page.locator('#resume-date').click();
   await expect.poll(async () => (await state(page)).phase).toBe('playing');
   await waitForRestaurantScene(page);
   await modelCommand(page, '/model');
-  await expect(page.locator('#toast')).toHaveText('Conversation model: AI Horde.');
-  await speak('I like a little playful confidence.', 'ai-horde', 6);
-  expect(turnPosts.slice(-2).map(turn => turn.model)).toEqual(['ai-horde', 'ai-horde']);
+  await expect(page.locator('#toast')).toHaveText('Conversation model: Dolphin.');
+  await speak('I like a little playful confidence.', 'dolphinllm/uncensored', 6);
+  expect(dolphinCalls).toBe(directBefore + 2);
+  expect(turnPosts.slice(-2).map(turn => turn.model)).toEqual(['dolphinllm/uncensored', 'dolphinllm/uncensored']);
 
   const beforeReset = await state(page);
   const savedSession = await page.evaluate(() => JSON.parse(sessionStorage.getItem('table-for-two-session')!));
@@ -449,8 +588,8 @@ test('Haiku is the default, private model commands survive reload and reset rest
   await expect(page.locator('#toast')).toHaveText('Conversation model: Haiku.');
   await speak('Let us enjoy the rest of our evening.', 'claude-haiku-5-5', 7);
 
-  await page.reload();
-  await expect(page.locator('#pause-dialog')).toBeVisible();
+  await reloadRestaurantScene(page);
+  await expect(page.locator('#pause-dialog')).toBeVisible({ timeout: 15000 });
   await page.locator('#resume-date').click();
   await expect.poll(async () => (await state(page)).phase).toBe('playing');
   await waitForRestaurantScene(page);
@@ -468,12 +607,12 @@ test('Haiku is the default, private model commands survive reload and reset rest
   await expect(page.locator('#model-select')).toHaveCount(0);
 });
 
-test('model reset cancels a waiting Horde turn and keeps the same date playable on Haiku', async ({ page }) => {
+test('model reset cancels a waiting Dolphin turn and keeps the same date playable on Haiku', async ({ page }) => {
   test.setTimeout(60000);
   await page.addInitScript(() => {
     localStorage.setItem('table-for-two-settings', JSON.stringify({ speech: false, ambience: false }));
   });
-  const gate: HordeWaitGate = { marker: 'A fictional violet comet waits at platform nine.', started: false, aborted: false, lateAttempted: false };
+  const gate: DolphinWaitGate = { marker: 'A fictional violet comet waits at platform nine.', started: false, aborted: false, lateAttempted: false };
   const turnPosts: { text: string; model: ClaudeModel }[] = [], playbackTexts: string[] = [];
   page.on('request', request => {
     if (request.method() !== 'POST') return;
@@ -483,17 +622,17 @@ test('model reset cancels a waiting Horde turn and keeps the same date playable 
       const data = request.postDataJSON(); playbackTexts.push(data.text ?? data.utterance?.text ?? '');
     }
   });
-  hordeWaitGate = gate;
+  dolphinWaitGate = gate;
   try {
     await beginNewSolo(page);
     const before = await state(page), callsBefore = calls.length;
-    await modelCommand(page, '/model horde');
-    await expect(page.locator('#toast')).toHaveText('AI Horde selected for the next turn.');
+    await modelCommand(page, '/model dolphin');
+    await expect(page.locator('#toast')).toHaveText('Dolphin selected for the next turn.');
     await page.keyboard.press('t');
     await page.locator('#conversation-input').fill(gate.marker);
     await page.locator('#send-turn').click();
     await expect.poll(() => gate.started).toBe(true);
-    expect(calls.at(-1)?.model).toBe('ai-horde');
+    expect(calls.at(-1)?.model).toBe('dolphinllm/uncensored');
     await expect(page.locator('#conversation-form')).toBeHidden();
 
     // Ordinary turns stay disabled while this request is pending; reset can escape it.
@@ -511,9 +650,9 @@ test('model reset cancels a waiting Horde turn and keeps the same date playable 
     expect(await page.evaluate(() => JSON.parse(localStorage.getItem('table-for-two-settings')!))).not.toHaveProperty('modelSource');
     await expect(page.locator('#conversation-input')).toHaveValue('');
     await expect(page.locator('#caption')).toBeHidden();
-    await expect(page.locator('#conversation-log')).not.toContainText(cancelledHordeLine);
-    await expect(page.locator('#caption-text')).not.toContainText(cancelledHordeLine);
-    await page.screenshot({ path: '.qa/restaurant-model-reset-cancelled-horde.png' });
+    await expect(page.locator('#conversation-log')).not.toContainText(cancelledDolphinLine);
+    await expect(page.locator('#caption-text')).not.toContainText(cancelledDolphinLine);
+    await page.screenshot({ path: '.qa/restaurant-model-reset-cancelled-dolphin.png' });
 
     await modelCommand(page, '/model');
     await expect(page.locator('#toast')).toHaveText('Conversation model: Haiku.');
@@ -525,11 +664,11 @@ test('model reset cancels a waiting Horde turn and keeps the same date playable 
     await expect(page.locator('#conversation-log')).toContainText('What do you like to cook?');
     await expect.poll(async () => (await state(page)).usage.outputTokens).toBe(100);
     await expect(page.locator('#send-turn')).toBeEnabled();
-    expect(turnPosts.map(turn => turn.model)).toEqual(['ai-horde', 'claude-haiku-5-5']);
-    expect(playbackTexts).not.toContain(cancelledHordeLine);
-    await expect(page.locator('#conversation-log')).not.toContainText(cancelledHordeLine);
-    await expect(page.locator('#caption-text')).not.toContainText(cancelledHordeLine);
-  } finally { hordeWaitGate = undefined; }
+    expect(turnPosts.map(turn => turn.model)).toEqual(['dolphinllm/uncensored', 'claude-haiku-5-5']);
+    expect(playbackTexts).not.toContain(cancelledDolphinLine);
+    await expect(page.locator('#conversation-log')).not.toContainText(cancelledDolphinLine);
+    await expect(page.locator('#caption-text')).not.toContainText(cancelledDolphinLine);
+  } finally { dolphinWaitGate = undefined; }
 });
 
 test('model reset discards an ordinary turn still waiting for interruption before submission', async ({ page }) => {
@@ -571,7 +710,9 @@ test('model reset discards an ordinary turn still waiting for interruption befor
     await page.keyboard.press('t');
     await page.locator('#conversation-input').fill('/model reset');
     await expect(page.locator('#send-turn')).toBeEnabled();
-    await page.locator('#send-turn').click();
+    // Submit the chat command before the bounded interruption wait expires.
+    // Waiting for two slow mouse-actionability frames would test a later reset instead.
+    await page.locator('#conversation-input').press('Enter');
     await expect(page.locator('#conversation-form')).toBeHidden();
     expect(resetPosts).toEqual([]);
     releaseInterruption();

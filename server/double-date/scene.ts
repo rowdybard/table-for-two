@@ -229,7 +229,7 @@ export class DoubleTableScene {
   redirectConversation(human: DoubleHumanId) { this.directors.get(human)!.redirectConversation(false); }
   social(human: DoubleHumanId, turn: SceneTurn, humanText = '', speaker: DoubleHumanId = human) {
     const view = this.state.views[human];
-    view.emotion = turn.emotion; view.memory = clampMemory(turn.memory, view.memory); this.directors.get(human)!.social(turn, humanText, { humanId: speaker, paired: speaker === human, name: this.state.members.find(member => member.id === speaker)?.name });
+    view.emotion = turn.emotion; view.memory = clampMemory(turn.memory, view.memory, humanText); this.directors.get(human)!.social(turn, humanText, { humanId: speaker, paired: speaker === human, name: this.state.members.find(member => member.id === speaker)?.name });
   }
   viewEnding(human: DoubleHumanId, show: boolean) {
     if (this.state.views[human].phase !== 'ended') throw new Error('Finish your date before viewing its ending.');

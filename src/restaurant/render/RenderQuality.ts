@@ -37,6 +37,8 @@ export interface RenderQualityEnvironment {
   webdriver?: boolean;
   /** The WebGL context reports a CPU rasterizer (see isSoftwareRenderer). */
   softwareRenderer?: boolean;
+  /** The active WebGL renderer name, if the browser exposes it. */
+  gpuName?: string;
 }
 
 /**
@@ -45,8 +47,10 @@ export interface RenderQualityEnvironment {
  */
 export const RENDER_TIERS: Readonly<Record<RenderTier, { pixelRatioCap: number; pixelBudget: number; minPixels: number; minScale: number }>> = {
   high: { pixelRatioCap: 1.5, pixelBudget: 2_100_000, minPixels: 560_000, minScale: .5 },
-  low: { pixelRatioCap: 1.25, pixelBudget: 1_000_000, minPixels: 200_000, minScale: .5 },
+  low: { pixelRatioCap: 1, pixelBudget: 600_000, minPixels: 240_000, minScale: .5 },
 };
+/** CPU rasterizers need a lower starting load; DOM menus/captions retain their native resolution. */
+export const SOFTWARE_RENDER_BUDGET = { pixelRatioCap: 1, pixelBudget: 320_000, minPixels: 160_000, minScale: .5 } as const;
 
 type ResolutionPolicy = Pick<RenderQuality, 'pixelRatioCap' | 'pixelBudget' | 'minPixels'>;
 
@@ -105,10 +109,10 @@ export function detectRenderQuality(env: RenderQualityEnvironment = readRenderQu
   const memory = env.deviceMemory;
   const smallMemory = typeof memory === 'number' && Number.isFinite(memory) && memory > 0 && memory <= LOW_DEVICE_MEMORY_GB;
   const software = !!env.softwareRenderer;
-  const tier: RenderTier = override ?? (env.coarsePointer || touchScreen || smallMemory || software ? 'low' : 'high');
+  const tier: RenderTier = override ?? (env.coarsePointer || touchScreen || smallMemory || software || isConstrainedIntegratedGpu(env.gpuName ?? '') ? 'low' : 'high');
   return {
     tier,
-    ...RENDER_TIERS[tier],
+    ...(software && tier === 'low' ? SOFTWARE_RENDER_BUDGET : RENDER_TIERS[tier]),
     adaptive: !override && !env.webdriver,
     forced: !!override,
     software,
@@ -128,4 +132,10 @@ export function readGpuName(gl: WebGLRenderingContext | WebGL2RenderingContext):
 /** True for CPU rasterizers: Chrome falls back to SwiftShader when hardware acceleration is off or the GPU is blocklisted. */
 export function isSoftwareRenderer(gpuName: string) {
   return /swiftshader|llvmpipe|softpipe|lavapipe|basic render driver|software rasterizer|mesa offscreen/i.test(gpuName);
+}
+
+/** Conservative defaults for named integrated GPU families; unknown and discrete adapters keep the normal tier. */
+export function isConstrainedIntegratedGpu(gpuName: string) {
+  return /\bintel(?:\s*\(r\))?\s+(?:hd|uhd)\s+graphics\b/i.test(gpuName)
+    || /\bradeon(?:\s*\(tm\))?\s+vega\s*(?:3|6|7|8|10|11)(?!\d)/i.test(gpuName);
 }

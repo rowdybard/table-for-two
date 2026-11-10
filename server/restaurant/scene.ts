@@ -86,7 +86,7 @@ export class DinnerScene {
     this.syncPositions();
   }
   applyTurn(turn: SceneTurn, humanText = '') {
-    this.state.emotion = turn.emotion; this.state.memory = clampMemory(turn.memory, this.state.memory);
+    this.state.emotion = turn.emotion; this.state.memory = clampMemory(turn.memory, this.state.memory, humanText);
     this.director.social(turn, humanText);
     if (turn.action === 'follow' && !this.state.seated) this.actorMode = 'follow';
     if (turn.action === 'sit' && this.state.seated) this.actorMode = 'sit';

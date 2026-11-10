@@ -52,7 +52,7 @@ export class RestaurantActor {
     this.body.setSeated(value);
   }
 
-  update(time: number, dt: number, emotion: Emotion, speaking: boolean, amplitude: number, gaze: THREE.Vector3, walkingSpeed = 0, performance: { stance?: DateStance; shared?: boolean; phoneActive?: boolean; attentive?: boolean; reducedMotion?: boolean; table?: DateTableContext } = {}) {
+  update(time: number, dt: number, emotion: Emotion, speaking: boolean, amplitude: number, gaze: THREE.Vector3, walkingSpeed = 0, performance: { stance?: DateStance; shared?: boolean; phoneActive?: boolean; attentive?: boolean; reducedMotion?: boolean; table?: DateTableContext; deliveryId?: string | number | null } = {}) {
     if (this.disposed) return;
     this.behaviourTime = time;
     const guarded = performance.stance === 'guarded' || performance.stance === 'hurt' || performance.stance === 'leaving';
@@ -65,12 +65,13 @@ export class RestaurantActor {
       business = this.behaviour.update(time, dt, {
         interest: table.interest, stance: performance.stance ?? 'curious', emotion, seated: this.seated, speaking, listening: !!performance.attentive,
         thinking: table.thinking, mainServed: table.mainServed, dateBites: table.dateBites, quietFor: table.quietFor, reducedMotion: !!performance.reducedMotion,
-        glass, plate, head: this.body.headAnchor,
+        glass, plate, head: this.body.headAnchor, deliveryId: performance.deliveryId,
       });
     }
     const pose = this.performance.update(time, dt, {
       emotion, speaking, amplitude, attentive: !!performance.attentive, reducedMotion: !!performance.reducedMotion,
       smileBias: business?.smile, wander: business?.wander, lookUp: business?.lookUp, lookDown: business?.lookDown,
+      deliveryId: performance.deliveryId,
     });
     // Warmth leans in a little; being on guard sits back. Attention leans in while the other person talks.
     const leanBias = (emotion === 'flirtatious' || emotion === 'warm' || emotion === 'amused' ? .028 : emotion === 'defensive' || emotion === 'angry' ? -.03 : 0)

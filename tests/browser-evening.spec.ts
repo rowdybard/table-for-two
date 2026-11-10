@@ -4,11 +4,15 @@ import { extname, resolve, sep } from 'node:path';
 import { test, expect, type Page } from '@playwright/test';
 import { attachRestaurantServer } from '../server/restaurant';
 import { CHARACTER_STORIES } from '../src/restaurant/story';
+import { EVENING_PACE } from '../src/restaurant/evening';
 import type { DinnerCommand, DinnerState } from '../src/restaurant/types';
-import { captureRestaurantScene, restaurantInterrupted, restaurantScenario, resolveRestaurantScenario, waitForRestaurantScene } from './restaurant-browser-helpers';
+import { RESTAURANT_BROWSER_STORY_RATE, captureRestaurantScene, playAgainRestaurantScene, reloadRestaurantScene, restaurantInterrupted, restaurantScenario, resolveRestaurantScenario, waitForRestaurantScene } from './restaurant-browser-helpers';
 
 let http: Server, app: Awaited<ReturnType<typeof attachRestaurantServer>>, base = '';
 const state = (page: Page) => page.evaluate(() => (window as unknown as { __restaurantState: DinnerState }).__restaurantState);
+// Preserve the existing UI allowance; add only the extra wall time for the slower story clock.
+const storyWait = (baseMs: number, sceneSeconds: number) => Math.ceil(baseMs + sceneSeconds * (1 / RESTAURANT_BROWSER_STORY_RATE - 1 / 30) * 1000);
+const fullEveningSeconds = EVENING_PACE.mainKitchen + EVENING_PACE.mainCourse + EVENING_PACE.dessertDecision + EVENING_PACE.dessertKitchen + EVENING_PACE.dessertCourse + EVENING_PACE.checkDelay;
 test.beforeAll(async () => {
   const root = resolve('dist');
   http = createServer((req, res) => {
@@ -19,7 +23,7 @@ test.beforeAll(async () => {
     void readFile(file).then(data => { res.setHeader('Content-Type', ({ '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.wasm': 'application/wasm', '.woff2': 'font/woff2', '.jpg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json' } as Record<string, string>)[extname(file)] || 'application/octet-stream'); res.end(data); }).catch(() => res.writeHead(404).end());
   });
   // Only the authored story clock is accelerated. Movement and the physical table stay at normal speed.
-  app = await attachRestaurantServer(http, { env: { DATE_SPEECH_PROVIDER: 'none' }, ledgerPath: false, development: true, storyRate: 30, scenarioId: 'family-visit' });
+  app = await attachRestaurantServer(http, { env: { DATE_SPEECH_PROVIDER: 'none' }, ledgerPath: false, development: true, storyRate: RESTAURANT_BROWSER_STORY_RATE, scenarioId: 'family-visit' });
   await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${(http.address() as { port: number }).port}`;
   await mkdir('.qa', { recursive: true });
@@ -64,7 +68,7 @@ async function resolveIncident(page: Page) {
   await expect.poll(async () => !!(await state(page)).evening.resolutions[event]).toBe(true);
 }
 /** Eli and the date carry the courses; the test only clears what interrupts them. */
-async function awaitCourse(page: Page, predicate: (snapshot: DinnerState) => boolean, label: string, timeout = 15_000) {
+async function awaitCourse(page: Page, predicate: (snapshot: DinnerState) => boolean, label: string, timeout = storyWait(15_000, EVENING_PACE.mainAfterEating)) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     const snapshot = await state(page);
@@ -86,7 +90,7 @@ async function eat(page: Page, target: 'meal' | 'dessert', bites: number) {
   }
   expect(await read()).toBeGreaterThanOrEqual(bites);
 }
-/** The offer stays open for forty scene seconds, then the date picks; at this story rate the chip needs a quick hand. */
+/** The offer stays open for forty scene seconds, then the date picks. */
 async function chooseDessert(page: Page, choice: string | 'skip') {
   await awaitCourse(page, snapshot => snapshot.evening.main.status === 'finished', 'the main course cleared');
   for (let attempt = 0; attempt < 4; attempt++) {
@@ -103,9 +107,16 @@ async function chooseDessert(page: Page, choice: string | 'skip') {
   await expect.poll(async () => (await state(page)).evening.dessert.status).not.toBe('none');
 }
 async function awaitCheck(page: Page) {
-  await awaitCourse(page, snapshot => snapshot.evening.bill.requested, 'Eli leaving the check', 20_000);
+  await awaitCourse(page, snapshot => snapshot.evening.bill.requested, 'Eli leaving the check', storyWait(20_000, EVENING_PACE.checkDelay));
   await prompt(page);
   await expect(page.locator('#prompt-copy')).toHaveText('Eli left the check.');
+}
+/** Keep the real movement key held across slow render frames; short taps can all fall between frames. */
+async function walkUntil(page: Page, key: 'w' | 's', arrived: (snapshot: DinnerState) => boolean, message: string) {
+  await page.keyboard.down(key);
+  try {
+    await expect.poll(async () => arrived(await state(page)), { message, timeout: 15_000, intervals: [100] }).toBe(true);
+  } finally { await page.keyboard.up(key); }
 }
 /** Looking down at the chair stands a guest up; the door is a short walk behind the table. */
 async function walkToTheDoor(page: Page) {
@@ -115,11 +126,12 @@ async function walkToTheDoor(page: Page) {
     await page.mouse.move(viewport.width / 2, viewport.height * .2); await page.mouse.down();
     await page.mouse.move(viewport.width / 2, viewport.height * .95, { steps: 10 }); await page.mouse.up();
   }
+  await expect(page.locator('#interaction')).toBeVisible();
   await expect(page.locator('#interaction-label')).toHaveText('Stand up');
   await page.keyboard.press('e');
   await expect.poll(async () => (await state(page)).seated).toBe(false);
   await waitForRestaurantScene(page);
-  for (let i = 0; i < 25 && (await state(page)).participants[0].position[2] < 4.2; i++) { await page.keyboard.down('s'); await page.waitForTimeout(160); await page.keyboard.up('s'); }
+  await walkUntil(page, 's', snapshot => snapshot.participants[0].position[2] >= 4.2, 'walking back to the restaurant door');
   await expect.poll(async () => (await state(page)).participants[0].position[2]).toBeGreaterThanOrEqual(4.2);
   await expect(page.locator('#prompt-copy')).toHaveText('One last thing, at the door.');
 }
@@ -127,14 +139,16 @@ async function arrive(page: Page, dateId: string, mode: 'solo' | 'blind' = 'solo
   await page.goto(base);
   await expect(page.locator('#title-start')).toBeFocused({ timeout: 15000 });
   await page.keyboard.press('Enter');
-  if (mode === 'blind') await page.locator('#mode-blind').click();
+  // Starting Blind is a same-page transition; the HUD and scene gates below establish readiness.
+  if (mode === 'blind') await page.locator('#mode-blind').click({ noWaitAfter: true });
   else { await page.locator('#mode-solo').click(); await page.locator(`[data-date="${dateId}"]`).click(); await page.locator('#start-date').click(); }
   await expect(page.locator('#dinner-hud')).toBeVisible();
   await waitForRestaurantScene(page);
   await expect(page.locator('#prompt-line')).toBeHidden();
-  for (let i = 0; i < 24 && (await state(page)).participants[0].position[2] > 1.5; i++) { await page.keyboard.down('w'); await page.waitForTimeout(180); await page.keyboard.up('w'); }
+  await walkUntil(page, 'w', snapshot => snapshot.participants[0].position[2] <= 1.5, 'walking within reach of the table seat');
   await page.mouse.move(640, 390); await page.mouse.down(); await page.mouse.move(640, 610, { steps: 9 }); await page.mouse.up();
-  await expect(page.locator('#interaction')).toContainText(/seat/i); await page.keyboard.press('e');
+  await expect(page.locator('#interaction')).toBeVisible();
+  await expect(page.locator('#interaction-label')).toHaveText('Take your seat'); await page.keyboard.press('e');
   await expect.poll(async () => (await state(page)).seated).toBe(true);
   // Escape releases captured mouse and pauses; Resume keeps the physical seat.
   await page.keyboard.press('Escape'); await expect(page.locator('#pause-dialog')).toBeVisible(); await page.locator('#resume-date').click();
@@ -143,12 +157,12 @@ async function arrive(page: Page, dateId: string, mode: 'solo' | 'blind' = 'solo
   await chip(page, 'button:has-text("Open the menu")');
   await expect(page.locator('.restaurant-canvas')).toHaveAttribute('aria-label', 'Reading the dinner menu at the table');
   await page.locator('[data-order="Wild mushroom risotto"]').click();
-  await expect.poll(async () => (await state(page)).evening.main.status, { timeout: 8000 }).toBe('served');
+  await expect.poll(async () => (await state(page)).evening.main.status, { timeout: storyWait(8000, EVENING_PACE.mainKitchen) }).toBe('served');
   await expect(page.locator('.restaurant-canvas')).toHaveAttribute('aria-label', 'First-person view of Table for Two restaurant');
 }
 
 test('complete authored evening: a wrong plate, a spill, dinner, a shared dessert, one check, the walk to the door and a memento', async ({ page }) => {
-  test.setTimeout(180_000); page.setDefaultTimeout(10_000);
+  test.setTimeout(storyWait(180_000, fullEveningSeconds)); page.setDefaultTimeout(10_000);
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await arrive(page, 'mira');
   // The wrong plate arrives with service, before any bite; the prompt line carries the recovery.
@@ -165,13 +179,15 @@ test('complete authored evening: a wrong plate, a spill, dinner, a shared desser
   if (dessert.chosenBy === 'you') expect(dessert.choice).toBe('lemon'); else expect(dessert.choice).toBe(CHARACTER_STORIES.mira.preferredDessert);
   await eat(page, 'dessert', 2);
   await captureRestaurantScene(page, '.qa/full-evening-dessert.png');
-  await awaitCourse(page, snapshot => !!snapshot.evening.resolutions['spilled-drink'], 'the spill dried', 20_000);
-  await awaitCourse(page, snapshot => !!snapshot.evening.resolutions['disruptive-diner'] || snapshot.evening.bill.requested, 'the noisy diner or the check', 20_000);
-  await awaitCourse(page, snapshot => snapshot.evening.dessert.status === 'finished', 'the dessert plate cleared', 20_000);
+  await awaitCourse(page, snapshot => !!snapshot.evening.resolutions['spilled-drink'], 'the spill dried', storyWait(20_000, EVENING_PACE.spillAfterService));
+  await awaitCourse(page, snapshot => !!snapshot.evening.resolutions['disruptive-diner'] || snapshot.evening.bill.requested, 'the noisy diner or the check', storyWait(20_000, EVENING_PACE.dinerAfterDessertServed + EVENING_PACE.checkDelay));
+  await awaitCourse(page, snapshot => snapshot.evening.dessert.status === 'finished', 'the dessert plate cleared', storyWait(20_000, EVENING_PACE.dessertCourse));
   await awaitCheck(page);
   await chip(page, 'button:has-text("See the check")');
   await expect(page.locator('#bill-dialog')).toBeVisible();
-  await expect(page.locator('#bill-items')).toContainText('Lemon posset');
+  // The date may have picked her favorite when the accelerated offer expired.
+  // The check must name the dessert that was actually served in either branch.
+  await expect(page.locator('#bill-items')).toContainText(dessert.chosenBy === 'you' ? 'Lemon posset' : 'Chocolate fondant');
   await page.locator('[data-settlement="split"]').click();
   await expect.poll(async () => (await state(page)).evening.chapter).toBe('farewell');
   await expect(page.locator('#bill-dialog')).toBeHidden();
@@ -195,13 +211,16 @@ test('complete authored evening: a wrong plate, a spill, dinner, a shared desser
   const downloadEvent = page.waitForEvent('download'); await page.locator('#save-postcard').click(); const download = await downloadEvent;
   expect(download.suggestedFilename()).toBe('table-for-two-mira.png');
   await captureRestaurantScene(page, '.qa/full-evening-ending.png');
-  await page.locator('#new-date').click(); await expect(page.locator('#past-evenings')).toBeVisible();
+  await playAgainRestaurantScene(page);
+  // Play again reloads the title, so wait for the same initialized menu as arrival.
+  await expect(page.locator('#title-start')).toBeFocused({ timeout: 15000 });
+  await expect(page.locator('#past-evenings')).toBeVisible();
   await page.locator('#past-evenings').click(); await expect(page.locator('#past-evenings-list')).toContainText('Mira');
   expect(errors).toEqual([]);
 });
 
 test('an evening can decline dessert, settle from the prompt line and end as friendship', async ({ page }) => {
-  test.setTimeout(100_000); page.setDefaultTimeout(10_000);
+  test.setTimeout(storyWait(100_000, EVENING_PACE.mainKitchen + EVENING_PACE.mainCourse + EVENING_PACE.checkDelay)); page.setDefaultTimeout(10_000);
   await arrive(page, 'jules'); await resolveIncident(page);
   await eat(page, 'meal', 3);
   await chooseDessert(page, 'skip');
@@ -244,7 +263,7 @@ async function careAction(page: Page, key: 'offer-taste' | 'toast' | 'request-wa
 }
 
 for (const mode of ['solo', 'blind'] as const) test(`${mode} evening: two story decisions, character-led gestures, service and reload preserve the actual evening`, async ({ page }) => {
-  test.setTimeout(120000); page.setDefaultTimeout(10000);
+  test.setTimeout(storyWait(120000, fullEveningSeconds)); page.setDefaultTimeout(10000);
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   if (mode === 'blind') await page.setViewportSize({ width: 1000, height: 700 });
   await arrive(page, 'mira', mode); await resolveIncident(page);
@@ -261,7 +280,7 @@ for (const mode of ['solo', 'blind'] as const) test(`${mode} evening: two story 
   await expect.poll(async () => (await state(page)).evening.care.water.status).toBe('served');
   await careAction(page, 'check-in');
   await expect.poll(async () => !!(await state(page)).evening.care.checkIn).toBe(true);
-  await awaitCourse(page, snapshot => restaurantScenario(snapshot)?.phase === 'active', 'the table story opening', 25_000);
+  await awaitCourse(page, snapshot => restaurantScenario(snapshot)?.phase === 'active', 'the table story opening', storyWait(25_000, 240));
   const first = restaurantScenario(await state(page))!;
   expect(first.id).toBe('family-visit'); expect(first.beat).toBe('setup'); expect(first.decisions).toHaveLength(0);
   await expect(page.locator('#prompt-copy')).toContainText(first.description);
@@ -281,7 +300,7 @@ for (const mode of ['solo', 'blind'] as const) test(`${mode} evening: two story 
   expect(completed.evening.moments.filter(moment => moment.id === 'scenario-family-visit')).toHaveLength(1);
   expect(completed.usage.claudeRequests).toBe(0);
   const care = completed.evening.care, story = restaurantScenario(completed), seed = completed.blindDate?.seed;
-  await page.reload(); await expect(page.locator('#pause-dialog')).toBeVisible({ timeout: 15000 });
+  await reloadRestaurantScene(page); await expect(page.locator('#pause-dialog')).toBeVisible({ timeout: 15000 });
   await page.locator('#resume-date').click(); await waitForRestaurantScene(page);
   expect((await state(page)).evening.care).toEqual(care);
   expect(restaurantScenario(await state(page))).toEqual(story);
@@ -290,7 +309,7 @@ for (const mode of ['solo', 'blind'] as const) test(`${mode} evening: two story 
   await expect(page.locator('#prompt-chips [data-evening="offer-taste"], #prompt-chips [data-evening="toast"], #prompt-chips [data-evening="check-in"]')).toHaveCount(0);
   if (mode === 'blind') {
     // By now Eli has cleared an untouched main on his own clock and the date has likely chosen dessert; the check still follows.
-    await awaitCourse(page, snapshot => snapshot.evening.main.status === 'finished', 'the plates cleared', 30_000);
+    await awaitCourse(page, snapshot => snapshot.evening.main.status === 'finished', 'the plates cleared', storyWait(30_000, EVENING_PACE.mainCourse));
     if ((await state(page)).evening.dessert.status === 'none') await chooseDessert(page, 'skip');
     await awaitCheck(page);
     await chip(page, '[data-evening="settle-bill"][data-choice="separate"]');

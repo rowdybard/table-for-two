@@ -134,3 +134,13 @@ test('Edge retries only once and never after audio has started', async t => {
   await assert.rejects(async () => { for await (const _ of edgeSpeechAdapter(cut.connect).stream(request(), new AbortController().signal)) {} }, (error: unknown) => error instanceof DateApiError);
   assert.equal(partial, 1);
 });
+
+test('an Edge stream deadline is not retried after an open but silent socket', async t => {
+  let connections = 0;
+  const server = await socketServer(() => { connections++; });
+  t.after(() => server.close());
+  await assert.rejects(async () => {
+    for await (const _ of edgeSpeechAdapter(server.connect, 40).stream(request(), new AbortController().signal)) {}
+  }, (error: unknown) => error instanceof DateApiError && error.code === 'edge_speech' && /timed out/i.test(error.message));
+  assert.equal(connections, 1, 'a timeout must not consume a second full deadline');
+});

@@ -31,6 +31,10 @@ export class GameMenuNavigation {
       if (!changed && focusedControl) return;
       if (changed) this.onMenuEntry?.();
       if (active instanceof HTMLElement && !scope.element.contains(active)) this.previousFocus = active;
+      // Input can enter and navigate the new scope before the next render
+      // frame notices it. Keep that selection if menu-entry work left it valid.
+      const afterEntry = document.activeElement;
+      if (afterEntry instanceof HTMLElement && scope.element.contains(afterEntry) && afterEntry.matches(focusable) && available(afterEntry)) return;
       const target = scope.initial ? scope.element.querySelector<HTMLElement>(scope.initial) : null;
       const first = this.items(scope)[0];
       (target && available(target) ? target : first)?.focus({ preventScroll: true });

@@ -1,6 +1,6 @@
 import { MENU, RESTAURANT } from '../../src/restaurant/content';
 import { DESSERTS, EVENING_PACE } from '../../src/restaurant/evening';
-import { BEAT_COLD, BEAT_CUES, CHARACTER_STORIES, getStoryCue, type BeatPhase, type StoryCueContext } from '../../src/restaurant/story';
+import { BEAT_COLD, BEAT_CUES, CHARACTER_STORIES, getStoryCue, type BeatPhase, type EndingMotif, type StoryCueContext } from '../../src/restaurant/story';
 import { createBlindDate, getBlindDateCue, type BlindDateIdentity } from '../../src/restaurant/blind-date';
 import type { DinnerCommand, DinnerEvent, DinnerState, EveningEnding, SceneTurn, SceneUtterance } from '../../src/restaurant/types';
 import { createRestaurantScenario, activateRestaurantScenario, chooseRestaurantScenario, type ScenarioChoiceResult } from '../../src/restaurant/scenarios';
@@ -392,11 +392,23 @@ export class EveningDirector {
     this.agenda.finish();
     const descriptions: Record<EveningEnding['kind'], [string, string]> = { 'another-evening': ['Another evening', 'A second date sounds like a possibility you both want to explore.'], 'new-friend': ['A good kind of company', 'The evening became a connection without needing to become a romance.'], 'second-chance': ['Room to try again', 'You owned an awkward moment and found a kinder way forward.'], 'quiet-goodbye': ['A complete goodbye', 'Not every first date asks for a second. This evening still had its own story.'], 'early-exit': ['An early goodbye', 'You chose when this evening was finished for you.'], 'walked-away': ['A boundary respected', 'Your date chose to leave after repeated pressure. Their decision stands.'] };
     // A friendship farewell is warm only when the date came to trust the human; otherwise it is kind and plain.
-    const context: StoryCueContext = { reserved: !hasEarnedConfidence(this.state.evening.agenda) };
+    const context: StoryCueContext = { reserved: !hasEarnedConfidence(this.state.evening.agenda), endingMotif: this.endingMotif(kind) };
     const lines = responsibleFriend ? [{ speaker: 'date' as const, text: `I asked ${responsibleFriend} to stop. I’m leaving the table. Take care.`, emotion: 'defensive' as const }] : this.lines(`ending-${kind}`, context), [title, description] = descriptions[kind];
     this.state.evening.farewell.ending = { kind, title, description, dateLine: lines.find(line => line.speaker === 'date')?.text || 'Thank you for the evening. Take care.' };
     this.state.evening.chapter = 'farewell'; this.state.stage = 'farewell'; this.leavingAt = this.state.elapsed;
     if (responsibleFriend) this.state.evening.cues.push({ id: `cue-${++this.cueSequence}`, key: `ending-${kind}`, utterances: lines }); else this.cue(`ending-${kind}`, context);
+  }
+  /** Read this pair's accepted acts and existing own-listener receipts; memory prose is never evidence. */
+  private endingMotif(kind: EveningEnding['kind']): EndingMotif | undefined {
+    const e = this.state.evening;
+    if (!['another-evening', 'new-friend', 'second-chance'].includes(kind) || !hasEarnedConfidence(e.agenda)
+      || GUARDED.includes(e.stance) || e.care.romanceClosed || e.care.assistedExit || !scenePresenceAvailable(this.state)) return undefined;
+    const heard = (key: string) => e.cues.some(cue => cue.key === key && cue.utterances.some(line => line.speaker === 'date' && this.agenda.hasHeardLine(line.text)));
+    if (e.care.toast && e.sharedActivities.includes('toast') && heard('care-toast')) return `toast-${e.care.toast.intention}`;
+    if (e.care.tasteOffer?.result === 'accepted' && e.sharedActivities.includes('tasting') && heard('care-taste')) return 'tasting';
+    const dessert = DESSERTS.find(item => item.id === e.dessert.choice);
+    if (dessert && e.sharedActivities.includes('dessert') && heard('dessert-shared')) return `dessert-${dessert.id}`;
+    return undefined;
   }
   earlyExit() { this.beginEnding('early-exit'); if (this.state.order && !this.state.evening.bill.settlement) { this.state.evening.bill.requested = true; this.state.evening.bill.settlement = 'separate'; this.moment('bill', 'Dinner is settled', 'The ordered dinner was settled separately before the early goodbye.'); } this.state.phase = 'ended'; this.state.stage = 'finished'; this.state.reason = this.state.evening.farewell.ending!.description; }
   window() { if (this.state.evening.moments.some(m => m.id === 'window')) return; this.moment('window', 'Away from the table', 'You took a quiet moment together by the rain-streaked window.'); this.cue('quiet-window'); }
