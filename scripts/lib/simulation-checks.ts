@@ -3,7 +3,7 @@
 // is something a person should look at because the machine cannot decide it. Nothing here produces a quality score.
 import { getDate } from '../../src/restaurant/content';
 import type { EvaluationScript } from '../../src/restaurant/evaluation-fixtures';
-import { answerFacts, readHumanTurn } from '../../server/restaurant/conversation-move';
+import { answerFacts, asksAboutThemselves, readHumanTurn } from '../../server/restaurant/conversation-move';
 
 export type CheckSeverity = 'fail' | 'review';
 export interface CheckIssue { severity: CheckSeverity; code: string; scriptId: string; turn?: number; detail: string }
@@ -67,7 +67,7 @@ export function checkScriptInputs(script: EvaluationScript): CheckIssue[] {
 
 interface ReportTurn { turn: number; human?: string; target?: string; input: string; rawResponse: string; valid: boolean; error: { kind: string; code: string } | null; notebook?: Record<string, { dateId?: string; memory?: string }> }
 interface ReportResult { scriptId: string; mode: EvaluationScript['mode']; model: string; status: string; plannedTurns: number; turns: ReportTurn[]; checkpoints?: { afterTurn: number; owner?: string; mustRecall: string[]; mustNotClaim: string[]; notebook: Record<string, { memory?: string }> | null }[] }
-export interface SimulationReport { results: ReportResult[]; selectedScripts?: EvaluationScript[] }
+export interface SimulationReport { results: ReportResult[]; selectedScripts?: (EvaluationScript & { probes?: { turn: number; asks: string; say: string[]; never: string[] }[] })[] }
 interface Line { speaker: string; text: string }
 
 const sentences = (text: string) => text.split(/(?<=[.!?…])\s+/).map(item => item.trim()).filter(Boolean);
@@ -119,12 +119,19 @@ export function checkReportOutputs(report: SimulationReport): CheckIssue[] {
       if (!double && script?.mode === 'solo' && lines.length) {
         const read = readHumanTurn(row.input, lastDateLine), first = sentences(text)[0] ?? '';
         if (read.questions.length) {
-          if (/\?\s*$/.test(first) && sentences(text).length > 0 && !/^(?:wait|oh|ha|hm+|really|me|seriously)\b/i.test(first)) add('review', 'answered_with_question', `They asked ${JSON.stringify(read.questions[0])} and the first sentence back is a question.`, row.turn);
+          if (!read.questions.every(asksAboutThemselves) && /\?\s*$/.test(first) && sentences(text).length > 0 && !/^(?:wait|oh|ha|hm+|really|me|seriously)\b/i.test(first)) add('review', 'answered_with_question', `They asked ${JSON.stringify(read.questions[0])} and the first sentence back is a question.`, row.turn);
           for (const fact of answerFacts(script.dateId, read.questions)) {
             const [topic, ...rest] = fact.split(':'), keys = content(rest.join(':')), replyWords = new Set(content(text));
             if (keys.length && !keys.some(key => has(replyWords, key))) add('review', 'fact_question', `They asked about ${topic}; the reply uses none of the date's own ${topic} facts.`, row.turn);
           }
         }
+      }
+      // Endurance probes: a late question about an early fact. The reply should use the fact and must not use a wrong one.
+      const probe = script?.probes?.find(item => item.turn === row.turn);
+      if (probe) {
+        const lower = text.toLowerCase(), wrong = probe.never.filter(item => lower.includes(item.toLowerCase()));
+        if (wrong.length) add('fail', 'probe_wrong', `Asked about ${probe.asks}, the date said ${wrong.join(', ')}.`, row.turn);
+        else if (!probe.say.some(item => lower.includes(item.toLowerCase()))) add('review', 'probe_missed', `Asked about ${probe.asks}, the reply uses none of: ${probe.say.join(', ')}.`, row.turn);
       }
       for (const sentence of sentences(text)) {
         const key = normal(sentence);

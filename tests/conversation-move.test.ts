@@ -60,6 +60,11 @@ test('a direct question is answered with the date’s own plain facts and never 
   }
   assert.deepEqual(answerFacts('jules', ['How old are you?']), ['age: 29']);
   assert.deepEqual(answerFacts('mira', ['what do you do?'], { occupation: 'ferry engineer' }), ['work: ferry engineer'], 'a blind date never borrows the preset biography');
+  assert.deepEqual(answerFacts('mira', ['Do you remember what I do for work?']), [], 'a question about the human never gets the date’s own facts');
+  const recall = conversationMove({ dateId: 'mira', humanText: 'Okay, a test. Do you remember what I do for work?' });
+  assert.match(recall, /about their own life/); assert.match(recall, /never guess/); assert.doesNotMatch(recall, /photographer/);
+  assert.match(conversationMove({ dateId: 'mira', humanText: 'What is my dog’s name?' }), /about their own life/);
+  assert.doesNotMatch(conversationMove({ dateId: 'mira', humanText: 'What is your sister’s name?' }), /about their own life/);
   const move = conversationMove({ dateId: 'dev', humanText: 'What do you do?' });
   assert.match(move, /They asked you “What do you do\?”/);
   assert.match(move, /first sentence/); assert.match(move, /bicycle mechanic/);

@@ -64,3 +64,28 @@ test('checkpoints fail on a ruled-out claim and ask for review when a fact seems
   const early = report(['Hi.'], [raw('Hello.')], { checkpoints: [{ afterTurn: 5, mustRecall: [], mustNotClaim: [], notebook: null }] });
   assert.deepEqual(codes(checkReportOutputs(early)), ['review:checkpoint_not_reached']);
 });
+
+test('endurance scripts run past the history window, stay out of the frozen corpus, and their probes are checked', async () => {
+  const { ENDURANCE_SCRIPTS } = await import('../src/restaurant/evaluation-endurance');
+  const { parseEvaluationOptions } = await import('../scripts/lib/conversation-evaluation');
+  assert.equal(EVALUATION_SCRIPTS.length, 66, 'the frozen corpus is unchanged');
+  assert.ok(!EVALUATION_SCRIPTS.some(item => item.id.startsWith('endurance-')));
+  assert.deepEqual(parseEvaluationOptions(['--suite', 'endurance']).scripts.map(item => item.id), ENDURANCE_SCRIPTS.map(item => item.id));
+  assert.ok(!parseEvaluationOptions([]).scripts.some(item => item.id.startsWith('endurance-')), '“all” never includes them');
+  assert.throws(() => parseEvaluationOptions(['--scripts', 'endurance-mira-noor']), /must exist/);
+  for (const script of ENDURANCE_SCRIPTS) {
+    assert.equal(script.turns.length, 64);
+    assert.deepEqual(checkScriptInputs(script), [], script.id);
+    for (const probe of script.probes) {
+      assert.ok(probe.turn > 40, 'a probe comes after the planted facts have left the thirty-exchange window');
+      assert.match(script.turns[probe.turn - 1].text, /\?/, `${script.id} turn ${probe.turn} asks something`);
+      const planted = script.turns.slice(0, 44).map(turn => turn.text.toLowerCase()).join(' ');
+      assert.ok(probe.say.some(word => planted.includes(word.toLowerCase())), `${script.id} turn ${probe.turn}: the human actually said the answer earlier`);
+    }
+  }
+  const script = ENDURANCE_SCRIPTS[0], probe = script.probes[0];
+  const one = (text: string): SimulationReport => ({ selectedScripts: [script], results: [{ scriptId: script.id, mode: 'solo', model: 'claude-haiku-5-5', status: 'complete', plannedTurns: 1, turns: [{ turn: probe.turn, input: script.turns[probe.turn - 1].text, rawResponse: raw(text), valid: true, error: null }] }] });
+  assert.deepEqual(checkReportOutputs(one('You’re a paramedic. Days now, not nights.')), []);
+  assert.deepEqual(codes(checkReportOutputs(one('You’re a nurse, right?'))), ['fail:probe_wrong']);
+  assert.deepEqual(codes(checkReportOutputs(one('Something with long hours, I think.'))), ['review:probe_missed']);
+});

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { EVALUATION_MAX_TOKENS } from '../../src/restaurant/evaluation-runtime';
 import { DEFAULT_HORDE_MODEL, HORDE_BRIDGE_CONTEXT_FIT, HORDE_BRIDGE_RESPONSE_FORMAT, HORDE_BRIDGE_SCHEMA_STRICT } from '../../server/restaurant/horde';
 import { DATE_EVALUATION_RUBRIC, EVALUATION_REVIEW_GUIDE, EVALUATION_MODELS, EVALUATION_SCRIPTS, EvaluationConversation, type EvaluationScript } from '../../src/restaurant/evaluation';
+import { ENDURANCE_SCRIPTS } from '../../src/restaurant/evaluation-endurance';
 import { DOLPHIN_LLM_MODEL, DOLPHIN_MODEL, type ClaudeModel } from '../../src/restaurant/types';
 import { completeUtterances } from '../../server/restaurant';
 import { CampaignBudgetError, type CampaignLedger } from './campaign-ledger';
@@ -29,12 +30,14 @@ export function parseEvaluationOptions(args: readonly string[]): EvaluationOptio
     if (flag === '--scripts') ids = value.split(',');
     if (flag === '--suite') suite = value;
   }
-  if (!['all', 'short', 'continuity'].includes(suite)) throw new Error('Suite must be all, short or continuity.');
+  if (!['all', 'short', 'continuity', 'endurance'].includes(suite)) throw new Error('Suite must be all, short, continuity or endurance.');
   if (budgetUSD !== undefined && (!Number.isFinite(budgetUSD) || budgetUSD < 0 || budgetUSD > 10)) throw new Error('Budget must be between $0 and $10.');
   if (run && !help && budgetUSD === undefined) throw new Error('--run requires an explicit --budget USD; no default or environment budget authorizes calls.');
   if (run && !help && budgetUSD === 0 && models.some(model => model !== 'ai-horde')) throw new Error('A $0 budget permits only --models horde.');
-  if (ids && (new Set(ids).size !== ids.length || ids.some(id => !EVALUATION_SCRIPTS.some(script => script.id === id)))) throw new Error('Every selected script ID must exist and appear once.');
-  const scripts = EVALUATION_SCRIPTS.filter(script => (suite === 'all' || script.suite === suite) && (!ids || ids.includes(script.id)));
+  // The endurance scripts sit outside the frozen corpus: `all` never includes them, only `--suite endurance` does.
+  const pool: readonly EvaluationScript[] = suite === 'endurance' ? ENDURANCE_SCRIPTS : EVALUATION_SCRIPTS;
+  if (ids && (new Set(ids).size !== ids.length || ids.some(id => !pool.some(script => script.id === id)))) throw new Error('Every selected script ID must exist and appear once.');
+  const scripts = pool.filter(script => (suite === 'all' || suite === 'endurance' || script.suite === suite) && (!ids || ids.includes(script.id)));
   if (!scripts.length) throw new Error('The selection contains no scripts.');
   return { campaign, run: run && !help, budgetUSD, models, scripts, help };
 }

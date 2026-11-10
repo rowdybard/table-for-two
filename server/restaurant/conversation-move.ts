@@ -108,9 +108,12 @@ export const PLAIN_FACTS: Record<DateId, Partial<Record<Topic, string>>> = {
   },
 };
 
+/** A question about the human's own life ("do you remember what I do?", "what's my dog's name?"), not about the date. */
+export const asksAboutThemselves = (question: string) => /\b(?:i|i'm|i've|i'd|my|mine|me|myself)\b/i.test(normalize(question)) && !/\b(?:your|yours|yourself)\b/i.test(question);
+
 /** The plain facts a question touches, at most two, for a preset date or a blind date's own occupation. */
 export function answerFacts(dateId: DateId, questions: readonly string[], blind?: { occupation: string }): string[] {
-  const asked = questions.join(' '), out: string[] = [];
+  const asked = questions.filter(question => !asksAboutThemselves(question)).join(' '), out: string[] = [];
   for (const { topic, asks } of TOPICS) {
     if (out.length >= 2 || !asks.test(asked)) continue;
     if (blind) { if (topic === 'work') out.push(`work: ${blind.occupation}`); continue; }
@@ -158,8 +161,9 @@ export function conversationMove(input: MoveInput): string {
   if (has('stop')) out.push('They want to drop that topic: let it go without arguing and bring up something new and specific.');
   if (has('question')) {
     const facts = answerFacts(input.dateId, read.questions, input.blind);
-    const many = read.questions.length > 1;
-    out.push(`They asked you ${read.questions.map(quote).join(' and ')}. Answer ${many ? 'each one' : 'it'} in your first sentence, plainly and specifically${facts.length ? ` (true for you: ${facts.join('; ')})` : ''}, before anything else; then add one thing of your own.`);
+    const many = read.questions.length > 1, recall = read.questions.every(asksAboutThemselves);
+    if (recall) out.push(`They asked you ${read.questions.map(quote).join(' and ')}, which is about their own life: answer from what they actually told you (your notes and the talk so far), in your first sentence. If it is not there, say you have lost it and ask; never guess a name, place or number.`);
+    else out.push(`They asked you ${read.questions.map(quote).join(' and ')}. Answer ${many ? 'each one' : 'it'} in your first sentence, plainly and specifically${facts.length ? ` (true for you: ${facts.join('; ')})` : ''}, before anything else; then add one thing of your own.`);
   }
   if (has('bounce')) out.push(read.bounced ? `They turned your question back on you (${quote(read.bounced)}): answer it about yourself, as concretely as you hoped they would.` : 'They turned it back to you: give your own answer to what you were just talking about, concretely.');
   if (has('reaction')) out.push(input.lastDateLine && /\?["”’)]*\s*$/.test(input.lastDateLine.trim()) ? 'They are reacting to your question rather than answering it: put it once more in simpler words, or answer it yourself first.' : 'They are reacting to what you just said, not asking something new: confirm it in a word or two and give the next concrete detail of that same thing.');
